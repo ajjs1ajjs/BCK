@@ -22,8 +22,8 @@ import Users from './pages/Users';
 import Roles from './pages/Roles';
 
 function ProtectedLayout({ isDark, toggleTheme }) {
-  const { user } = useAuth();
-  if (!user?.loggedIn) return <Navigate to="/login" replace />;
+  const { loggedIn } = useAuth();
+  if (!loggedIn) return <Navigate to="/login" replace />;
 
   return (
     <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>

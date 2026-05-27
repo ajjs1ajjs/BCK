@@ -22,10 +22,10 @@ export default function Login() {
       if (ok) {
         navigate('/', { replace: true });
       } else {
-        setError('Invalid credentials. Try: admin/admin, operator/operator, viewer/viewer');
+        setError('Invalid credentials. Try: admin/291263');
       }
     } catch {
-      setError('Invalid credentials. Try: admin/admin, operator/operator, viewer/viewer');
+      setError('Invalid credentials. Try: admin/291263');
     }
   };
 

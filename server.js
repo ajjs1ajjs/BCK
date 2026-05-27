@@ -3,6 +3,12 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs').promises;
 const { v4: uuidv4 } = require('uuid');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+require('dotenv').config();
 
 const dbService = require('./services/database');
 const vmService = require('./services/vm');
@@ -10,11 +16,30 @@ const cloudService = require('./services/cloud');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'bck-default-secret-change-me';
+const SALT_ROUNDS = 10;
+const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));
 
-const DB_PATH = path.join(__dirname, 'db.json');
-
-app.use(cors());
+// ─── Security middleware ────────────────────────────────────────────────────
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
+app.use(cors({
+  origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : false,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+}));
 app.use(express.json({ limit: '50mb' }));
+
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { error: 'Too many requests, try again later' },
+});
+app.use('/api/', apiLimiter);
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: { error: 'Too many login attempts, try again later' },
+});
 
 const defaultData = {
   backups: [],
@@ -23,9 +48,9 @@ const defaultData = {
   dbConnections: [],
   cloudCredentials: [],
   users: [
-    { id: 'admin', username: 'admin', password: '291263', role: 'admin', email: 'admin@bck.local', active: true, createdAt: new Date().toISOString() },
-    { id: 'operator', username: 'operator', password: 'operator', role: 'operator', email: 'operator@bck.local', active: true, createdAt: new Date().toISOString() },
-    { id: 'viewer', username: 'viewer', password: 'viewer', role: 'viewer', email: 'viewer@bck.local', active: true, createdAt: new Date().toISOString() },
+    { id: 'admin', username: 'admin', role: 'admin', email: 'admin@bck.local', active: true, createdAt: new Date().toISOString() },
+    { id: 'operator', username: 'operator', role: 'operator', email: 'operator@bck.local', active: true, createdAt: new Date().toISOString() },
+    { id: 'viewer', username: 'viewer', role: 'viewer', email: 'viewer@bck.local', active: true, createdAt: new Date().toISOString() },
   ],
   roles: [
     {
@@ -50,6 +75,8 @@ const defaultData = {
   stats: { totalBackups: 0, successfulBackups: 0, failedBackups: 0, totalSize: 0, lastBackup: null },
 };
 
+const DEFAULT_PASSWORDS = { admin: '291263', operator: 'operator', viewer: 'viewer' };
+
 // ─── DB helpers ─────────────────────────────────────────────────────────────
 
 const initDB = async () => {
@@ -59,9 +86,21 @@ const initDB = async () => {
     // Merge missing collections
     if (!existing.users || !existing.roles) {
       Object.assign(existing, { users: existing.users || defaultData.users, roles: existing.roles || defaultData.roles });
+      // Hash passwords in existing data if plain text
+      for (const user of existing.users) {
+        if (user.password && !user.password.startsWith('$2a$') && !user.password.startsWith('$2b$')) {
+          user.password = await bcrypt.hash(user.password, SALT_ROUNDS);
+        }
+      }
       await fs.writeFile(DB_PATH, JSON.stringify(existing, null, 2));
     }
-  } catch { await fs.writeFile(DB_PATH, JSON.stringify(defaultData, null, 2)); }
+  } catch {
+    // Hash default passwords when creating fresh DB
+    const hashedUsers = await Promise.all(defaultData.users.map(async u => ({
+      ...u, password: await bcrypt.hash(DEFAULT_PASSWORDS[u.username] || 'changeme', SALT_ROUNDS),
+    })));
+    await fs.writeFile(DB_PATH, JSON.stringify({ ...defaultData, users: hashedUsers }, null, 2));
+  }
 };
 
 const readDB = async () => {
@@ -484,7 +523,8 @@ app.post('/api/users', async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   if (db.users.find(u => u.username === username)) return res.status(400).json({ error: 'Username exists' });
-  const user = { id: uuidv4(), username, password, role, email: email || '', active: true, createdAt: new Date().toISOString() };
+  const hashed = await bcrypt.hash(password, SALT_ROUNDS);
+  const user = { id: uuidv4(), username, password: hashed, role, email: email || '', active: true, createdAt: new Date().toISOString() };
   db.users.push(user);
   if (await writeDB(db)) {
     await addLog(`User created: ${username}`, 'success');
@@ -498,7 +538,7 @@ app.put('/api/users/:id', async (req, res) => {
   const idx = db.users.findIndex(u => u.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   const { password, ...rest } = req.body;
-  if (password && password !== '***') db.users[idx].password = password;
+  if (password && password !== '***') db.users[idx].password = await bcrypt.hash(password, SALT_ROUNDS);
   Object.assign(db.users[idx], rest);
   if (await writeDB(db)) {
     await addLog(`User updated: ${db.users[idx].username}`, 'info');
@@ -562,16 +602,37 @@ app.delete('/api/roles/:id', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to delete' });
 });
 
-// ─── Login ──────────────────────────────────────────────────────────────────
+// ─── Auth middleware ─────────────────────────────────────────────────────────
 
-app.post('/api/login', async (req, res) => {
+const authenticate = (req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token provided' });
+  try {
+    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    next();
+  } catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
+};
+
+// Public routes (no auth)
+app.post('/api/login', authLimiter, async (req, res) => {
   const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
   const db = await readDB();
-  const user = db?.users?.find(u => u.username === username && u.password === password && u.active !== false);
+  const user = db?.users?.find(u => u.username === username && u.active !== false);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(401).json({ error: 'Invalid credentials' });
   const role = db?.roles?.find(r => r.id === user.role);
-  res.json({ username: user.username, role: user.role, permissions: role?.permissions || {} });
+  const token = jwt.sign(
+    { id: user.id, username: user.username, role: user.role, permissions: role?.permissions || {} },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+  res.json({ token, username: user.username, role: user.role, permissions: role?.permissions || {} });
 });
+
+// All /api/* routes below require authentication
+app.use('/api/', authenticate);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });

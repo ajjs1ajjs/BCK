@@ -2,8 +2,6 @@ import { createContext, useContext, useState, useCallback, useMemo } from 'react
 
 const API = process.env.REACT_APP_API_URL || '';
 
-const adminPerms = { manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true };
-
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
@@ -12,7 +10,7 @@ export function AuthProvider({ children }) {
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { /* ignore */ }
     }
-    return { username: 'admin', role: 'admin', permissions: { ...adminPerms }, loggedIn: true };
+    return null;
   });
 
   const login = useCallback(async (username, password) => {
@@ -22,33 +20,23 @@ export function AuthProvider({ children }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
       });
-      if (!r.ok) return false;
+      if (!r.ok) {
+        if (r.status === 429) return false;
+        return false;
+      }
       const data = await r.json();
-      const u = { ...data, loggedIn: true };
+      const u = { ...data, loggedIn: true, token: data.token };
       localStorage.setItem('bck-auth', JSON.stringify(u));
       setUser(u);
       return true;
     } catch {
-      // Fallback: built-in users for demo
-      const builtin = { admin: '291263', operator: 'operator', viewer: 'viewer' };
-      if (builtin[username] === password) {
-        const perms = {
-          admin: { manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true },
-          operator: { manageUsers: false, manageBackups: true, manageSchedules: true, restore: true, delete: false, configure: false, viewLogs: true, manageRoles: false },
-          viewer: { manageUsers: false, manageBackups: false, manageSchedules: false, restore: false, delete: false, configure: false, viewLogs: true, manageRoles: false },
-        };
-        const u = { username, role: username, permissions: perms[username] || {}, loggedIn: true };
-        localStorage.setItem('bck-auth', JSON.stringify(u));
-        setUser(u);
-        return true;
-      }
       return false;
     }
   }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem('bck-auth');
-    setUser({ loggedIn: false });
+    setUser(null);
   }, []);
 
   const can = useCallback((action) => {
@@ -57,9 +45,11 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     user, login, logout, can,
+    token: user?.token || null,
     isAdmin: user?.role === 'admin',
     username: user?.username || '',
     role: user?.role || 'viewer',
+    loggedIn: !!user?.loggedIn,
   }), [user, login, logout, can]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
