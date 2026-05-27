@@ -25,13 +25,24 @@ Modern web-based backup management system with scheduling, monitoring, and multi
 
 ## Quick Start
 
-### One-command launch
+### Linux (one-line install)
+```bash
+curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/install.sh | sudo bash
+```
 
+### Windows
+```batch
+git clone https://github.com/ajjs1ajjs/BCK.git
+cd BCK
+.\install.bat
+```
+
+### Or run locally (both platforms)
 ```bash
 # Windows:
 run-local.bat
 
-# Linux / macOS:
+# Linux:
 chmod +x run-local.sh && ./run-local.sh
 ```
 
@@ -39,28 +50,9 @@ The script will:
 1. Auto-detect Node.js (download & install if missing)
 2. Install all dependencies
 3. Build the frontend
-4. Start the server
+4. Start the server (Linux: auto-creates systemd service)
 
 Then open **http://localhost:3000**
-
-### Manual setup
-
-```bash
-# 1. Install backend dependencies
-npm install
-
-# 2. Install frontend dependencies
-cd frontend && npm install && cd ..
-
-# 3. Build frontend for production
-cd frontend && npm run build && cd ..
-
-# 4. Start server (serves API + built frontend)
-node server.js
-
-# Or development mode (hot reload):
-cd frontend && npm start
-```
 
 ## Default Credentials
 
