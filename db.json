@@ -1,0 +1,130 @@
+{
+  "backups": [],
+  "schedules": [],
+  "logs": [
+    {
+      "id": "cce89047-db0d-432f-8c08-493c83e5c8eb",
+      "timestamp": "2026-05-27T20:52:23.966Z",
+      "message": "Settings updated",
+      "status": "info"
+    },
+    {
+      "id": "d999f11f-32d9-4d36-bd51-1c7d0a74299b",
+      "timestamp": "2026-05-27T20:52:02.909Z",
+      "message": "User updated: admin",
+      "status": "info"
+    }
+  ],
+  "stats": {
+    "totalBackups": 0,
+    "successfulBackups": 0,
+    "failedBackups": 0,
+    "lastBackup": null
+  },
+  "users": [
+    {
+      "id": "admin",
+      "username": "admin",
+      "password": "291263",
+      "role": "admin",
+      "email": "admin@bck.local",
+      "active": true,
+      "createdAt": "2026-05-27T20:18:38.121Z"
+    },
+    {
+      "id": "operator",
+      "username": "operator",
+      "password": "operator",
+      "role": "operator",
+      "email": "operator@bck.local",
+      "active": true,
+      "createdAt": "2026-05-27T20:18:38.121Z"
+    },
+    {
+      "id": "viewer",
+      "username": "viewer",
+      "password": "viewer",
+      "role": "viewer",
+      "email": "viewer@bck.local",
+      "active": true,
+      "createdAt": "2026-05-27T20:18:38.121Z"
+    }
+  ],
+  "roles": [
+    {
+      "id": "admin",
+      "name": "Admin",
+      "level": 100,
+      "description": "Full system access",
+      "permissions": {
+        "manageUsers": true,
+        "manageBackups": true,
+        "manageSchedules": true,
+        "restore": true,
+        "delete": true,
+        "configure": true,
+        "viewLogs": true,
+        "manageRoles": true
+      }
+    },
+    {
+      "id": "operator",
+      "name": "Operator",
+      "level": 50,
+      "description": "Manage backups and schedules",
+      "permissions": {
+        "manageUsers": false,
+        "manageBackups": true,
+        "manageSchedules": true,
+        "restore": true,
+        "delete": false,
+        "configure": false,
+        "viewLogs": true,
+        "manageRoles": false
+      }
+    },
+    {
+      "id": "viewer",
+      "name": "Viewer",
+      "level": 10,
+      "description": "Read-only access",
+      "permissions": {
+        "manageUsers": false,
+        "manageBackups": false,
+        "manageSchedules": false,
+        "restore": false,
+        "delete": false,
+        "configure": false,
+        "viewLogs": true,
+        "manageRoles": false
+      }
+    }
+  ],
+  "settings": {
+    "smtp": {
+      "host": "",
+      "port": 587,
+      "user": "",
+      "password": "",
+      "from": "",
+      "encryption": "tls"
+    },
+    "retention": {
+      "enabled": true,
+      "days": 30,
+      "copies": 10
+    },
+    "notifications": {
+      "email": false,
+      "emailOnSuccess": false,
+      "slack": "",
+      "discord": "",
+      "telegram": "",
+      "telegramBotToken": "",
+      "webhook": ""
+    },
+    "schedule": {
+      "timezone": "Europe/Kyiv"
+    }
+  }
+}

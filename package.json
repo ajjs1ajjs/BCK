@@ -1,0 +1,28 @@
+{
+  "name": "BCK",
+  "version": "1.0.0",
+  "description": "Backup Solution App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "cd frontend && npm run build",
+    "install:all": "cd frontend && npm install && cd ../backup-solution && npm install",
+    "dev:backend": "cd backup-solution && npm start",
+    "dev:frontend": "cd frontend && npm start",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint ."
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "eslint": "^7.0.0",
+    "jest": "^26.0.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^4.21.0",
+    "express-history-api-fallback": "^2.2.1",
+    "http-proxy-middleware": "^3.0.3"
+  }
+}
