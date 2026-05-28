@@ -28,6 +28,7 @@ if (!process.env.ENCRYPTION_KEY) {
   }
 }
 
+const { db, migrate } = require('./services/db');
 const cryptoHelper = require('./services/crypto');
 const logger = require('./services/logger');
 
@@ -177,11 +178,18 @@ const authorize = (permission) => {
 };
 
 const addLog = async (message, status = 'info') => {
-  const db = await readDB();
-  if (!db) return;
-  db.logs.unshift({ id: uuidv4(), timestamp: new Date().toISOString(), message, status });
-  if (db.logs.length > 500) db.logs.length = 500;
-  await writeDB(db);
+  try {
+    db.prepare('INSERT INTO logs (id, timestamp, message, status) VALUES (?, ?, ?, ?)')
+      .run(uuidv4(), new Date().toISOString(), message, status);
+    
+    const count = db.prepare('SELECT COUNT(*) as count FROM logs').get().count;
+    if (count > 500) {
+      db.prepare('DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT ?)')
+        .run(count - 500);
+    }
+  } catch (err) {
+    logger.error('Failed to add log: ' + err.message);
+  }
   
   if (status === 'error' || status === 'failed') {
     logger.error(message);
@@ -190,10 +198,23 @@ const addLog = async (message, status = 'info') => {
   }
 };
 
+const getSettings = () => {
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const settings = {};
+  rows.forEach(row => {
+    settings[row.key] = JSON.parse(row.value);
+  });
+  return settings;
+};
+
+const updateSetting = (key, value) => {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+    .run(key, JSON.stringify(value));
+};
+
 const pruneBackups = async (job) => {
   try {
-    const db = await readDB();
-    const settings = getSettings(db);
+    const settings = getSettings();
     const { retention } = settings;
     if (!retention || !retention.enabled) return;
 
@@ -213,13 +234,10 @@ const pruneBackups = async (job) => {
           if (stat.isFile()) {
             jobFiles.push({ name: file, path: filePath, time: stat.mtimeMs });
           }
-        } catch (e) {
-          // ignore
-        }
+        } catch (e) {}
       }
     }
 
-    // Sort by modification time, oldest first
     jobFiles.sort((a, b) => a.time - b.time);
 
     const now = Date.now();
@@ -251,74 +269,6 @@ const pruneBackups = async (job) => {
   }
 };
 
-const defaultData = {
-  backups: [],
-  schedules: [],
-  logs: [],
-  dbConnections: [],
-  sshConnections: [],
-  cloudCredentials: [],
-  users: [
-    { id: 'admin', username: 'admin', role: 'admin', email: 'admin@bck.local', active: true, createdAt: new Date().toISOString() },
-    { id: 'operator', username: 'operator', role: 'operator', email: 'operator@bck.local', active: true, createdAt: new Date().toISOString() },
-    { id: 'viewer', username: 'viewer', role: 'viewer', email: 'viewer@bck.local', active: true, createdAt: new Date().toISOString() },
-  ],
-  roles: [
-    {
-      id: 'admin', name: 'Admin', level: 100, description: 'Full system access',
-      permissions: { manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true },
-    },
-    {
-      id: 'operator', name: 'Operator', level: 50, description: 'Manage backups and schedules',
-      permissions: { manageUsers: false, manageBackups: true, manageSchedules: true, restore: true, delete: false, configure: false, viewLogs: true, manageRoles: false },
-    },
-    {
-      id: 'viewer', name: 'Viewer', level: 10, description: 'Read-only access',
-      permissions: { manageUsers: false, manageBackups: false, manageSchedules: false, restore: false, delete: false, configure: false, viewLogs: true, manageRoles: false },
-    },
-  ],
-  settings: {
-    smtp: { host: '', port: 587, user: '', password: '', from: '', encryption: 'tls' },
-    retention: { enabled: true, days: 30, copies: 10, customLimitEnabled: false, customLimitGB: 50 },
-    notifications: { email: false, emailOnSuccess: false, slack: '', discord: '', telegram: '', telegramBotToken: '', webhook: '' },
-    schedule: { timezone: 'UTC' },
-    security: { sessionTimeout: 60, preventConcurrent: false, minPasswordLength: 6 },
-    advanced: { tempPath: '', bandwidthLimit: 0, compressionLevel: 'medium' },
-    network: { appUrl: APP_URL, bindHost: HOST },
-  },
-  stats: { totalBackups: 0, successfulBackups: 0, failedBackups: 0, totalSize: 0, lastBackup: null },
-};
-
-const DEFAULT_PASSWORDS = { admin: '291263', operator: 'operator', viewer: 'viewer' };
-
-// ─── DB helpers ─────────────────────────────────────────────────────────────
-
-const initDB = async () => {
-  try {
-    await fs.access(DB_PATH);
-    const existing = JSON.parse(await fs.readFile(DB_PATH, 'utf8'));
-    // Merge missing collections
-    if (!existing.users || !existing.roles) {
-      Object.assign(existing, { users: existing.users || defaultData.users, roles: existing.roles || defaultData.roles });
-      for (const user of existing.users) {
-        if (user.password && !user.password.startsWith('$2a$') && !user.password.startsWith('$2b$')) {
-          user.password = await bcrypt.hash(user.password, SALT_ROUNDS);
-        }
-      }
-      await fs.writeFile(DB_PATH, JSON.stringify(existing, null, 2));
-    } else if (!existing.sshConnections) {
-      existing.sshConnections = [];
-      await fs.writeFile(DB_PATH, JSON.stringify(existing, null, 2));
-    }
-  } catch {
-    // Hash default passwords when creating fresh DB
-    const hashedUsers = await Promise.all(defaultData.users.map(async u => ({
-      ...u, password: await bcrypt.hash(DEFAULT_PASSWORDS[u.username] || 'changeme', SALT_ROUNDS),
-    })));
-    await fs.writeFile(DB_PATH, JSON.stringify({ ...defaultData, users: hashedUsers }, null, 2));
-  }
-};
-
 const SSH_KEYS_DIR = path.join(__dirname, 'data', 'ssh_keys');
 
 function writeSshKey(id, keyContent) {
@@ -336,25 +286,37 @@ function deleteSshKey(keyPath) {
   try { fsSync.unlinkSync(keyPath); } catch (e) { console.error('Failed to delete SSH key:', e.message); }
 }
 
-const readDB = async () => {
-  try { return JSON.parse(await fs.readFile(DB_PATH, 'utf8')); }
-  catch { return null; }
-};
+const initDB = async () => {
+  migrate(DB_PATH);
 
-// Queue database writes to prevent race conditions and data corruption
-let writeQueue = Promise.resolve();
-const writeDB = async (data) => {
-  return new Promise((resolve) => {
-    writeQueue = writeQueue.then(async () => {
-      try {
-        await fs.writeFile(DB_PATH, JSON.stringify(data, null, 2));
-        resolve(true);
-      } catch (err) {
-        console.error('Database write error:', err);
-        resolve(false);
-      }
-    });
-  });
+  const admin = db.prepare('SELECT * FROM users WHERE username = ?').get('admin');
+  if (!admin) {
+    console.log('Creating default users and roles...');
+    const hashedAdmin = await bcrypt.hash('291263', SALT_ROUNDS);
+    const hashedOperator = await bcrypt.hash('operator', SALT_ROUNDS);
+    const hashedViewer = await bcrypt.hash('viewer', SALT_ROUNDS);
+
+    db.transaction(() => {
+      const insertRole = db.prepare('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)');
+      insertRole.run('admin', 'Admin', 100, 'Full system access', JSON.stringify({ manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true }));
+      insertRole.run('operator', 'Operator', 50, 'Manage backups and schedules', JSON.stringify({ manageUsers: false, manageBackups: true, manageSchedules: true, restore: true, delete: false, configure: false, viewLogs: true, manageRoles: false }));
+      insertRole.run('viewer', 'Viewer', 10, 'Read-only access', JSON.stringify({ manageUsers: false, manageBackups: false, manageSchedules: false, restore: false, delete: false, configure: false, viewLogs: true, manageRoles: false }));
+
+      const insertUser = db.prepare('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
+      insertUser.run('admin', 'admin', hashedAdmin, 'admin', 'admin@bck.local', 1, new Date().toISOString());
+      insertUser.run('operator', 'operator', hashedOperator, 'operator', 'operator@bck.local', 1, new Date().toISOString());
+      insertUser.run('viewer', 'viewer', hashedViewer, 'viewer', 'viewer@bck.local', 1, new Date().toISOString());
+
+      const insertSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
+      insertSetting.run('smtp', JSON.stringify({ host: '', port: 587, user: '', password: '', from: '', encryption: 'tls' }));
+      insertSetting.run('retention', JSON.stringify({ enabled: true, days: 30, copies: 10, customLimitEnabled: false, customLimitGB: 50 }));
+      insertSetting.run('notifications', JSON.stringify({ email: false, emailOnSuccess: false, slack: '', discord: '', telegram: '', telegramBotToken: '', webhook: '' }));
+      insertSetting.run('schedule', JSON.stringify({ timezone: 'UTC' }));
+      insertSetting.run('security', JSON.stringify({ sessionTimeout: 60, preventConcurrent: false, minPasswordLength: 6 }));
+      insertSetting.run('advanced', JSON.stringify({ tempPath: '', bandwidthLimit: 0, compressionLevel: 'medium' }));
+      insertSetting.run('network', JSON.stringify({ appUrl: APP_URL, bindHost: HOST }));
+    })();
+  }
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -396,24 +358,30 @@ app.post('/api/login', authLimiter, async (req, res) => {
   const v = validate(schemas.login, req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { username, password } = v.data;
-  const db = await readDB();
-  const user = db?.users?.find(u => u.username === username && u.active !== false);
+  
+  const user = db.prepare('SELECT * FROM users WHERE username = ? AND active = 1').get(username);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(401).json({ error: 'Invalid credentials' });
-  const role = db?.roles?.find(r => r.id === user.role);
+  
+  const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(user.role);
+  const permissions = role ? JSON.parse(role.permissions) : {};
+  
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role, permissions: role?.permissions || {} },
+    { id: user.id, username: user.username, role: user.role, permissions },
     JWT_SECRET,
     { expiresIn: '24h' }
   );
+  
   res.cookie('token', token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     maxAge: 24 * 60 * 60 * 1000,
   });
-  res.json({ token, username: user.username, role: user.role, permissions: role?.permissions || {} });
+  
+  res.json({ token, username: user.username, role: user.role, permissions });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -423,339 +391,400 @@ app.post('/api/logout', (req, res) => {
 
 app.use('/api/', authenticate);
 
+// ─── Logs, Stats, Settings ──────────────────────────────────────────────────
+
+app.get('/api/logs', authorize('viewLogs'), async (req, res) => {
+  const { level, limit: qLimit } = req.query;
+  let query = 'SELECT * FROM logs';
+  const params = [];
+  
+  if (level) {
+    query += ' WHERE status = ?';
+    params.push(level);
+  }
+  
+  query += ' ORDER BY timestamp DESC';
+  
+  if (qLimit) {
+    query += ' LIMIT ?';
+    params.push(parseInt(qLimit));
+  }
+  
+  const items = db.prepare(query).all(...params);
+  res.json(items);
+});
+
 // ─── Backups CRUD ───────────────────────────────────────────────────────────
 
 app.get('/api/backups', async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const { type } = req.query;
-  let items = db.backups;
-  if (type) items = items.filter(b => b.backupType === type || b.type === type);
-  res.json(items);
+  let query = 'SELECT * FROM backups';
+  const params = [];
+  
+  if (type) {
+    query += ' WHERE backupType = ? OR type = ?';
+    params.push(type, type);
+  }
+  
+  query += ' ORDER BY createdAt DESC';
+  
+  const items = db.prepare(query).all(...params);
+  res.json(items.map(b => ({ ...b, config: JSON.parse(b.config) })));
 });
 
 app.post('/api/backups', authorize('manageBackups'), async (req, res) => {
   const v = validate(schemas.createBackup, req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, source, destination, type, backupType, config } = v.data;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
+  
+  const id = uuidv4();
+  const now = new Date().toISOString();
   const backup = {
-    id: uuidv4(), name, source, destination,
+    id, name, source, destination,
     type: type || 'full', backupType: backupType || 'files',
-    config: config || {},
-    status: 'pending', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    config: JSON.stringify(config || {}),
+    status: 'pending', createdAt: now, updatedAt: now,
   };
-  db.backups.push(backup);
-  if (await writeDB(db)) {
+  
+  try {
+    db.prepare(`
+      INSERT INTO backups (id, name, source, destination, type, backupType, config, status, createdAt, updatedAt)
+      VALUES (@id, @name, @source, @destination, @type, @backupType, @config, @status, @createdAt, @updatedAt)
+    `).run(backup);
+    
     await addLog(`Created backup: ${name} [${backupType}]`, 'success');
-    res.status(201).json(backup);
-  } else res.status(500).json({ error: 'Failed to save' });
+    res.status(201).json({ ...backup, config: config || {} });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
 });
 
 app.get('/api/backups/:id', async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const b = db.backups.find(x => x.id === req.params.id);
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
   if (!b) return res.status(404).json({ error: 'Not found' });
-  res.json(b);
+  res.json({ ...b, config: JSON.parse(b.config) });
 });
 
 app.put('/api/backups/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.backups.findIndex(x => x.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  db.backups[idx] = { ...db.backups[idx], ...req.body, updatedAt: new Date().toISOString() };
-  if (await writeDB(db)) {
-    await addLog(`Updated backup: ${db.backups[idx].name}`, 'success');
-    res.json(db.backups[idx]);
-  } else res.status(500).json({ error: 'Failed to update' });
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Not found' });
+  
+  const update = { ...b, ...req.body, updatedAt: new Date().toISOString() };
+  if (req.body.config) update.config = JSON.stringify(req.body.config);
+  
+  try {
+    db.prepare(`
+      UPDATE backups SET 
+        name = @name, source = @source, destination = @destination, 
+        type = @type, backupType = @backupType, config = @config, 
+        status = @status, updatedAt = @updatedAt 
+      WHERE id = @id
+    `).run(update);
+    
+    await addLog(`Updated backup: ${update.name}`, 'success');
+    res.json({ ...update, config: JSON.parse(update.config) });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
 });
 
 app.delete('/api/backups/:id', authorize('delete'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.backups.findIndex(x => x.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const [deleted] = db.backups.splice(idx, 1);
-  await updateStats(db);
-  if (await writeDB(db)) {
-    await addLog(`Deleted backup: ${deleted.name}`, 'success');
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Not found' });
+  
+  try {
+    db.prepare('DELETE FROM backups WHERE id = ?').run(req.params.id);
+    await addLog(`Deleted backup: ${b.name}`, 'success');
     res.json({ message: 'Deleted' });
-  } else res.status(500).json({ error: 'Failed to delete' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
 });
 
 app.get('/api/vm-backups', async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const vmSources = db.vmBackups || [];
-  const vmJobs = db.backups.filter(b => ['vmware', 'hyperv'].includes(b.backupType || b.type));
-  res.json([...vmSources, ...vmJobs]);
+  const vmJobs = db.prepare("SELECT * FROM backups WHERE backupType IN ('vmware', 'hyperv')").all();
+  res.json(vmJobs.map(b => ({ ...b, config: JSON.parse(b.config) })));
 });
 
 app.post('/api/vm-backups', authorize('manageBackups'), async (req, res) => {
   const { name, type, config } = req.body;
   if (!name || !type) return res.status(400).json({ error: 'Name and type required' });
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const vm = {
-    id: uuidv4(), name, type: type || 'vmware', config: config || {},
-    createdAt: new Date().toISOString(),
-  };
-  if (!db.vmBackups) db.vmBackups = [];
-  db.vmBackups.push(vm);
-  if (await writeDB(db)) {
-    res.status(201).json(vm);
-  } else res.status(500).json({ error: 'Failed to save' });
+  
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  try {
+    db.prepare(`
+      INSERT INTO backups (id, name, type, backupType, config, status, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, name, 'full', type, JSON.stringify(config || {}), 'pending', now, now);
+    
+    res.status(201).json({ id, name, type, config: config || {} });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
 });
 
 // ─── Backup Execution ───────────────────────────────────────────────────────
 
 app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.backups.findIndex(x => x.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Not found' });
 
-  const job = db.backups[idx];
-  job.status = 'running';
-  job.startedAt = new Date().toISOString();
-  await writeDB(db);
+  db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
+    .run('running', new Date().toISOString(), req.params.id);
 
-  res.json({ message: `Backup ${job.name} started`, id: job.id });
+  res.json({ message: `Backup ${b.name} started`, id: b.id });
 
-  try {
-    let result;
-    const backupType = job.backupType || job.type;
+  // Run in background
+  (async () => {
+    try {
+      const job = { ...b, config: JSON.parse(b.config) };
+      let result;
+      const backupType = job.backupType || job.type;
 
-    if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
-      const connRaw = db.dbConnections.find(c => c.id === job.config?.connectionId);
-      const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
-      result = await dbService.backup({
-        type: backupType, connection: conn, backupPath: job.destination, name: job.name,
-      });
-      if (result.success && job.config?.cloudCredentialId) {
-        const credRaw = db.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
-        if (credRaw) {
-          const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
-          if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
-          if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
-          if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
-          if (cred.credentials.credentials) {
-            const dec = cryptoHelper.decrypt(cred.credentials.credentials);
-            try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
-          }
-          const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
-          if (!uploadRes.success) {
-            result.success = false;
-            result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
+      if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
+        const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(job.config?.connectionId);
+        const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
+        result = await dbService.backup({
+          type: backupType, connection: conn, backupPath: job.destination, name: job.name,
+        });
+        if (result.success && job.config?.cloudCredentialId) {
+          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
+          if (credRaw) {
+            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+              if (cred.credentials[k] && cred.credentials[k] !== '***') {
+                 try {
+                   const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                   if (k === 'credentials') {
+                     try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                   } else {
+                     cred.credentials[k] = dec;
+                   }
+                 } catch (e) {}
+              }
+            });
+            const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
+            if (!uploadRes.success) {
+              result.success = false;
+              result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
+            }
           }
         }
-      }
-    } else if (['vmware', 'hyperv'].includes(backupType)) {
-      result = await vmService.backup({
-        type: backupType, vmName: job.config?.vmName || job.name,
-        host: job.config?.host, user: job.config?.user, password: job.config?.password,
-        datastore: job.config?.datastore, backupPath: job.destination,
-      });
-    } else if (backupType === 'host') {
-      result = await hostService.backup({
-        name: job.name,
-        sourcePath: job.config?.sourcePath || job.source,
-        backupPath: job.destination,
-        excludes: job.config?.excludes || [],
-      });
-    } else if (backupType === 'cloud') {
-      const credRaw = db.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
-      if (!credRaw) {
-        result = { success: false, error: 'Cloud credentials not found' };
-      } else {
-        const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
-        if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
-        if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
-        if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
-        if (cred.credentials.credentials) {
-          const dec = cryptoHelper.decrypt(cred.credentials.credentials);
-          try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
-        }
-        const uploadRes = await cloudService.upload(cred, job.source, job.destination);
-        result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
-      }
-    } else if (backupType === 'ssh') {
-      const connRaw = db.sshConnections.find(c => c.id === job.config?.connectionId);
-      if (!connRaw) {
-        result = { success: false, error: 'SSH connection not found' };
-      } else {
-        const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
-        result = await sshService.backup({
-          connection: conn, name: job.name,
+      } else if (['vmware', 'hyperv'].includes(backupType)) {
+        result = await vmService.backup({
+          type: backupType, vmName: job.config?.vmName || job.name,
+          host: job.config?.host, user: job.config?.user, password: job.config?.password,
+          datastore: job.config?.datastore, backupPath: job.destination,
+        });
+      } else if (backupType === 'host') {
+        result = await hostService.backup({
+          name: job.name,
           sourcePath: job.config?.sourcePath || job.source,
           backupPath: job.destination,
           excludes: job.config?.excludes || [],
         });
+      } else if (backupType === 'cloud') {
+        const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config?.cloudCredentialId);
+        if (!credRaw) {
+          result = { success: false, error: 'Cloud credentials not found' };
+        } else {
+          const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+          ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+            if (cred.credentials[k] && cred.credentials[k] !== '***') {
+               try {
+                 const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                 if (k === 'credentials') {
+                   try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                 } else {
+                   cred.credentials[k] = dec;
+                 }
+               } catch (e) {}
+            }
+          });
+          const uploadRes = await cloudService.upload(cred, job.source, job.destination);
+          result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
+        }
+      } else if (backupType === 'ssh') {
+        const connRaw = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(job.config?.connectionId);
+        if (!connRaw) {
+          result = { success: false, error: 'SSH connection not found' };
+        } else {
+          const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
+          result = await sshService.backup({
+            connection: conn, name: job.name,
+            sourcePath: job.config?.sourcePath || job.source,
+            backupPath: job.destination,
+            excludes: job.config?.excludes || [],
+          });
+        }
+      } else {
+        result = { success: true, file: job.destination, error: null };
       }
-    } else {
-      result = { success: true, file: job.destination, error: null };
-    }
 
-    const db2 = await readDB();
-    const idx2 = db2.backups.findIndex(x => x.id === req.params.id);
-    if (idx2 !== -1) {
-      db2.backups[idx2].status = result.success ? 'completed' : 'failed';
-      db2.backups[idx2].completedAt = new Date().toISOString();
-      db2.backups[idx2].resultFile = result.file || null;
-      db2.backups[idx2].error = result.error || null;
-      if (result.size) db2.stats.totalSize = (db2.stats.totalSize || 0) + result.size;
-      await updateStats(db2);
-      await writeDB(db2);
+      const status = result.success ? 'completed' : 'failed';
+      const now = new Date().toISOString();
+      db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = size + ? WHERE id = ?')
+        .run(status, now, result.file || null, result.error || null, result.size || 0, job.id);
+
       const logMsg = result.success ? `Backup completed: ${job.name}` : `Backup failed: ${job.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');
-      await sendNotification(db2, logMsg, result.success ? 'success' : 'error');
+      await sendNotification(logMsg, result.success ? 'success' : 'error');
       
       if (result.success) {
         await pruneBackups(job);
       }
-    }
-  } catch (e) {
-    const db3 = await readDB();
-    const idx3 = db3.backups.findIndex(x => x.id === req.params.id);
-    if (idx3 !== -1) {
-      db3.backups[idx3].status = 'failed';
-      db3.backups[idx3].error = e.message;
-      await writeDB(db3);
-      const errMsg = `Backup error: ${job.name} - ${e.message}`;
+    } catch (e) {
+      db.prepare('UPDATE backups SET status = ?, error = ? WHERE id = ?')
+        .run('failed', e.message, b.id);
+      const errMsg = `Backup error: ${b.name} - ${e.message}`;
       await addLog(errMsg, 'error');
-      await sendNotification(db3, errMsg, 'error');
+      await sendNotification(errMsg, 'error');
     }
-  }
+  })();
 });
 
 // ─── Restore ────────────────────────────────────────────────────────────────
 
 app.post('/api/restore', authorize('restore'), async (req, res) => {
   const { backupId, targetType, config } = req.body;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-
-  const job = db.backups.find(b => b.id === backupId);
-  if (!job) return res.status(404).json({ error: 'Backup not found' });
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(backupId);
+  if (!b) return res.status(404).json({ error: 'Backup not found' });
+  const job = { ...b, config: JSON.parse(b.config) };
 
   await addLog(`Restore started: ${job.name}`, 'info');
   res.json({ message: `Restore of ${job.name} initiated` });
 
-  try {
-    let result;
-    const backupType = job.backupType || job.type;
+  (async () => {
+    try {
+      let result;
+      const backupType = job.backupType || job.type;
 
-    if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
-      const conn = db.dbConnections.find(c => c.id === config?.connectionId);
-      let restoreFile = job.resultFile || config?.file;
+      if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
+        const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(config?.connectionId);
+        const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : null;
+        let restoreFile = job.resultFile || config?.file;
 
-      if (job.config?.cloudCredentialId) {
-        const cred = db.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
-        if (cred) {
-          const tempFile = path.join(os.tmpdir(), path.basename(restoreFile || 'restore.sql'));
-          const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
-          if (downloadRes.success) {
-            restoreFile = tempFile;
-          } else {
-            throw new Error(`Failed to download backup file from cloud: ${downloadRes.error}`);
+        if (job.config?.cloudCredentialId) {
+          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
+          if (credRaw) {
+            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+              if (cred.credentials[k] && cred.credentials[k] !== '***') {
+                try {
+                  const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                  if (k === 'credentials') {
+                    try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                  } else {
+                    cred.credentials[k] = dec;
+                  }
+                } catch (e) {}
+              }
+            });
+            const tempFile = path.join(os.tmpdir(), path.basename(restoreFile || 'restore.sql'));
+            const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+            if (downloadRes.success) {
+              restoreFile = tempFile;
+            } else {
+              throw new Error(`Failed to download backup file from cloud: ${downloadRes.error}`);
+            }
           }
         }
-      }
 
-      result = await dbService.restore({
-        type: backupType, connection: conn || config, file: restoreFile,
-      });
+        result = await dbService.restore({
+          type: backupType, connection: conn || config, file: restoreFile,
+        });
 
-      if (job.config?.cloudCredentialId && restoreFile && restoreFile.startsWith(os.tmpdir())) {
-        try { await fs.unlink(restoreFile); } catch (e) { console.error('Failed to cleanup temp file:', e.message); }
-      }
-    } else if (['vmware', 'hyperv'].includes(backupType)) {
-      result = await vmService.restore({
-        type: backupType, vmName: config?.vmName || job.name + '-restored',
-        host: config?.host, user: config?.user, password: config?.password,
-        file: job.resultFile,
-      });
-    } else if (backupType === 'host') {
-      result = await hostService.restore({
-        file: job.resultFile,
-        targetPath: targetType === 'original' ? (job.config?.sourcePath || job.source || '/') : (config?.targetPath || job.source || '/'),
-      });
-    } else if (backupType === 'cloud') {
-      const cred = db.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
-      if (!cred) {
-        result = { success: false, error: 'Cloud credentials not found' };
+        if (job.config?.cloudCredentialId && restoreFile && restoreFile.startsWith(os.tmpdir())) {
+          try { await fs.unlink(restoreFile); } catch (e) {}
+        }
+      } else if (['vmware', 'hyperv'].includes(backupType)) {
+        result = await vmService.restore({
+          type: backupType, vmName: config?.vmName || job.name + '-restored',
+          host: config?.host, user: config?.user, password: config?.password,
+          file: job.resultFile,
+        });
+      } else if (backupType === 'host') {
+        result = await hostService.restore({
+          file: job.resultFile,
+          targetPath: targetType === 'original' ? (job.config?.sourcePath || job.source || '/') : (config?.targetPath || job.source || '/'),
+        });
+      } else if (backupType === 'cloud') {
+        const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config?.cloudCredentialId);
+        if (!credRaw) {
+          result = { success: false, error: 'Cloud credentials not found' };
+        } else {
+          const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+          const localDest = targetType === 'original' ? job.destination : (config?.localPath || job.destination);
+          const downloadRes = await cloudService.download(cred, job.destination, localDest);
+          result = { success: downloadRes.success, error: downloadRes.error };
+        }
       } else {
-        const localDest = targetType === 'original' ? job.destination : (config?.localPath || job.destination);
-        const downloadRes = await cloudService.download(cred, job.destination, localDest);
-        result = { success: downloadRes.success, error: downloadRes.error };
+        result = { success: true };
       }
-    } else {
-      result = { success: true };
-    }
 
-    const restoreMsg = result.success ? `Restore completed: ${job.name}` : `Restore failed: ${job.name} - ${result.error}`;
-    await addLog(restoreMsg, result.success ? 'success' : 'error');
-    const dbAfter = await readDB();
-    if (dbAfter) await sendNotification(dbAfter, restoreMsg, result.success ? 'success' : 'error');
-  } catch (e) {
-    const errMsg = `Restore error: ${job.name} - ${e.message}`;
-    await addLog(errMsg, 'error');
-    const dbAfter = await readDB();
-    if (dbAfter) await sendNotification(dbAfter, errMsg, 'error');
-  }
+      const restoreMsg = result.success ? `Restore completed: ${job.name}` : `Restore failed: ${job.name} - ${result.error}`;
+      await addLog(restoreMsg, result.success ? 'success' : 'error');
+      await sendNotification(restoreMsg, result.success ? 'success' : 'error');
+    } catch (e) {
+      const errMsg = `Restore error: ${job.name} - ${e.message}`;
+      await addLog(errMsg, 'error');
+      await sendNotification(errMsg, 'error');
+    }
+  })();
 });
 
 // ─── Database Connections ───────────────────────────────────────────────────
 
 app.get('/api/db-connections', async (req, res) => {
-  const db = await readDB();
-  const safe = (db?.dbConnections || []).map(c => ({ ...c, password: c.password ? '***' : '' }));
-  res.json(safe);
+  const items = db.prepare('SELECT * FROM db_connections').all();
+  res.json(items.map(c => ({ ...c, password: c.password ? '***' : '' })));
 });
 
 app.post('/api/db-connections', authorize('manageBackups'), async (req, res) => {
   const v = validate(schemas.dbConnection, req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, type, host, port, user, password, database } = v.data;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const conn = { id: uuidv4(), name, type, host, port: port || 3306, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
-  db.dbConnections.push(conn);
-  if (await writeDB(db)) {
+  
+  try {
+    db.prepare('INSERT INTO db_connections (id, name, type, host, port, user, password, database) VALUES (@id, @name, @type, @host, @port, @user, @password, @database)')
+      .run(conn);
     res.status(201).json({ ...conn, password: '***' });
-  } else res.status(500).json({ error: 'Failed to save' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
 });
 
 app.put('/api/db-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.dbConnections.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const { password, ...rest } = req.body;
-  db.dbConnections[idx] = { ...db.dbConnections[idx], ...rest };
-  if (password && password !== '***') db.dbConnections[idx].password = cryptoHelper.encrypt(password);
-  if (await writeDB(db)) {
-    res.json({ ...db.dbConnections[idx], password: '***' });
-  } else res.status(500).json({ error: 'Failed to update' });
+  const conn = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(req.params.id);
+  if (!conn) return res.status(404).json({ error: 'Not found' });
+  
+  const update = { ...conn, ...req.body };
+  if (req.body.password && req.body.password !== '***') {
+    update.password = cryptoHelper.encrypt(req.body.password);
+  }
+  
+  try {
+    db.prepare('UPDATE db_connections SET name = @name, type = @type, host = @host, port = @port, user = @user, password = @password, database = @database WHERE id = @id')
+      .run(update);
+    res.json({ ...update, password: '***' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
 });
 
 app.delete('/api/db-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.dbConnections.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  db.dbConnections.splice(idx, 1);
-  if (await writeDB(db)) res.json({ message: 'Deleted' });
-  else res.status(500).json({ error: 'Failed to delete' });
+  try {
+    db.prepare('DELETE FROM db_connections WHERE id = ?').run(req.params.id);
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
 });
 
 app.post('/api/db-connections/:id/test', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const connRaw = db.dbConnections.find(c => c.id === req.params.id);
+  const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(req.params.id);
   if (!connRaw) return res.status(404).json({ error: 'Not found' });
   const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
@@ -766,77 +795,68 @@ app.post('/api/db-connections/:id/test', authorize('manageBackups'), async (req,
   }
 });
 
-app.get('/api/db-connections/:id/databases', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const connRaw = db.dbConnections.find(c => c.id === req.params.id);
-  if (!connRaw) return res.status(404).json({ error: 'Not found' });
-  const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
-  try {
-    const dbs = await dbService.listDatabases(conn.type, conn);
-    res.json(dbs);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ─── SSH Connections ────────────────────────────────────────────────────
 
 app.get('/api/ssh-connections', async (req, res) => {
-  const db = await readDB();
-  const safe = (db?.sshConnections || []).map(c => ({ ...c, password: c.password ? '***' : '', key: c.key ? '***' : '' }));
-  res.json(safe);
+  const items = db.prepare('SELECT * FROM ssh_connections').all();
+  res.json(items.map(c => ({ ...c, password: c.password ? '***' : '', key: c.key ? '***' : '' })));
 });
 
 app.post('/api/ssh-connections', authorize('manageBackups'), async (req, res) => {
   const v = validate(schemas.sshConnection, req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, host, port, user, password, key } = v.data;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const id = uuidv4();
   const keyPath = writeSshKey(id, key);
   const conn = { id, name, host, port: port || 22, user, password: cryptoHelper.encrypt(password || ''), key: keyPath || '', createdAt: new Date().toISOString() };
-  db.sshConnections.push(conn);
-  if (await writeDB(db)) {
+  
+  try {
+    db.prepare('INSERT INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)')
+      .run(conn);
     await addLog(`SSH connection added: ${name}`, 'success');
     res.status(201).json({ ...conn, password: '***', key: '***' });
-  } else res.status(500).json({ error: 'Failed to save' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
 });
 
 app.put('/api/ssh-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.sshConnections.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const { password, key, ...rest } = req.body;
-  db.sshConnections[idx] = { ...db.sshConnections[idx], ...rest };
-  if (password && password !== '***') db.sshConnections[idx].password = cryptoHelper.encrypt(password);
-  if (key && key !== '***') {
-    deleteSshKey(db.sshConnections[idx].key);
-    db.sshConnections[idx].key = writeSshKey(db.sshConnections[idx].id, key);
+  const conn = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(req.params.id);
+  if (!conn) return res.status(404).json({ error: 'Not found' });
+  
+  const update = { ...conn, ...req.body };
+  if (req.body.password && req.body.password !== '***') {
+    update.password = cryptoHelper.encrypt(req.body.password);
   }
-  if (await writeDB(db)) {
-    await addLog(`SSH connection updated: ${db.sshConnections[idx].name}`, 'info');
-    res.json({ ...db.sshConnections[idx], password: '***', key: '***' });
-  } else res.status(500).json({ error: 'Failed to update' });
+  if (req.body.key && req.body.key !== '***') {
+    deleteSshKey(conn.key);
+    update.key = writeSshKey(conn.id, req.body.key);
+  }
+  
+  try {
+    db.prepare('UPDATE ssh_connections SET name = @name, host = @host, port = @port, user = @user, password = @password, key = @key WHERE id = @id')
+      .run(update);
+    await addLog(`SSH connection updated: ${update.name}`, 'info');
+    res.json({ ...update, password: '***', key: '***' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
 });
 
 app.delete('/api/ssh-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.sshConnections.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  deleteSshKey(db.sshConnections[idx].key);
-  db.sshConnections.splice(idx, 1);
-  if (await writeDB(db)) res.json({ message: 'Deleted' });
-  else res.status(500).json({ error: 'Failed to delete' });
+  const conn = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(req.params.id);
+  if (!conn) return res.status(404).json({ error: 'Not found' });
+  deleteSshKey(conn.key);
+  try {
+    db.prepare('DELETE FROM ssh_connections WHERE id = ?').run(req.params.id);
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
 });
 
 app.post('/api/ssh-connections/:id/test', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const connRaw = db.sshConnections.find(c => c.id === req.params.id);
+  const connRaw = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(req.params.id);
   if (!connRaw) return res.status(404).json({ error: 'Not found' });
   const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
@@ -850,16 +870,14 @@ app.post('/api/ssh-connections/:id/test', authorize('manageBackups'), async (req
 // ─── Cloud Credentials ──────────────────────────────────────────────────
 
 app.get('/api/cloud-credentials', async (req, res) => {
-  const db = await readDB();
-  res.json(db?.cloudCredentials?.map(c => ({ ...c, credentials: { ...c.credentials, secretAccessKey: '***', accessKey: '***', password: '***' } })) || []);
+  const items = db.prepare('SELECT * FROM cloud_credentials').all();
+  res.json(items.map(c => ({ ...c, credentials: { ...JSON.parse(c.credentials), secretAccessKey: '***', accessKey: '***', password: '***' } })));
 });
 
 app.post('/api/cloud-credentials', authorize('manageBackups'), async (req, res) => {
   const v = validate(schemas.cloudCredential, req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, provider, credentials } = v.data;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
 
   const encryptedCredentials = { ...credentials };
   if (encryptedCredentials.secretAccessKey) encryptedCredentials.secretAccessKey = cryptoHelper.encrypt(encryptedCredentials.secretAccessKey);
@@ -873,76 +891,74 @@ app.post('/api/cloud-credentials', authorize('manageBackups'), async (req, res) 
     }
   }
 
-  const cred = { id: uuidv4(), name, provider, credentials: encryptedCredentials, createdAt: new Date().toISOString() };
-  db.cloudCredentials.push(cred);
-  if (await writeDB(db)) {
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  try {
+    db.prepare('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)')
+      .run(id, name, provider, JSON.stringify(encryptedCredentials), now);
     await addLog(`Cloud credentials added: ${name} [${provider}]`, 'success');
-    res.status(201).json({ ...cred, credentials: { ...credentials, secretAccessKey: '***', accessKey: '***', password: '***' } });
-  } else res.status(500).json({ error: 'Failed to save' });
+    res.status(201).json({ id, name, provider, credentials: { ...credentials, secretAccessKey: '***', accessKey: '***', password: '***' } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
 });
 
 app.put('/api/cloud-credentials/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.cloudCredentials.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const { credentials } = req.body;
-  const curr = db.cloudCredentials[idx];
+  const curr = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(req.params.id);
+  if (!curr) return res.status(404).json({ error: 'Not found' });
+  
+  const { credentials, name } = req.body;
+  let finalCreds = JSON.parse(curr.credentials);
+  
   if (credentials) {
-    const merged = { ...curr.credentials };
     for (const [k, v] of Object.entries(credentials)) {
       if (v !== '***') {
-        if (k === 'secretAccessKey' || k === 'accessKey' || k === 'password') {
-          merged[k] = cryptoHelper.encrypt(v);
+        if (['secretAccessKey', 'accessKey', 'password'].includes(k)) {
+          finalCreds[k] = cryptoHelper.encrypt(v);
         } else if (k === 'credentials') {
-          if (typeof v === 'object') {
-            merged[k] = cryptoHelper.encrypt(JSON.stringify(v));
-          } else {
-            merged[k] = cryptoHelper.encrypt(v);
-          }
+          finalCreds[k] = cryptoHelper.encrypt(typeof v === 'object' ? JSON.stringify(v) : v);
         } else {
-          merged[k] = v;
+          finalCreds[k] = v;
         }
       }
     }
-    curr.credentials = merged;
   }
-  if (req.body.name) curr.name = req.body.name;
-  if (await writeDB(db)) res.json({ ...curr, credentials: { ...curr.credentials, secretAccessKey: '***', accessKey: '***', password: '***' } });
-  else res.status(500).json({ error: 'Failed to update' });
+  
+  try {
+    db.prepare('UPDATE cloud_credentials SET name = ?, credentials = ? WHERE id = ?')
+      .run(name || curr.name, JSON.stringify(finalCreds), req.params.id);
+    res.json({ id: curr.id, name: name || curr.name, provider: curr.provider, credentials: { ...finalCreds, secretAccessKey: '***', accessKey: '***', password: '***' } });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
 });
 
 app.delete('/api/cloud-credentials/:id', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.cloudCredentials.findIndex(c => c.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  db.cloudCredentials.splice(idx, 1);
-  if (await writeDB(db)) res.json({ message: 'Deleted' });
-  else res.status(500).json({ error: 'Failed to delete' });
+  try {
+    db.prepare('DELETE FROM cloud_credentials WHERE id = ?').run(req.params.id);
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
 });
 
 app.post('/api/cloud-credentials/:id/test', authorize('manageBackups'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const credRaw = db.cloudCredentials.find(c => c.id === req.params.id);
+  const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(req.params.id);
   if (!credRaw) return res.status(404).json({ error: 'Not found' });
 
-  const cred = {
-    ...credRaw,
-    credentials: { ...credRaw.credentials }
-  };
-  if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
-  if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
-  if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
-  if (cred.credentials.credentials) {
-    const dec = cryptoHelper.decrypt(cred.credentials.credentials);
-    try {
-      cred.credentials.credentials = JSON.parse(dec);
-    } catch {
-      cred.credentials.credentials = dec;
+  const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+  ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+    if (cred.credentials[k] && cred.credentials[k] !== '***') {
+       try {
+         const dec = cryptoHelper.decrypt(cred.credentials[k]);
+         if (k === 'credentials') {
+           try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+         } else {
+           cred.credentials[k] = dec;
+         }
+       } catch (e) {}
     }
-  }
+  });
 
   const toolCheck = cloudService.checkTools(cred.provider);
   if (!toolCheck.available) return res.json({ success: false, error: `${cred.provider} CLI not installed` });
@@ -982,57 +998,238 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
+// ─── Stats ──────────────────────────────────────────────────────────────────
+
+app.get('/api/stats', async (req, res) => {
+  const backups = db.prepare('SELECT status, completedAt FROM backups').all();
+  const total = backups.length;
+  const success = backups.filter(b => b.status === 'completed').length;
+  const failed = backups.filter(b => b.status === 'failed').length;
+  const last = backups.filter(b => b.completedAt).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))[0];
+  
+  // In a real system, disk space would be checked here
+  res.json({
+    totalBackups: total,
+    successfulBackups: success,
+    failedBackups: failed,
+    lastBackup: last?.completedAt || null,
+    diskSpace: { totalBytes: 100*1024*1024*1024, usedBytes: 10*1024*1024*1024, freeBytes: 90*1024*1024*1024, isQuota: false }
+  });
+});
+
+// ─── Settings ───────────────────────────────────────────────────────────────
+
+app.get('/api/settings', async (req, res) => {
+  const settings = getSettings();
+  const safe = {
+    ...settings,
+    smtp: { ...settings.smtp, password: settings.smtp?.password ? '***' : '' },
+    network: {
+      ...settings.network,
+      localIp: getLocalIp(),
+      effectiveAppUrl: settings.network?.appUrl || buildDefaultAppUrl(),
+    },
+  };
+  res.json(safe);
+});
+
+app.put('/api/settings', authorize('configure'), async (req, res) => {
+  const body = req.body;
+  const current = getSettings();
+
+  const merged = {
+    smtp: { ...current.smtp, ...(body.smtp || {}) },
+    retention: { ...current.retention, ...(body.retention || {}) },
+    notifications: { ...current.notifications, ...(body.notifications || {}) },
+    schedule: { ...current.schedule, ...(body.schedule || {}) },
+    security: { ...current.security, ...(body.security || {}) },
+    advanced: { ...current.advanced, ...(body.advanced || {}) },
+    network: { ...current.network, ...(body.network || {}) },
+  };
+
+  if (body.smtp && body.smtp.password === '***') {
+    merged.smtp.password = current.smtp.password;
+  }
+
+  try {
+    db.transaction(() => {
+      for (const [key, value] of Object.entries(merged)) {
+        updateSetting(key, value);
+      }
+    })();
+    await addLog('Settings updated', 'info');
+    res.json(merged);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save settings: ' + err.message });
+  }
+});
+
+// ─── Users ──────────────────────────────────────────────────────────────────
+
+app.get('/api/users', authorize('manageUsers'), async (req, res) => {
+  const users = db.prepare('SELECT id, username, role, email, active, createdAt FROM users').all();
+  res.json(users);
+});
+
+app.post('/api/users', authorize('manageUsers'), async (req, res) => {
+  const v = validate(schemas.createUser, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { username, password, role, email } = v.data;
+  
+  if (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) {
+    return res.status(400).json({ error: 'Username exists' });
+  }
+  
+  const hashed = await bcrypt.hash(password, SALT_ROUNDS);
+  const user = { id: uuidv4(), username, password: hashed, role, email: email || '', active: 1, createdAt: new Date().toISOString() };
+  
+  try {
+    db.prepare('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (@id, @username, @password, @role, @email, @active, @createdAt)')
+      .run(user);
+    await addLog(`User created: ${username}`, 'success');
+    res.status(201).json({ ...user, password: '***' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
+});
+
+app.put('/api/users/:id', authorize('manageUsers'), async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  
+  const update = { ...user, ...req.body };
+  if (req.body.password && req.body.password !== '***') {
+    update.password = await bcrypt.hash(req.body.password, SALT_ROUNDS);
+  }
+  update.active = update.active ? 1 : 0;
+  
+  try {
+    db.prepare('UPDATE users SET username = @username, password = @password, role = @role, email = @email, active = @active WHERE id = @id')
+      .run(update);
+    await addLog(`User updated: ${update.username}`, 'info');
+    res.json({ ...update, password: '***' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
+});
+
+app.delete('/api/users/:id', authorize('manageUsers'), async (req, res) => {
+  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  
+  try {
+    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    await addLog(`User deleted: ${user.username}`, 'warning');
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
+});
+
+// ─── Roles ──────────────────────────────────────────────────────────────────
+
+app.get('/api/roles', authorize('manageRoles'), async (req, res) => {
+  const roles = db.prepare('SELECT * FROM roles').all();
+  res.json(roles.map(r => ({ ...r, permissions: JSON.parse(r.permissions) })));
+});
+
+app.post('/api/roles', authorize('manageRoles'), async (req, res) => {
+  const { name, description, permissions } = req.body;
+  if (!name || !permissions) return res.status(400).json({ error: 'Name and permissions required' });
+  const role = { id: uuidv4(), name, description: description || '', level: 1, permissions: JSON.stringify(permissions) };
+  
+  try {
+    db.prepare('INSERT INTO roles (id, name, description, level, permissions) VALUES (@id, @name, @description, @level, @permissions)')
+      .run(role);
+    await addLog(`Role created: ${name}`, 'success');
+    res.status(201).json({ ...role, permissions });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
+});
+
+app.put('/api/roles/:id', authorize('manageRoles'), async (req, res) => {
+  const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(req.params.id);
+  if (!role) return res.status(404).json({ error: 'Not found' });
+  
+  const update = { ...role, ...req.body };
+  if (req.body.permissions) update.permissions = JSON.stringify(req.body.permissions);
+  
+  try {
+    db.prepare('UPDATE roles SET name = @name, description = @description, level = @level, permissions = @permissions WHERE id = @id')
+      .run(update);
+    await addLog(`Role updated: ${update.name}`, 'info');
+    res.json({ ...update, permissions: JSON.parse(update.permissions) });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
+});
+
+app.delete('/api/roles/:id', authorize('manageRoles'), async (req, res) => {
+  try {
+    db.prepare('DELETE FROM roles WHERE id = ?').run(req.params.id);
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
+});
+
 // ─── Schedules ──────────────────────────────────────────────────────────────
 
 app.get('/api/schedules', async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  res.json(db.schedules);
+  const items = db.prepare('SELECT * FROM schedules').all();
+  res.json(items);
 });
 
 app.post('/api/schedules', authorize('manageSchedules'), async (req, res) => {
   const v = validate(schemas.createSchedule, req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, cronExpression, backupId } = v.data;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-  db.schedules.push(schedule);
-  if (await writeDB(db)) {
+  
+  const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  
+  try {
+    db.prepare('INSERT INTO schedules (id, name, cronExpression, backupId, enabled, createdAt, updatedAt) VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)')
+      .run(schedule);
     refreshScheduler();
     await addLog(`Schedule created: ${name}`, 'success');
     res.status(201).json(schedule);
-  } else res.status(500).json({ error: 'Failed to save' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to save: ' + err.message });
+  }
 });
 
 app.put('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.schedules.findIndex(s => s.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  db.schedules[idx] = { ...db.schedules[idx], ...req.body, updatedAt: new Date().toISOString() };
-  if (await writeDB(db)) {
+  const s = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
+  if (!s) return res.status(404).json({ error: 'Not found' });
+  
+  const update = { ...s, ...req.body, updatedAt: new Date().toISOString() };
+  update.enabled = update.enabled ? 1 : 0;
+  
+  try {
+    db.prepare('UPDATE schedules SET name = @name, cronExpression = @cronExpression, backupId = @backupId, enabled = @enabled, updatedAt = @updatedAt WHERE id = @id')
+      .run(update);
     refreshScheduler();
-    res.json(db.schedules[idx]);
-  } else res.status(500).json({ error: 'Failed to update' });
+    res.json(update);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update: ' + err.message });
+  }
 });
 
 app.delete('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.schedules.findIndex(s => s.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  db.schedules.splice(idx, 1);
-  if (await writeDB(db)) {
+  try {
+    db.prepare('DELETE FROM schedules WHERE id = ?').run(req.params.id);
     refreshScheduler();
     res.json({ message: 'Deleted' });
-  } else res.status(500).json({ error: 'Failed to delete' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete: ' + err.message });
+  }
 });
 
 // ─── Notification helper ─────────────────────────────────────────────────────
 
-async function sendNotification(db, message, status) {
-  const settings = getSettings(db);
+async function sendNotification(message, status) {
+  const settings = getSettings();
   const { notifications, smtp } = settings;
 
   if (notifications.email && smtp.host && smtp.user && smtp.password) {
@@ -1111,136 +1308,170 @@ function refreshScheduler() {
     delete cronTasks[id];
   }
 
-  readDB().then((db) => {
-    if (!db) return;
-    for (const s of (db.schedules || [])) {
-      if (!s.enabled || !s.cronExpression) continue;
-      if (!cron.validate(s.cronExpression)) {
-        console.warn(`Invalid cron expression for schedule "${s.name}": ${s.cronExpression}`);
-        continue;
-      }
-      const task = cron.schedule(s.cronExpression, async () => {
-        const db2 = await readDB();
-        if (!db2) return;
-        const idx = db2.backups.findIndex(b => b.id === s.backupId);
-        if (idx === -1) return;
-        const job = db2.backups[idx];
-        job.status = 'running';
-        job.startedAt = new Date().toISOString();
-        await writeDB(db2);
-        await addLog(`Scheduled backup started: ${job.name}`, 'info');
+  const schedules = db.prepare('SELECT * FROM schedules WHERE enabled = 1').all();
+  for (const s of schedules) {
+    if (!s.cronExpression) continue;
+    if (!cron.validate(s.cronExpression)) {
+      console.warn(`Invalid cron expression for schedule "${s.name}": ${s.cronExpression}`);
+      continue;
+    }
+    const task = cron.schedule(s.cronExpression, async () => {
+      const jobRaw = db.prepare('SELECT * FROM backups WHERE id = ?').get(s.backupId);
+      if (!jobRaw) return;
+      const job = { ...jobRaw, config: JSON.parse(jobRaw.config) };
 
+      db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
+        .run('running', new Date().toISOString(), job.id);
+      await addLog(`Scheduled backup started: ${job.name}`, 'info');
+
+      try {
         let result;
         const backupType = job.backupType || job.type;
 
-        try {
-          if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
-            const connRaw = db2.dbConnections.find(c => c.id === job.config?.connectionId);
-            const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
-            result = await dbService.backup({
-              type: backupType, connection: conn, backupPath: job.destination, name: job.name,
-            });
-            if (result.success && job.config?.cloudCredentialId) {
-              const credRaw = db2.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
-              if (credRaw) {
-                const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
-                if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
-                if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
-                if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
-                if (cred.credentials.credentials) {
-                  const dec = cryptoHelper.decrypt(cred.credentials.credentials);
-                  try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
+        if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
+          const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(job.config?.connectionId);
+          const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
+          result = await dbService.backup({
+            type: backupType, connection: conn, backupPath: job.destination, name: job.name,
+          });
+          if (result.success && job.config?.cloudCredentialId) {
+            const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
+            if (credRaw) {
+              const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+              ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+                if (cred.credentials[k] && cred.credentials[k] !== '***') {
+                  try {
+                    const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                    if (k === 'credentials') {
+                      try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                    } else {
+                      cred.credentials[k] = dec;
+                    }
+                  } catch (e) {}
                 }
-                const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
-                if (!uploadRes.success) {
-                  result.success = false;
-                  result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
-                }
+              });
+              const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
+              if (!uploadRes.success) {
+                result.success = false;
+                result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
               }
             }
-          } else if (['vmware', 'hyperv'].includes(backupType)) {
-            result = await vmService.backup({
-              type: backupType, vmName: job.config?.vmName || job.name,
-              host: job.config?.host, user: job.config?.user, password: job.config?.password,
-              datastore: job.config?.datastore, backupPath: job.destination,
+          }
+        } else if (['vmware', 'hyperv'].includes(backupType)) {
+          result = await vmService.backup({
+            type: backupType, vmName: job.config?.vmName || job.name,
+            host: job.config?.host, user: job.config?.user, password: job.config?.password,
+            datastore: job.config?.datastore, backupPath: job.destination,
+          });
+        } else if (backupType === 'host') {
+          result = await hostService.backup({
+            name: job.name,
+            sourcePath: job.config?.sourcePath || job.source,
+            backupPath: job.destination,
+            excludes: job.config?.excludes || [],
+          });
+        } else if (backupType === 'cloud') {
+          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config?.cloudCredentialId);
+          if (credRaw) {
+            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+              if (cred.credentials[k] && cred.credentials[k] !== '***') {
+                 try {
+                   const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                   if (k === 'credentials') {
+                     try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                   } else {
+                     cred.credentials[k] = dec;
+                   }
+                 } catch (e) {}
+              }
             });
-          } else if (backupType === 'host') {
-            result = await hostService.backup({
-              name: job.name,
+            const uploadRes = await cloudService.upload(cred, job.source, job.destination);
+            result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
+          }
+        } else if (backupType === 'ssh') {
+          const connRaw = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(job.config?.connectionId);
+          if (connRaw) {
+            const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
+            result = await sshService.backup({
+              connection: conn, name: job.name,
               sourcePath: job.config?.sourcePath || job.source,
               backupPath: job.destination,
               excludes: job.config?.excludes || [],
             });
-          } else if (backupType === 'cloud') {
-            const credRaw = db2.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
-            if (!credRaw) {
-              result = { success: false, error: 'Cloud credentials not found' };
-            } else {
-              const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
-              if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
-              if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
-              if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
-              if (cred.credentials.credentials) {
-                const dec = cryptoHelper.decrypt(cred.credentials.credentials);
-                try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
-              }
-              const uploadRes = await cloudService.upload(cred, job.source, job.destination);
-              result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
-            }
-          } else if (backupType === 'ssh') {
-            const connRaw = db2.sshConnections.find(c => c.id === job.config?.connectionId);
-            if (!connRaw) {
-              result = { success: false, error: 'SSH connection not found' };
-            } else {
-              const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
-              result = await sshService.backup({
-                connection: conn, name: job.name,
-                sourcePath: job.config?.sourcePath || job.source,
-                backupPath: job.destination,
-                excludes: job.config?.excludes || [],
-              });
-            }
-          } else {
-            result = { success: true, file: job.destination, error: null };
           }
-
-          const db3 = await readDB();
-          const idx3 = db3.backups.findIndex(b => b.id === s.backupId);
-          if (idx3 !== -1) {
-            db3.backups[idx3].status = result.success ? 'completed' : 'failed';
-            db3.backups[idx3].completedAt = new Date().toISOString();
-            db3.backups[idx3].resultFile = result.file || null;
-            db3.backups[idx3].error = result.error || null;
-            if (result.size) db3.stats.totalSize = (db3.stats.totalSize || 0) + result.size;
-            await updateStats(db3);
-            await writeDB(db3);
-            const logMsg = result.success ? `Scheduled backup completed: ${job.name}` : `Scheduled backup failed: ${job.name} - ${result.error}`;
-            await addLog(logMsg, result.success ? 'success' : 'error');
-            await sendNotification(db3, logMsg, result.success ? 'success' : 'error');
-            
-            if (result.success) {
-              await pruneBackups(job);
-            }
-          }
-        } catch (e) {
-          const db4 = await readDB();
-          const idx4 = db4.backups.findIndex(b => b.id === s.backupId);
-          if (idx4 !== -1) {
-            db4.backups[idx4].status = 'failed';
-            db4.backups[idx4].error = e.message;
-            await writeDB(db4);
-            const errMsg = `Scheduled backup error: ${job.name} - ${e.message}`;
-            await addLog(errMsg, 'error');
-            await sendNotification(db4, errMsg, 'error');
-          }
+        } else {
+          result = { success: true, file: job.destination, error: null };
         }
-      });
-      cronTasks[s.id] = task;
-    }
-  }).catch((err) => {
-    console.error('Scheduler refresh failed:', err.message);
-  });
+
+        const status = result?.success ? 'completed' : 'failed';
+        db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = size + ? WHERE id = ?')
+          .run(status, new Date().toISOString(), result?.file || null, result?.error || null, result?.size || 0, job.id);
+        const logMsg = result?.success ? `Scheduled backup completed: ${job.name}` : `Scheduled backup failed: ${job.name} - ${result?.error}`;
+        await addLog(logMsg, result?.success ? 'success' : 'error');
+        await sendNotification(logMsg, result?.success ? 'success' : 'error');
+        
+        if (result?.success) {
+          await pruneBackups(job);
+        }
+      } catch (e) {
+        db.prepare('UPDATE backups SET status = ?, error = ? WHERE id = ?')
+          .run('failed', e.message, job.id);
+        const errMsg = `Scheduled backup error: ${job.name} - ${e.message}`;
+        await addLog(errMsg, 'error');
+        await sendNotification(errMsg, 'error');
+      }
+    });
+    cronTasks[s.id] = task;
+  }
 }
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
+// ─── Frontend ───────────────────────────────────────────────────────────────
+
+const buildPath = path.join(__dirname, 'frontend', 'build');
+fs.access(buildPath).then(() => {
+  app.use(express.static(buildPath));
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(buildPath, 'index.html'));
+  });
+}).catch(() => {
+  console.log('No production build found — API only');
+});
+
+// ─── Start ──────────────────────────────────────────────────────────────────
+
+const start = async () => {
+  await initDB();
+  refreshScheduler();
+
+  const sslCert = process.env.SSL_CERT_PATH;
+  const sslKey = process.env.SSL_KEY_PATH;
+
+  if (sslCert && sslKey) {
+    try {
+      const https = require('https');
+      const credentials = { key: fsSync.readFileSync(sslKey), cert: fsSync.readFileSync(sslCert) };
+      https.createServer(credentials, app).listen(PORT, HOST, () => {
+        console.log(`BCK server (HTTPS) running on ${buildDefaultAppUrl()}`);
+      });
+    } catch (e) {
+      console.error('Failed to start HTTPS server:', e.message);
+      process.exit(1);
+    }
+  } else {
+    app.listen(PORT, HOST, () => {
+      console.log(`BCK server running on ${buildDefaultAppUrl()}`);
+    });
+  }
+};
+
+start();
+
+module.exports = app;
 
 // ─── Logs, Stats, Settings ──────────────────────────────────────────────────
 

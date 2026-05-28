@@ -6,4 +6,5 @@ frontend/build/
 *.log
 .DS_Store
 db.json
+data/bck.db
 data/ssh_keys/
