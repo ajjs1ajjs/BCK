@@ -1,6 +1,10 @@
 const { runAsync, checkTool } = require('./exec');
 const spawn = require('child_process').spawn;
 const fs = require('fs');
+const zlib = require('zlib');
+const os = require('os');
+const path = require('path');
+const { execSync } = require('child_process');
 
 const ENGINES = {
   mysql: {
@@ -57,6 +61,35 @@ const ENGINES = {
   },
 };
 
+function getDiskSpace(dirPath) {
+  const absolutePath = path.resolve(dirPath);
+  try {
+    if (os.platform() === 'win32') {
+      const drive = absolutePath.substring(0, 3);
+      const output = execSync(`powershell -Command "Get-Volume -DriveLetter ${drive[0]} | Select-Object SizeRemaining, Size"`, { encoding: 'utf8' });
+      const lines = output.trim().split('\n').map(l => l.trim()).filter(Boolean);
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/);
+        const free = parseInt(parts[0], 10);
+        const total = parseInt(parts[1], 10);
+        return { free, total };
+      }
+    } else {
+      const output = execSync(`df -B1 "${absolutePath}"`, { encoding: 'utf8' });
+      const lines = output.trim().split('\n');
+      if (lines.length >= 2) {
+        const parts = lines[1].split(/\s+/);
+        const total = parseInt(parts[1], 10);
+        const free = parseInt(parts[3], 10);
+        return { free, total };
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+  return { free: 1024 * 1024 * 1024, total: 10 * 1024 * 1024 * 1024 }; // 1GB free fallback
+}
+
 function getEngine(type) {
   const engine = ENGINES[type];
   if (!engine) throw new Error(`Unsupported DB engine: ${type}`);
@@ -79,7 +112,12 @@ function runCommandWithRedirection({ cmd, args, env, outFile, inFile }) {
       
       if (outFile) {
         const outStream = fs.createWriteStream(outFile);
-        p.stdout.pipe(outStream);
+        if (outFile.endsWith('.gz')) {
+          const gzip = zlib.createGzip();
+          p.stdout.pipe(gzip).pipe(outStream);
+        } else {
+          p.stdout.pipe(outStream);
+        }
         outStream.on('error', (err) => {
           stderr += `\nWrite stream error: ${err.message}`;
         });
@@ -87,7 +125,12 @@ function runCommandWithRedirection({ cmd, args, env, outFile, inFile }) {
 
       if (inFile) {
         const inStream = fs.createReadStream(inFile);
-        inStream.pipe(p.stdin);
+        if (inFile.endsWith('.gz')) {
+          const gunzip = zlib.createGunzip();
+          inStream.pipe(gunzip).pipe(p.stdin);
+        } else {
+          inStream.pipe(p.stdin);
+        }
         inStream.on('error', (err) => {
           stderr += `\nRead stream error: ${err.message}`;
         });
@@ -124,12 +167,17 @@ async function backup(backupConfig) {
     return { success: false, error: `${type} CLI tools not found on server` };
   }
 
-  const outFile = `${backupPath}/${name}_${Date.now()}.${type === 'postgres' ? 'dump' : 'sql'}`;
+  // Disk space check
+  const disk = getDiskSpace(backupPath);
+  if (disk && disk.free < 50 * 1024 * 1024) { // Less than 50MB free
+    return { success: false, error: `Insufficient disk space: only ${(disk.free / 1024 / 1024).toFixed(2)}MB free` };
+  }
+
+  const outFile = `${backupPath}/${name}_${Date.now()}.${type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : 'sql')}`;
   const dumpConf = engine.dump(connection, outFile);
 
   let result;
   if (type === 'oracle') {
-    // expdp writes internally to directory
     const r = await runAsync(dumpConf.cmd, dumpConf.args, { env: dumpConf.env });
     result = { success: r.success, error: r.stderr };
   } else {

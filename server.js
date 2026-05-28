@@ -14,6 +14,23 @@ const rateLimit = require('express-rate-limit');
 
 require('dotenv').config();
 
+// Ensure ENCRYPTION_KEY is present in .env
+if (!process.env.ENCRYPTION_KEY) {
+  const secureKey = require('crypto').randomBytes(32).toString('hex');
+  process.env.ENCRYPTION_KEY = secureKey;
+  try {
+    const envPath = path.join(__dirname, '.env');
+    if (fsSync.existsSync(envPath)) {
+      fsSync.appendFileSync(envPath, `\nENCRYPTION_KEY=${secureKey}\n`, 'utf8');
+    }
+  } catch (err) {
+    console.error('Failed to append ENCRYPTION_KEY to .env:', err.message);
+  }
+}
+
+const cryptoHelper = require('./services/crypto');
+const logger = require('./services/logger');
+
 const cron = require('node-cron');
 const nodemailer = require('nodemailer');
 const { z } = require('zod');
@@ -165,6 +182,73 @@ const addLog = async (message, status = 'info') => {
   db.logs.unshift({ id: uuidv4(), timestamp: new Date().toISOString(), message, status });
   if (db.logs.length > 500) db.logs.length = 500;
   await writeDB(db);
+  
+  if (status === 'error' || status === 'failed') {
+    logger.error(message);
+  } else {
+    logger.info(message);
+  }
+};
+
+const pruneBackups = async (job) => {
+  try {
+    const db = await readDB();
+    const settings = getSettings(db);
+    const { retention } = settings;
+    if (!retention || !retention.enabled) return;
+
+    const destDir = job.destination;
+    if (!destDir) return;
+    if (!fsSync.existsSync(destDir)) return;
+
+    const files = await fs.readdir(destDir);
+    const safeName = String(job.name).replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const jobFiles = [];
+
+    for (const file of files) {
+      if (file.startsWith(safeName + '_')) {
+        const filePath = path.join(destDir, file);
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.isFile()) {
+            jobFiles.push({ name: file, path: filePath, time: stat.mtimeMs });
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+    }
+
+    // Sort by modification time, oldest first
+    jobFiles.sort((a, b) => a.time - b.time);
+
+    const now = Date.now();
+    const retentionMs = retention.days * 24 * 60 * 60 * 1000;
+    const filesToDelete = new Set();
+
+    if (retention.days > 0) {
+      for (const file of jobFiles) {
+        if (now - file.time > retentionMs) {
+          filesToDelete.add(file);
+        }
+      }
+    }
+
+    const remainingFiles = jobFiles.filter(f => !filesToDelete.has(f));
+    if (retention.copies > 0 && remainingFiles.length > retention.copies) {
+      const toDeleteCount = remainingFiles.length - retention.copies;
+      for (let i = 0; i < toDeleteCount; i++) {
+        filesToDelete.add(remainingFiles[i]);
+      }
+    }
+
+    for (const file of filesToDelete) {
+      await fs.unlink(file.path);
+      await addLog(`Pruned old backup file (retention policy): ${file.name}`, 'info');
+    }
+  } catch (err) {
+    logger.error(`Pruning failed for job ${job.name}: ${err.message}`);
+  }
 };
 
 const defaultData = {
@@ -446,13 +530,22 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
     const backupType = job.backupType || job.type;
 
     if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
-      const conn = db.dbConnections.find(c => c.id === job.config?.connectionId);
+      const connRaw = db.dbConnections.find(c => c.id === job.config?.connectionId);
+      const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
       result = await dbService.backup({
-        type: backupType, connection: conn || job.config, backupPath: job.destination, name: job.name,
+        type: backupType, connection: conn, backupPath: job.destination, name: job.name,
       });
       if (result.success && job.config?.cloudCredentialId) {
-        const cred = db.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
-        if (cred) {
+        const credRaw = db.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
+        if (credRaw) {
+          const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
+          if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
+          if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
+          if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
+          if (cred.credentials.credentials) {
+            const dec = cryptoHelper.decrypt(cred.credentials.credentials);
+            try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
+          }
           const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
           if (!uploadRes.success) {
             result.success = false;
@@ -474,18 +567,27 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
         excludes: job.config?.excludes || [],
       });
     } else if (backupType === 'cloud') {
-      const cred = db.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
-      if (!cred) {
+      const credRaw = db.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
+      if (!credRaw) {
         result = { success: false, error: 'Cloud credentials not found' };
       } else {
+        const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
+        if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
+        if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
+        if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
+        if (cred.credentials.credentials) {
+          const dec = cryptoHelper.decrypt(cred.credentials.credentials);
+          try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
+        }
         const uploadRes = await cloudService.upload(cred, job.source, job.destination);
         result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
       }
     } else if (backupType === 'ssh') {
-      const conn = db.sshConnections.find(c => c.id === job.config?.connectionId);
-      if (!conn) {
+      const connRaw = db.sshConnections.find(c => c.id === job.config?.connectionId);
+      if (!connRaw) {
         result = { success: false, error: 'SSH connection not found' };
       } else {
+        const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
         result = await sshService.backup({
           connection: conn, name: job.name,
           sourcePath: job.config?.sourcePath || job.source,
@@ -510,6 +612,10 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
       const logMsg = result.success ? `Backup completed: ${job.name}` : `Backup failed: ${job.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');
       await sendNotification(db2, logMsg, result.success ? 'success' : 'error');
+      
+      if (result.success) {
+        await pruneBackups(job);
+      }
     }
   } catch (e) {
     const db3 = await readDB();
@@ -616,7 +722,7 @@ app.post('/api/db-connections', authorize('manageBackups'), async (req, res) => 
   const { name, type, host, port, user, password, database } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const conn = { id: uuidv4(), name, type, host, port: port || 3306, user, password: password || '', database: database || '' };
+  const conn = { id: uuidv4(), name, type, host, port: port || 3306, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
   db.dbConnections.push(conn);
   if (await writeDB(db)) {
     res.status(201).json({ ...conn, password: '***' });
@@ -630,7 +736,7 @@ app.put('/api/db-connections/:id', authorize('manageBackups'), async (req, res) 
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   const { password, ...rest } = req.body;
   db.dbConnections[idx] = { ...db.dbConnections[idx], ...rest };
-  if (password && password !== '***') db.dbConnections[idx].password = password;
+  if (password && password !== '***') db.dbConnections[idx].password = cryptoHelper.encrypt(password);
   if (await writeDB(db)) {
     res.json({ ...db.dbConnections[idx], password: '***' });
   } else res.status(500).json({ error: 'Failed to update' });
@@ -649,8 +755,9 @@ app.delete('/api/db-connections/:id', authorize('manageBackups'), async (req, re
 app.post('/api/db-connections/:id/test', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const conn = db.dbConnections.find(c => c.id === req.params.id);
-  if (!conn) return res.status(404).json({ error: 'Not found' });
+  const connRaw = db.dbConnections.find(c => c.id === req.params.id);
+  if (!connRaw) return res.status(404).json({ error: 'Not found' });
+  const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
     const dbs = await dbService.listDatabases(conn.type, conn);
     res.json({ success: dbs.length > 0, databases: dbs });
@@ -662,8 +769,9 @@ app.post('/api/db-connections/:id/test', authorize('manageBackups'), async (req,
 app.get('/api/db-connections/:id/databases', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const conn = db.dbConnections.find(c => c.id === req.params.id);
-  if (!conn) return res.status(404).json({ error: 'Not found' });
+  const connRaw = db.dbConnections.find(c => c.id === req.params.id);
+  if (!connRaw) return res.status(404).json({ error: 'Not found' });
+  const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
     const dbs = await dbService.listDatabases(conn.type, conn);
     res.json(dbs);
@@ -688,7 +796,7 @@ app.post('/api/ssh-connections', authorize('manageBackups'), async (req, res) =>
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const id = uuidv4();
   const keyPath = writeSshKey(id, key);
-  const conn = { id, name, host, port: port || 22, user, password: password || '', key: keyPath || '', createdAt: new Date().toISOString() };
+  const conn = { id, name, host, port: port || 22, user, password: cryptoHelper.encrypt(password || ''), key: keyPath || '', createdAt: new Date().toISOString() };
   db.sshConnections.push(conn);
   if (await writeDB(db)) {
     await addLog(`SSH connection added: ${name}`, 'success');
@@ -703,7 +811,7 @@ app.put('/api/ssh-connections/:id', authorize('manageBackups'), async (req, res)
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   const { password, key, ...rest } = req.body;
   db.sshConnections[idx] = { ...db.sshConnections[idx], ...rest };
-  if (password && password !== '***') db.sshConnections[idx].password = password;
+  if (password && password !== '***') db.sshConnections[idx].password = cryptoHelper.encrypt(password);
   if (key && key !== '***') {
     deleteSshKey(db.sshConnections[idx].key);
     db.sshConnections[idx].key = writeSshKey(db.sshConnections[idx].id, key);
@@ -728,8 +836,9 @@ app.delete('/api/ssh-connections/:id', authorize('manageBackups'), async (req, r
 app.post('/api/ssh-connections/:id/test', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const conn = db.sshConnections.find(c => c.id === req.params.id);
-  if (!conn) return res.status(404).json({ error: 'Not found' });
+  const connRaw = db.sshConnections.find(c => c.id === req.params.id);
+  if (!connRaw) return res.status(404).json({ error: 'Not found' });
+  const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
     const r = await sshService.exec(conn, 'echo BCK_CONNECTED && hostname');
     res.json({ success: r.success, hostname: r.stdout || null, error: r.stderr || null });
@@ -751,7 +860,20 @@ app.post('/api/cloud-credentials', authorize('manageBackups'), async (req, res) 
   const { name, provider, credentials } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const cred = { id: uuidv4(), name, provider, credentials, createdAt: new Date().toISOString() };
+
+  const encryptedCredentials = { ...credentials };
+  if (encryptedCredentials.secretAccessKey) encryptedCredentials.secretAccessKey = cryptoHelper.encrypt(encryptedCredentials.secretAccessKey);
+  if (encryptedCredentials.accessKey) encryptedCredentials.accessKey = cryptoHelper.encrypt(encryptedCredentials.accessKey);
+  if (encryptedCredentials.password) encryptedCredentials.password = cryptoHelper.encrypt(encryptedCredentials.password);
+  if (encryptedCredentials.credentials) {
+    if (typeof encryptedCredentials.credentials === 'object') {
+      encryptedCredentials.credentials = cryptoHelper.encrypt(JSON.stringify(encryptedCredentials.credentials));
+    } else {
+      encryptedCredentials.credentials = cryptoHelper.encrypt(encryptedCredentials.credentials);
+    }
+  }
+
+  const cred = { id: uuidv4(), name, provider, credentials: encryptedCredentials, createdAt: new Date().toISOString() };
   db.cloudCredentials.push(cred);
   if (await writeDB(db)) {
     await addLog(`Cloud credentials added: ${name} [${provider}]`, 'success');
@@ -769,7 +891,19 @@ app.put('/api/cloud-credentials/:id', authorize('manageBackups'), async (req, re
   if (credentials) {
     const merged = { ...curr.credentials };
     for (const [k, v] of Object.entries(credentials)) {
-      if (v !== '***') merged[k] = v;
+      if (v !== '***') {
+        if (k === 'secretAccessKey' || k === 'accessKey' || k === 'password') {
+          merged[k] = cryptoHelper.encrypt(v);
+        } else if (k === 'credentials') {
+          if (typeof v === 'object') {
+            merged[k] = cryptoHelper.encrypt(JSON.stringify(v));
+          } else {
+            merged[k] = cryptoHelper.encrypt(v);
+          }
+        } else {
+          merged[k] = v;
+        }
+      }
     }
     curr.credentials = merged;
   }
@@ -791,8 +925,25 @@ app.delete('/api/cloud-credentials/:id', authorize('manageBackups'), async (req,
 app.post('/api/cloud-credentials/:id/test', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const cred = db.cloudCredentials.find(c => c.id === req.params.id);
-  if (!cred) return res.status(404).json({ error: 'Not found' });
+  const credRaw = db.cloudCredentials.find(c => c.id === req.params.id);
+  if (!credRaw) return res.status(404).json({ error: 'Not found' });
+
+  const cred = {
+    ...credRaw,
+    credentials: { ...credRaw.credentials }
+  };
+  if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
+  if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
+  if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
+  if (cred.credentials.credentials) {
+    const dec = cryptoHelper.decrypt(cred.credentials.credentials);
+    try {
+      cred.credentials.credentials = JSON.parse(dec);
+    } catch {
+      cred.credentials.credentials = dec;
+    }
+  }
+
   const toolCheck = cloudService.checkTools(cred.provider);
   if (!toolCheck.available) return res.json({ success: false, error: `${cred.provider} CLI not installed` });
   try {
@@ -818,6 +969,17 @@ app.get('/api/tools', async (req, res) => {
     ssh: sshService.checkTools(),
   };
   res.json(tools);
+});
+
+// ─── Health check ───────────────────────────────────────────────────────────
+
+app.get('/api/health', async (req, res) => {
+  res.json({
+    status: 'healthy',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    memoryUsage: process.memoryUsage(),
+  });
 });
 
 // ─── Schedules ──────────────────────────────────────────────────────────────
@@ -973,13 +1135,22 @@ function refreshScheduler() {
 
         try {
           if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
-            const conn = db2.dbConnections.find(c => c.id === job.config?.connectionId);
+            const connRaw = db2.dbConnections.find(c => c.id === job.config?.connectionId);
+            const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
             result = await dbService.backup({
-              type: backupType, connection: conn || job.config, backupPath: job.destination, name: job.name,
+              type: backupType, connection: conn, backupPath: job.destination, name: job.name,
             });
             if (result.success && job.config?.cloudCredentialId) {
-              const cred = db2.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
-              if (cred) {
+              const credRaw = db2.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
+              if (credRaw) {
+                const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
+                if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
+                if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
+                if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
+                if (cred.credentials.credentials) {
+                  const dec = cryptoHelper.decrypt(cred.credentials.credentials);
+                  try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
+                }
                 const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
                 if (!uploadRes.success) {
                   result.success = false;
@@ -1001,21 +1172,34 @@ function refreshScheduler() {
               excludes: job.config?.excludes || [],
             });
           } else if (backupType === 'cloud') {
-            const cred = db2.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
-            if (!cred) {
+            const credRaw = db2.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
+            if (!credRaw) {
               result = { success: false, error: 'Cloud credentials not found' };
             } else {
+              const cred = { ...credRaw, credentials: { ...credRaw.credentials } };
+              if (cred.credentials.secretAccessKey) cred.credentials.secretAccessKey = cryptoHelper.decrypt(cred.credentials.secretAccessKey);
+              if (cred.credentials.accessKey) cred.credentials.accessKey = cryptoHelper.decrypt(cred.credentials.accessKey);
+              if (cred.credentials.password) cred.credentials.password = cryptoHelper.decrypt(cred.credentials.password);
+              if (cred.credentials.credentials) {
+                const dec = cryptoHelper.decrypt(cred.credentials.credentials);
+                try { cred.credentials.credentials = JSON.parse(dec); } catch { cred.credentials.credentials = dec; }
+              }
               const uploadRes = await cloudService.upload(cred, job.source, job.destination);
               result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
             }
           } else if (backupType === 'ssh') {
-            const conn = db2.sshConnections.find(c => c.id === job.config?.connectionId);
-            result = await sshService.backup({
-              connection: conn, name: job.name,
-              sourcePath: job.config?.sourcePath || job.source,
-              backupPath: job.destination,
-              excludes: job.config?.excludes || [],
-            });
+            const connRaw = db2.sshConnections.find(c => c.id === job.config?.connectionId);
+            if (!connRaw) {
+              result = { success: false, error: 'SSH connection not found' };
+            } else {
+              const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
+              result = await sshService.backup({
+                connection: conn, name: job.name,
+                sourcePath: job.config?.sourcePath || job.source,
+                backupPath: job.destination,
+                excludes: job.config?.excludes || [],
+              });
+            }
           } else {
             result = { success: true, file: job.destination, error: null };
           }
@@ -1033,6 +1217,10 @@ function refreshScheduler() {
             const logMsg = result.success ? `Scheduled backup completed: ${job.name}` : `Scheduled backup failed: ${job.name} - ${result.error}`;
             await addLog(logMsg, result.success ? 'success' : 'error');
             await sendNotification(db3, logMsg, result.success ? 'success' : 'error');
+            
+            if (result.success) {
+              await pruneBackups(job);
+            }
           }
         } catch (e) {
           const db4 = await readDB();
