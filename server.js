@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs').promises;
+const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -13,12 +14,27 @@ require('dotenv').config();
 const dbService = require('./services/database');
 const vmService = require('./services/vm');
 const cloudService = require('./services/cloud');
+const hostService = require('./services/host');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 6000;
+const HOST = process.env.HOST || '0.0.0.0';
+const APP_URL = process.env.APP_URL || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'bck-default-secret-change-me';
 const SALT_ROUNDS = 10;
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));
+
+const getLocalIp = () => {
+  const interfaces = os.networkInterfaces();
+  for (const items of Object.values(interfaces)) {
+    for (const item of items || []) {
+      if (item.family === 'IPv4' && !item.internal) return item.address;
+    }
+  }
+  return '127.0.0.1';
+};
+
+const buildDefaultAppUrl = () => APP_URL || `http://${getLocalIp()}:${PORT}`;
 
 // ─── Security middleware ────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
@@ -68,9 +84,12 @@ const defaultData = {
   ],
   settings: {
     smtp: { host: '', port: 587, user: '', password: '', from: '', encryption: 'tls' },
-    retention: { enabled: true, days: 30, copies: 10 },
+    retention: { enabled: true, days: 30, copies: 10, customLimitEnabled: false, customLimitGB: 50 },
     notifications: { email: false, emailOnSuccess: false, slack: '', discord: '', telegram: '', telegramBotToken: '', webhook: '' },
     schedule: { timezone: 'UTC' },
+    security: { sessionTimeout: 60, preventConcurrent: false, minPasswordLength: 6 },
+    advanced: { tempPath: '', bandwidthLimit: 0, compressionLevel: 'medium' },
+    network: { appUrl: APP_URL, bindHost: HOST },
   },
   stats: { totalBackups: 0, successfulBackups: 0, failedBackups: 0, totalSize: 0, lastBackup: null },
 };
@@ -108,9 +127,39 @@ const readDB = async () => {
   catch { return null; }
 };
 
+// Queue database writes to prevent race conditions and data corruption
+let writeQueue = Promise.resolve();
 const writeDB = async (data) => {
-  try { await fs.writeFile(DB_PATH, JSON.stringify(data, null, 2)); return true; }
-  catch { return false; }
+  return new Promise((resolve) => {
+    writeQueue = writeQueue.then(async () => {
+      try {
+        await fs.writeFile(DB_PATH, JSON.stringify(data, null, 2));
+        resolve(true);
+      } catch (err) {
+        console.error('Database write error:', err);
+        resolve(false);
+      }
+    });
+  });
+};
+
+// ─── Auth middlewares ───────────────────────────────────────────────────────
+const authenticate = (req, res, next) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token provided' });
+  try {
+    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    next();
+  } catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
+};
+
+const authorize = (permission) => {
+  return (req, res, next) => {
+    if (req.user && (req.user.role === 'admin' || req.user.permissions?.[permission])) {
+      return next();
+    }
+    return res.status(403).json({ error: `Forbidden: requires ${permission} permission` });
+  };
 };
 
 const addLog = async (message, status = 'info') => {
@@ -126,8 +175,89 @@ const updateStats = async (db) => {
   const success = db.backups.filter(b => b.status === 'completed').length;
   const failed = db.backups.filter(b => b.status === 'failed').length;
   const last = db.backups.filter(b => b.completedAt).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))[0];
-  db.stats = { totalBackups: total, successfulBackups: success, failedBackups: failed, totalSize: db.stats?.totalSize || 0, lastBackup: last?.completedAt || null };
+
+  // Calculate dynamic disk space
+  let diskSpace = {
+    totalBytes: 50 * 1073741824,
+    freeBytes: 50 * 1073741824,
+    usedBytes: 0,
+    isQuota: false
+  };
+
+  try {
+    const stat = await fs.statfs(__dirname);
+    const totalBytes = Number(stat.blocks) * Number(stat.bsize);
+    const freeBytes = Number(stat.bavail) * Number(stat.bsize);
+    const usedBytes = totalBytes - freeBytes;
+    diskSpace = {
+      totalBytes,
+      freeBytes,
+      usedBytes,
+      isQuota: false
+    };
+  } catch (err) {
+    console.error('Failed to retrieve disk space:', err);
+  }
+
+  // Override with custom limit if enabled
+  const settings = getSettings(db);
+  if (settings.retention.customLimitEnabled && settings.retention.customLimitGB) {
+    const totalBytes = settings.retention.customLimitGB * 1073741824;
+    const usedBytes = db.backups.reduce((sum, b) => sum + (b.size || 0), 0);
+    const freeBytes = Math.max(0, totalBytes - usedBytes);
+    diskSpace = {
+      totalBytes,
+      freeBytes,
+      usedBytes,
+      isQuota: true
+    };
+  }
+
+  db.stats = {
+    totalBackups: total,
+    successfulBackups: success,
+    failedBackups: failed,
+    totalSize: db.backups.reduce((sum, b) => sum + (b.size || 0), 0),
+    lastBackup: last?.completedAt || null,
+    diskSpace
+  };
 };
+
+const getSettings = (db) => {
+  const current = db.settings || {};
+  const defaults = defaultData.settings;
+  return {
+    smtp: { ...defaults.smtp, ...(current.smtp || {}) },
+    retention: { ...defaults.retention, ...(current.retention || {}) },
+    notifications: { ...defaults.notifications, ...(current.notifications || {}) },
+    schedule: { ...defaults.schedule, ...(current.schedule || {}) },
+    security: { ...defaults.security, ...(current.security || {}) },
+    advanced: { ...defaults.advanced, ...(current.advanced || {}) },
+    network: { ...defaults.network, ...(current.network || {}) },
+  };
+};
+
+// ─── Authentication ─────────────────────────────────────────────────────────
+
+app.post('/api/login', authLimiter, async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const db = await readDB();
+  const user = db?.users?.find(u => u.username === username && u.active !== false);
+  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(401).json({ error: 'Invalid credentials' });
+  const role = db?.roles?.find(r => r.id === user.role);
+  const token = jwt.sign(
+    { id: user.id, username: user.username, role: user.role, permissions: role?.permissions || {} },
+    JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+  res.json({ token, username: user.username, role: user.role, permissions: role?.permissions || {} });
+});
+
+// Protect all API routes below this point
+app.use('/api/', authenticate);
 
 // ─── Backups CRUD ───────────────────────────────────────────────────────────
 
@@ -140,7 +270,7 @@ app.get('/api/backups', async (req, res) => {
   res.json(items);
 });
 
-app.post('/api/backups', async (req, res) => {
+app.post('/api/backups', authorize('manageBackups'), async (req, res) => {
   const { name, source, destination, type, backupType, config } = req.body;
   if (!name) return res.status(400).json({ error: 'Name required' });
   const db = await readDB();
@@ -166,7 +296,7 @@ app.get('/api/backups/:id', async (req, res) => {
   res.json(b);
 });
 
-app.put('/api/backups/:id', async (req, res) => {
+app.put('/api/backups/:id', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.backups.findIndex(x => x.id === req.params.id);
@@ -178,7 +308,7 @@ app.put('/api/backups/:id', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to update' });
 });
 
-app.delete('/api/backups/:id', async (req, res) => {
+app.delete('/api/backups/:id', authorize('delete'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.backups.findIndex(x => x.id === req.params.id);
@@ -193,7 +323,7 @@ app.delete('/api/backups/:id', async (req, res) => {
 
 // ─── Backup Execution ───────────────────────────────────────────────────────
 
-app.post('/api/backups/:id/run', async (req, res) => {
+app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.backups.findIndex(x => x.id === req.params.id);
@@ -216,12 +346,38 @@ app.post('/api/backups/:id/run', async (req, res) => {
       result = await dbService.backup({
         type: backupType, connection: conn || job.config, backupPath: job.destination, name: job.name,
       });
+      if (result.success && job.config?.cloudCredentialId) {
+        const cred = db.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
+        if (cred) {
+          const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
+          if (!uploadRes.success) {
+            result.success = false;
+            result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
+          }
+        }
+      }
     } else if (['vmware', 'hyperv'].includes(backupType)) {
       result = await vmService.backup({
         type: backupType, vmName: job.config?.vmName || job.name,
         host: job.config?.host, user: job.config?.user, password: job.config?.password,
         datastore: job.config?.datastore, backupPath: job.destination,
       });
+    } else if (backupType === 'host') {
+      result = await hostService.backup({
+        name: job.name,
+        sourcePath: job.config?.sourcePath || job.source,
+        backupPath: job.destination,
+        excludes: job.config?.excludes || [],
+      });
+    } else if (backupType === 'cloud') {
+      const cred = db.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
+      if (!cred) {
+        result = { success: false, error: 'Cloud credentials not found' };
+      } else {
+        const remotePath = job.config?.remotePath || path.basename(job.destination);
+        const uploadRes = await cloudService.upload(cred, job.destination, remotePath);
+        result = { success: uploadRes.success, file: uploadRes.url || job.destination, error: uploadRes.error || null };
+      }
     } else {
       result = { success: true, file: job.destination, error: null };
     }
@@ -255,7 +411,7 @@ app.post('/api/backups/:id/run', async (req, res) => {
 
 // ─── Restore ────────────────────────────────────────────────────────────────
 
-app.post('/api/restore', async (req, res) => {
+app.post('/api/restore', authorize('restore'), async (req, res) => {
   const { backupId, targetType, config } = req.body;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
@@ -272,15 +428,49 @@ app.post('/api/restore', async (req, res) => {
 
     if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
       const conn = db.dbConnections.find(c => c.id === config?.connectionId);
+      let restoreFile = job.resultFile || config?.file;
+
+      if (job.config?.cloudCredentialId) {
+        const cred = db.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
+        if (cred) {
+          const tempFile = path.join(os.tmpdir(), path.basename(restoreFile || 'restore.sql'));
+          const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+          if (downloadRes.success) {
+            restoreFile = tempFile;
+          } else {
+            throw new Error(`Failed to download backup file from cloud: ${downloadRes.error}`);
+          }
+        }
+      }
+
       result = await dbService.restore({
-        type: backupType, connection: conn || config, file: job.resultFile || config?.file,
+        type: backupType, connection: conn || config, file: restoreFile,
       });
+
+      if (job.config?.cloudCredentialId && restoreFile && restoreFile.startsWith(os.tmpdir())) {
+        try { await fs.unlink(restoreFile); } catch {}
+      }
     } else if (['vmware', 'hyperv'].includes(backupType)) {
       result = await vmService.restore({
         type: backupType, vmName: config?.vmName || job.name + '-restored',
         host: config?.host, user: config?.user, password: config?.password,
         file: job.resultFile,
       });
+    } else if (backupType === 'host') {
+      result = await hostService.restore({
+        file: job.resultFile,
+        targetPath: targetType === 'original' ? (job.config?.sourcePath || job.source || '/') : (config?.targetPath || job.source || '/'),
+      });
+    } else if (backupType === 'cloud') {
+      const cred = db.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
+      if (!cred) {
+        result = { success: false, error: 'Cloud credentials not found' };
+      } else {
+        const localDest = targetType === 'original' ? job.destination : (config?.localPath || job.destination);
+        const remotePath = job.config?.remotePath || path.basename(job.destination);
+        const downloadRes = await cloudService.download(cred, remotePath, localDest);
+        result = { success: downloadRes.success, error: downloadRes.error };
+      }
     } else {
       result = { success: true };
     }
@@ -298,10 +488,11 @@ app.post('/api/restore', async (req, res) => {
 
 app.get('/api/db-connections', async (req, res) => {
   const db = await readDB();
-  res.json(db?.dbConnections || []);
+  const safe = (db?.dbConnections || []).map(c => ({ ...c, password: c.password ? '***' : '' }));
+  res.json(safe);
 });
 
-app.post('/api/db-connections', async (req, res) => {
+app.post('/api/db-connections', authorize('manageBackups'), async (req, res) => {
   const { name, type, host, port, user, password, database } = req.body;
   if (!name || !type || !host || !user) return res.status(400).json({ error: 'Name, type, host, user required' });
   const db = await readDB();
@@ -313,7 +504,7 @@ app.post('/api/db-connections', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
-app.put('/api/db-connections/:id', async (req, res) => {
+app.put('/api/db-connections/:id', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.dbConnections.findIndex(c => c.id === req.params.id);
@@ -326,7 +517,7 @@ app.put('/api/db-connections/:id', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to update' });
 });
 
-app.delete('/api/db-connections/:id', async (req, res) => {
+app.delete('/api/db-connections/:id', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.dbConnections.findIndex(c => c.id === req.params.id);
@@ -336,22 +527,30 @@ app.delete('/api/db-connections/:id', async (req, res) => {
   else res.status(500).json({ error: 'Failed to delete' });
 });
 
-app.post('/api/db-connections/:id/test', async (req, res) => {
+app.post('/api/db-connections/:id/test', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const conn = db.dbConnections.find(c => c.id === req.params.id);
   if (!conn) return res.status(404).json({ error: 'Not found' });
-  const dbs = dbService.listDatabases(conn.type, conn);
-  res.json({ success: dbs.length > 0, databases: dbs });
+  try {
+    const dbs = await dbService.listDatabases(conn.type, conn);
+    res.json({ success: dbs.length > 0, databases: dbs });
+  } catch (err) {
+    res.json({ success: false, error: err.message, databases: [] });
+  }
 });
 
-app.get('/api/db-connections/:id/databases', async (req, res) => {
+app.get('/api/db-connections/:id/databases', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const conn = db.dbConnections.find(c => c.id === req.params.id);
   if (!conn) return res.status(404).json({ error: 'Not found' });
-  const dbs = dbService.listDatabases(conn.type, conn);
-  res.json(dbs);
+  try {
+    const dbs = await dbService.listDatabases(conn.type, conn);
+    res.json(dbs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Cloud Credentials ──────────────────────────────────────────────────────
@@ -361,7 +560,7 @@ app.get('/api/cloud-credentials', async (req, res) => {
   res.json(db?.cloudCredentials?.map(c => ({ ...c, credentials: { ...c.credentials, secretAccessKey: '***', accessKey: '***', password: '***' } })) || []);
 });
 
-app.post('/api/cloud-credentials', async (req, res) => {
+app.post('/api/cloud-credentials', authorize('manageBackups'), async (req, res) => {
   const { name, provider, credentials } = req.body;
   if (!name || !provider || !credentials) return res.status(400).json({ error: 'Name, provider, credentials required' });
   const db = await readDB();
@@ -374,7 +573,7 @@ app.post('/api/cloud-credentials', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
-app.put('/api/cloud-credentials/:id', async (req, res) => {
+app.put('/api/cloud-credentials/:id', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.cloudCredentials.findIndex(c => c.id === req.params.id);
@@ -393,7 +592,7 @@ app.put('/api/cloud-credentials/:id', async (req, res) => {
   else res.status(500).json({ error: 'Failed to update' });
 });
 
-app.delete('/api/cloud-credentials/:id', async (req, res) => {
+app.delete('/api/cloud-credentials/:id', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.cloudCredentials.findIndex(c => c.id === req.params.id);
@@ -403,7 +602,7 @@ app.delete('/api/cloud-credentials/:id', async (req, res) => {
   else res.status(500).json({ error: 'Failed to delete' });
 });
 
-app.post('/api/cloud-credentials/:id/test', async (req, res) => {
+app.post('/api/cloud-credentials/:id/test', authorize('manageBackups'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const cred = db.cloudCredentials.find(c => c.id === req.params.id);
@@ -442,7 +641,7 @@ app.get('/api/schedules', async (req, res) => {
   res.json(db.schedules);
 });
 
-app.post('/api/schedules', async (req, res) => {
+app.post('/api/schedules', authorize('manageSchedules'), async (req, res) => {
   const { name, cronExpression, backupId } = req.body;
   if (!name || !cronExpression || !backupId) return res.status(400).json({ error: 'Name, cron, backupId required' });
   const db = await readDB();
@@ -455,7 +654,7 @@ app.post('/api/schedules', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
-app.put('/api/schedules/:id', async (req, res) => {
+app.put('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.schedules.findIndex(s => s.id === req.params.id);
@@ -465,7 +664,7 @@ app.put('/api/schedules/:id', async (req, res) => {
   else res.status(500).json({ error: 'Failed to update' });
 });
 
-app.delete('/api/schedules/:id', async (req, res) => {
+app.delete('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.schedules.findIndex(s => s.id === req.params.id);
@@ -477,7 +676,7 @@ app.delete('/api/schedules/:id', async (req, res) => {
 
 // ─── Logs, Stats, Settings ──────────────────────────────────────────────────
 
-app.get('/api/logs', async (req, res) => {
+app.get('/api/logs', authorize('viewLogs'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const { level, limit: qLimit } = req.query;
@@ -496,28 +695,75 @@ app.get('/api/stats', async (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const db = await readDB();
-  res.json(db?.settings || defaultData.settings);
+  if (!db) return res.status(500).json({ error: 'DB unavailable' });
+  const settings = getSettings(db);
+  const safe = {
+    ...settings,
+    smtp: {
+      ...settings.smtp,
+      password: settings.smtp?.password ? '***' : '',
+    },
+    network: {
+      ...settings.network,
+      localIp: getLocalIp(),
+      effectiveAppUrl: settings.network?.appUrl || buildDefaultAppUrl(),
+    },
+  };
+  res.json(safe);
 });
 
-app.put('/api/settings', async (req, res) => {
+app.put('/api/settings', authorize('configure'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  db.settings = { ...db.settings, ...req.body };
+  const body = req.body;
+  const current = getSettings(db);
+
+  const merged = {
+    smtp: { ...current.smtp, ...(body.smtp || {}) },
+    retention: { ...current.retention, ...(body.retention || {}) },
+    notifications: { ...current.notifications, ...(body.notifications || {}) },
+    schedule: { ...current.schedule, ...(body.schedule || {}) },
+    security: { ...current.security, ...(body.security || {}) },
+    advanced: { ...current.advanced, ...(body.advanced || {}) },
+    network: {
+      ...current.network,
+      appUrl: body.network?.appUrl ?? current.network.appUrl,
+      bindHost: body.network?.bindHost ?? current.network.bindHost,
+    },
+  };
+
+  if (body.smtp && body.smtp.password === '***') {
+    merged.smtp.password = db.settings?.smtp?.password || '';
+  }
+
+  db.settings = merged;
   if (await writeDB(db)) {
     await addLog('Settings updated', 'info');
-    res.json(db.settings);
+    const safe = {
+      ...db.settings,
+      smtp: {
+        ...db.settings.smtp,
+        password: db.settings.smtp?.password ? '***' : '',
+      },
+      network: {
+        ...db.settings.network,
+        localIp: getLocalIp(),
+        effectiveAppUrl: db.settings.network?.appUrl || buildDefaultAppUrl(),
+      },
+    };
+    res.json(safe);
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
 // ─── Users ──────────────────────────────────────────────────────────────────
 
-app.get('/api/users', async (req, res) => {
+app.get('/api/users', authorize('manageUsers'), async (req, res) => {
   const db = await readDB();
   const safe = (db?.users || []).map(u => ({ ...u, password: '***' }));
   res.json(safe);
 });
 
-app.post('/api/users', async (req, res) => {
+app.post('/api/users', authorize('manageUsers'), async (req, res) => {
   const { username, password, role, email } = req.body;
   if (!username || !password || !role) return res.status(400).json({ error: 'Username, password, role required' });
   const db = await readDB();
@@ -532,7 +778,7 @@ app.post('/api/users', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
-app.put('/api/users/:id', async (req, res) => {
+app.put('/api/users/:id', authorize('manageUsers'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.users.findIndex(u => u.id === req.params.id);
@@ -546,7 +792,7 @@ app.put('/api/users/:id', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to update' });
 });
 
-app.delete('/api/users/:id', async (req, res) => {
+app.delete('/api/users/:id', authorize('manageUsers'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.users.findIndex(u => u.id === req.params.id);
@@ -560,12 +806,12 @@ app.delete('/api/users/:id', async (req, res) => {
 
 // ─── Roles ──────────────────────────────────────────────────────────────────
 
-app.get('/api/roles', async (req, res) => {
+app.get('/api/roles', authorize('manageRoles'), async (req, res) => {
   const db = await readDB();
   res.json(db?.roles || []);
 });
 
-app.post('/api/roles', async (req, res) => {
+app.post('/api/roles', authorize('manageRoles'), async (req, res) => {
   const { name, description, permissions } = req.body;
   if (!name || !permissions) return res.status(400).json({ error: 'Name and permissions required' });
   const db = await readDB();
@@ -578,7 +824,7 @@ app.post('/api/roles', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
-app.put('/api/roles/:id', async (req, res) => {
+app.put('/api/roles/:id', authorize('manageRoles'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.roles.findIndex(r => r.id === req.params.id);
@@ -590,7 +836,7 @@ app.put('/api/roles/:id', async (req, res) => {
   } else res.status(500).json({ error: 'Failed to update' });
 });
 
-app.delete('/api/roles/:id', async (req, res) => {
+app.delete('/api/roles/:id', authorize('manageRoles'), async (req, res) => {
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.roles.findIndex(r => r.id === req.params.id);
@@ -601,38 +847,6 @@ app.delete('/api/roles/:id', async (req, res) => {
     res.json({ message: 'Deleted' });
   } else res.status(500).json({ error: 'Failed to delete' });
 });
-
-// ─── Auth middleware ─────────────────────────────────────────────────────────
-
-const authenticate = (req, res, next) => {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token provided' });
-  try {
-    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET);
-    next();
-  } catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
-};
-
-// Public routes (no auth)
-app.post('/api/login', authLimiter, async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-  const db = await readDB();
-  const user = db?.users?.find(u => u.username === username && u.active !== false);
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(401).json({ error: 'Invalid credentials' });
-  const role = db?.roles?.find(r => r.id === user.role);
-  const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role, permissions: role?.permissions || {} },
-    JWT_SECRET,
-    { expiresIn: '24h' }
-  );
-  res.json({ token, username: user.username, role: user.role, permissions: role?.permissions || {} });
-});
-
-// All /api/* routes below require authentication
-app.use('/api/', authenticate);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
@@ -654,8 +868,8 @@ fs.access(buildPath).then(() => {
 
 const start = async () => {
   await initDB();
-  app.listen(PORT, () => {
-    console.log(`BCK server running on http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`BCK server running on ${buildDefaultAppUrl()}`);
   });
 };
 

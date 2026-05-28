@@ -2,10 +2,10 @@ services:
   bck:
     build: .
     ports:
-      - "3000:3000"
+      - "6000:6000"
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=6000
     restart: unless-stopped
     volumes:
       - bck-data:/app/db.json

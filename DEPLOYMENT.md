@@ -60,7 +60,7 @@ http-server build
 
 Create a `.env` file in the project root with:
 ```
-REACT_APP_API_URL=http://localhost:3001
+REACT_APP_API_URL=http://localhost:6000
 ```
 
 ## Systemd Service (Linux)
@@ -107,7 +107,7 @@ Use NSSM (Non-Sucking Service Manager) to create a Windows service:
 To build and run with Docker:
 ```bash
 docker build -t bck-app .
-docker run -p 3000:3000 bck-app
+docker run -p 6000:6000 bck-app
 ```
 
 Dockerfile:
@@ -117,7 +117,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --production
 COPY . .
-EXPOSE 3000
+EXPOSE 6000
 CMD ["npm", "start"]
 ```
 
@@ -126,10 +126,10 @@ CMD ["npm", "start"]
 If running on a server, ensure ports are open:
 ```bash
 # For Ubuntu/Debian:
-sudo ufw allow 3000/tcp
+sudo ufw allow 6000/tcp
 
 # For CentOS/RHEL:
-sudo firewall-cmd --permanent --add-port=3000/tcp
+sudo firewall-cmd --permanent --add-port=6000/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -152,11 +152,11 @@ Use Event Viewer or PowerShell logging.
 1. **Port in use**: Check for processes using the port:
    ```bash
    # Linux
-   lsof -i :3000
+   lsof -i :6000
    kill -9 [PID]
    
    # Windows
-   netstat -ano | findstr :3000
+   netstat -ano | findstr :6000
    taskkill /PID [PID] /F
    ```
 

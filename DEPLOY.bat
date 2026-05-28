@@ -24,5 +24,5 @@ if not exist db.json (
 echo.
 echo === Deployment complete! ===
 echo Run: node server.js
-echo Then open http://localhost:3000
+echo Then open http://localhost:6000
 pause

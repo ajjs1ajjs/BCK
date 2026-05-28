@@ -50,13 +50,29 @@ if not exist "%STARTUP_DIR%\BCK.lnk" (
     powershell -Command "& {$WS = New-Object -ComObject WScript.Shell; $SC = $WS.CreateShortcut('%USERPROFILE%\Desktop\BCK.lnk'); $SC.TargetPath = 'cmd.exe'; $SC.Arguments = '/c cd /d %CD% && node server.js'; $SC.WindowStyle = 7; $SC.Description = 'BCK Backup System'; $SC.Save()}"
 )
 
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1 -ExpandProperty IPAddress)"`) do set LOCAL_IP=%%I
+if "%LOCAL_IP%"=="" set LOCAL_IP=127.0.0.1
+if "%BCK_APP_URL%"=="" (
+    set APP_URL=http://%LOCAL_IP%:6000
+) else (
+    set APP_URL=%BCK_APP_URL%
+)
+(
+    echo PORT=6000
+    echo JWT_SECRET=bck-super-secret-change-in-production-2024
+    echo DB_PATH=./db.json
+    echo NODE_ENV=production
+    echo HOST=0.0.0.0
+    echo APP_URL=%APP_URL%
+) > .env
+
 REM ─── Done ────────────────────────────────────────
 echo.
 echo ╔═══════════════════════════════════════════╗
 echo ║       Installation Complete!              ║
 echo ╚═══════════════════════════════════════════╝
 echo.
-echo   URL:      http://localhost:3000
+echo   URL:      %APP_URL%
 echo   Login:    admin
 echo   Password: 291263
 echo.
