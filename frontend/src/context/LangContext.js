@@ -342,6 +342,7 @@ const translations = {
     customStorageLimit: "Custom Storage Limit (GB)",
     storageQuotaLimit: "Quota Limit",
     storageRealDisk: "Physical Disk",
+    disks: "Disks",
   },
   uk: {
     // common
@@ -682,6 +683,7 @@ const translations = {
     customStorageLimit: "Користувацька квота сховища (ГБ)",
     storageQuotaLimit: "Обмеження квоти",
     storageRealDisk: "Фізичний диск",
+    disks: "Диски",
   }
 };
 

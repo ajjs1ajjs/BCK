@@ -73,10 +73,36 @@ const StatCard = ({ label, value, icon, color, path, svg }) => {
           <Typography variant="h3" sx={{ fontWeight:800, color:'#fff', mt:0.75, fontSize:32, lineHeight: 1 }}>
             {value}
           </Typography>
-        </Box>
-        <Box sx={{ flexShrink: 0, width: { xs: 96, md: 88, xl: 96 }, display: 'flex', justifyContent: 'flex-end', mr: -1 }}>{svg}</Box>
-      </CardContent>
-    </Card>
+                </Box>
+              </Box>
+
+              {disks.length > 1 && !isQuota && (
+                <Box sx={{ mt: 2.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <Typography variant="caption" sx={{ color: alpha('#fff',0.4), fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:1, mb:1.5, display:'block' }}>{t('disks')}</Typography>
+                  <Stack spacing={1.2}>
+                    {disks.map((d, i) => {
+                      const pct = d.totalGB > 0 ? Math.min((d.usedGB / d.totalGB) * 100, 100) : 0;
+                      return (
+                        <Box key={i}>
+                          <Box sx={{ display:'flex', justifyContent:'space-between', mb:0.3 }}>
+                            <Typography variant="caption" sx={{ color: alpha('#fff',0.7), fontWeight:500, fontSize:11 }}>
+                              {d.mount === '/' ? '/ (root)' : d.mount}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: alpha('#fff',0.4), fontSize:10 }}>
+                              {d.freeGB.toFixed(1)} GB / {d.totalGB.toFixed(1)} GB
+                            </Typography>
+                          </Box>
+                          <Box sx={{ height:4, borderRadius:3, bgcolor:'rgba(255,255,255,0.04)', overflow:'hidden' }}>
+                            <Box sx={{ height:'100%', borderRadius:3, width:`${pct}%`, background:`linear-gradient(90deg, ${pct > 85 ? C.error : C.primary}, ${pct > 85 ? C.error : C.secondary})` }} />
+                          </Box>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
   );
 };
 
@@ -141,7 +167,6 @@ export default function Dashboard() {
         isQuota: stats.diskSpace.isQuota
       };
     }
-    // Fallback if not loaded
     const uBytes = backups.reduce((s,b) => s + (b.size || 0), 0);
     const uGB = Math.round(uBytes / 1073741824 * 10) / 10 || 0;
     const tGB = 50.0;
@@ -153,6 +178,13 @@ export default function Dashboard() {
       isQuota: false
     };
   }, [stats, backups]);
+
+  const disks = (stats?.diskSpaces || []).map(d => {
+    const tGB = Math.round(d.totalBytes / 1073741824 * 10) / 10 || 0;
+    const uGB = Math.round(d.usedBytes / 1073741824 * 10) / 10 || 0;
+    const fGB = Math.round(d.freeBytes / 1073741824 * 10) / 10 || 0;
+    return { ...d, totalGB: tGB, usedGB: uGB, freeGB: fGB };
+  });
 
   const recentLogs = logs.slice(0, 5);
   const totalConnections = dbConnections.length + cloudCreds.length + vmBackups.length;

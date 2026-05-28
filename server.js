@@ -183,10 +183,11 @@ const updateStats = async (db) => {
     usedBytes: 0,
     isQuota: false
   };
+  let diskSpaces = [];
 
   try {
     const { execSync } = require('child_process');
-    const dfOut = execSync('df -B1 --output=type,size,avail,target 2>/dev/null || df -B1 2>/dev/null', { timeout: 5000, encoding: 'utf8' });
+    const dfOut = execSync('df -B1 --output=type,size,used,avail,target,pcent 2>/dev/null || df -B1 2>/dev/null', { timeout: 5000, encoding: 'utf8' });
     const lines = dfOut.split('\n').slice(1).filter(Boolean);
     let totalSize = 0, totalAvail = 0;
     const skipTypes = new Set(['tmpfs', 'devtmpfs', 'devpts', 'sysfs', 'proc', 'overlay', 'squashfs', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'cgroup2', 'cgroup', 'efivarfs', 'bpf', 'autofs', 'debugfs', 'tracefs', 'ramfs', 'nsfs', 'fuse.gvfsd-fuse', 'fuse.lxcfs', 'configfs', 'fusectl']);
@@ -195,10 +196,19 @@ const updateStats = async (db) => {
       const fstype = parts[0];
       if (skipTypes.has(fstype)) continue;
       const size = parseInt(parts[1], 10);
-      const avail = parseInt(parts[2], 10);
+      const used = parseInt(parts[2], 10);
+      const avail = parseInt(parts[3], 10);
       if (isNaN(size) || isNaN(avail) || size <= 0) continue;
       totalSize += size;
       totalAvail += avail;
+      diskSpaces.push({
+        mount: parts[4] || '/',
+        fstype,
+        totalBytes: size,
+        usedBytes: used >= 0 ? used : 0,
+        freeBytes: avail,
+        usedPercent: size > 0 ? Math.round(((size - avail) / size) * 100) : 0,
+      });
     }
     if (totalSize > 0) {
       diskSpace = { totalBytes: totalSize, freeBytes: totalAvail, usedBytes: totalSize - totalAvail, isQuota: false };
@@ -227,7 +237,8 @@ const updateStats = async (db) => {
     failedBackups: failed,
     totalSize: db.backups.reduce((sum, b) => sum + (b.size || 0), 0),
     lastBackup: last?.completedAt || null,
-    diskSpace
+    diskSpace,
+    diskSpaces
   };
 };
 
