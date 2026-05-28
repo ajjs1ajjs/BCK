@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useMemo } from 'react';
 
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from '../utils/config';
 
 const AuthContext = createContext(null);
 

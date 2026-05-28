@@ -12,7 +12,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../context/LangContext';
 
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from '../utils/config';
 
 const defaultPermissions = {
   manageUsers: false, manageBackups: true, manageSchedules: true,

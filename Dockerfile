@@ -7,9 +7,12 @@ RUN cd frontend && npm run build
 
 FROM node:20-alpine
 WORKDIR /app
-COPY --from=builder /app/frontend/build ./frontend/build
+RUN apk add --no-cache ca-certificates
 COPY package*.json ./
 RUN npm install --omit=dev
-COPY . .
+COPY server.js ./
+COPY services/ ./services/
+COPY data/ ./data/
+COPY --from=builder /app/frontend/build ./frontend/build
 EXPOSE 9000
 CMD ["node", "server.js"]

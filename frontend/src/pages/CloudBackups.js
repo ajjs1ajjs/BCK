@@ -12,7 +12,7 @@ import {
 } from '@mui/icons-material';
 import { useTranslation } from '../context/LangContext';
 
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from '../utils/config';
 const PROVIDERS = [
   { value: 'aws', label: 'Amazon S3', color: '#FF9900' },
   { value: 'azure', label: 'Azure Blob', color: '#0078D4' },

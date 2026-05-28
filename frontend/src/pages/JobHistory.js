@@ -11,7 +11,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../context/LangContext';
 
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from '../utils/config';
 
 export default function JobHistory() {
   const [backups, setBackups] = useState([]);

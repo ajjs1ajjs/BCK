@@ -17,7 +17,7 @@ import {
 import { useTranslation } from '../context/LangContext';
 import { C, GLASS, StatCard, PlatformSVG, CustomTooltip } from '../components/DashboardWidgets';
 
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from '../utils/config';
 
 export default function Dashboard() {
   const navigate = useNavigate();

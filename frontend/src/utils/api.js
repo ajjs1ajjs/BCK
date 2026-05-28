@@ -1,4 +1,4 @@
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from './config';
 
 export function getToken() {
   try {

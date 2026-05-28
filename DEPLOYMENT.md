@@ -4,78 +4,65 @@
 
 ### For Linux (Ubuntu/Debian/CentOS):
 ```bash
-# Install Node.js and npm
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
-
-# Install build tools
-sudo apt-get install -y build-essential
 ```
 
 ### For Windows:
-1. Download and install Node.js from https://nodejs.org/
-2. Install Python 3 and add it to PATH
-3. Install Microsoft C++ Build Tools from Visual Studio Installer
+Download and install Node.js 20+ from https://nodejs.org/
 
-## Deployment Steps
+## Quick Deploy
 
-### 1. Clone the Repository
+### Linux
 ```bash
-git clone <repository-url>
+curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/master/install.sh | sudo bash
+```
+
+### Windows
+```batch
+git clone https://github.com/ajjs1ajjs/BCK.git
 cd BCK
+.\install.bat
 ```
 
-### 2. Install Dependencies
+### Docker
 ```bash
-# For Linux:
+docker compose up -d
+```
+
+## Manual Setup
+
+```bash
+git clone <repo-url>
+cd BCK
 npm install
-
-# For Windows (if needed):
-npm install --platform=win32
+cd frontend && npm install && npm run build && cd ..
+node server.js
 ```
 
-### 3. Build for Production
-```bash
-npm run build
-```
-
-### 4. Run the Application
-#### Development Mode:
-```bash
-npm start
-```
-
-#### Production Mode:
-```bash
-# Using serve package
-npm install -g serve
-serve -s build
-
-# Or using http-server
-npm install -g http-server
-http-server build
-```
+Open **http://localhost:9000**
 
 ## Environment Variables
 
-Create a `.env` file in the project root with:
+Create a `.env` file in the project root:
+
 ```
-REACT_APP_API_URL=http://localhost:9000
+PORT=9000
+JWT_SECRET=<generate-a-random-secret>
+DB_PATH=./db.json
+NODE_ENV=production
+HOST=0.0.0.0
+APP_URL=http://your-ip:9000
+# Optional: HTTPS
+# SSL_CERT_PATH=./cert.pem
+# SSL_KEY_PATH=./key.pem
 ```
 
 ## Systemd Service (Linux)
 
-To run as a background service on Linux:
-
-1. Create systemd service file:
-```bash
-sudo nano /etc/systemd/system/bck.service
-```
-
-2. Add the following content:
 ```ini
 [Unit]
-Description=Backup Solution
+Description=BCK Backup System
 After=network.target
 
 [Service]
@@ -90,78 +77,25 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-3. Enable and start the service:
 ```bash
 sudo systemctl enable bck
 sudo systemctl start bck
 ```
 
-## Windows Service (Alternative)
+## Docker Build
 
-Use NSSM (Non-Sucking Service Manager) to create a Windows service:
-1. Download NSSM from https://nssm.cc/
-2. Run `nssm install BCK` and configure the application path
-
-## Docker Deployment (Optional)
-
-To build and run with Docker:
 ```bash
 docker build -t bck-app .
 docker run -p 9000:9000 bck-app
 ```
 
-Dockerfile:
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
-COPY . .
-EXPOSE 9000
-CMD ["npm", "start"]
-```
+## Firewall
 
-## Firewall Configuration (Linux)
-
-If running on a server, ensure ports are open:
 ```bash
-# For Ubuntu/Debian:
 sudo ufw allow 9000/tcp
-
-# For CentOS/RHEL:
-sudo firewall-cmd --permanent --add-port=9000/tcp
-sudo firewall-cmd --reload
 ```
-
-## Monitoring and Logging
-
-### Linux:
-```bash
-# Monitor logs
-tail -f /var/log/bck.log
-
-# Using journalctl
-journalctl -u bck.service -f
-```
-
-### Windows:
-Use Event Viewer or PowerShell logging.
 
 ## Troubleshooting
 
-1. **Port in use**: Check for processes using the port:
-   ```bash
-   # Linux
-   lsof -i :9000
-   kill -9 [PID]
-   
-   # Windows
-   netstat -ano | findstr :9000
-   taskkill /PID [PID] /F
-   ```
-
-2. **Permission denied**: Ensure proper file permissions:
-   ```bash
-   sudo chown -R $USER:$USER .
-   chmod -R 755 .
-   ```
+- **Port in use**: `lsof -i :9000` (Linux) or `netstat -ano | findstr :9000` (Windows)
+- **Permission denied**: `sudo chown -R $USER:$USER .`

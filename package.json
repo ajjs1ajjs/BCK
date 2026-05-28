@@ -9,7 +9,7 @@
     "install:all": "npm install && cd frontend && npm install",
     "dev:backend": "node server.js",
     "dev:frontend": "cd frontend && npm start",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest",
     "lint": "eslint .",
     "update": "git pull && npm install && cd frontend && npm install && npm run build && sudo systemctl restart bck"
   },
@@ -26,13 +26,13 @@
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^4.21.0",
-    "express-history-api-fallback": "^2.2.1",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "http-proxy-middleware": "^3.0.3",
     "jsonwebtoken": "^9.0.3",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.9",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "zod": "^4.4.3"
   }
 }

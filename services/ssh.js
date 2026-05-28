@@ -124,67 +124,6 @@ async function restore(restoreConfig) {
   }
 }
 
-async function remoteDbBackup(dbConfig) {
-  const { connection, type, database, user, password, host, port, backupPath, name } = dbConfig;
-  const conn = connection || {};
-  const safeName = String(name || 'db-backup').replace(/[^a-zA-Z0-9._-]+/g, '_');
-  const dbType = type || 'mysql';
-  const dbHost = host || 'localhost';
-  const dbPort = port || (dbType === 'mysql' ? 3306 : 5432);
-  const dbUser = user || 'root';
-  const dbName = database || '';
-
-  const esc = (s) => String(s).replace(/'/g, "'\\''");
-  let dumpCmd;
-  if (dbType === 'mysql') {
-    dumpCmd = `MYSQL_PWD='${esc(password)}' mysqldump -h ${dbHost} -P ${dbPort} -u ${dbUser} ${dbName} 2>/dev/null`;
-  } else if (dbType === 'postgres') {
-    dumpCmd = `PGPASSWORD='${esc(password)}' pg_dump -h ${dbHost} -p ${dbPort} -U ${dbUser} -d ${dbName} -F c 2>/dev/null`;
-  } else {
-    return { success: false, error: `Unsupported DB type: ${dbType}` };
-  }
-
-  const ext = dbType === 'postgres' ? 'dump' : 'sql';
-  const outFile = path.resolve(path.join(backupPath || '.', `${safeName}_${Date.now()}.${ext}`));
-  const fullCmd = `${dumpCmd} > ${outFile}`;
-  const result = await exec(conn, fullCmd);
-
-  if (result.success) {
-    let size = 0;
-    try { size = fs.statSync(outFile).size; } catch {}
-    return { success: size > 0, file: outFile, size, error: size > 0 ? null : 'Empty dump' };
-  }
-  return { success: false, error: result.stderr || result.error };
-}
-
-async function remoteDbRestore(restoreConfig) {
-  const { connection, type, file, database, user, password, host, port } = restoreConfig;
-  const conn = connection || {};
-  const dbType = type || 'mysql';
-  const dbHost = host || 'localhost';
-  const dbPort = port || (dbType === 'mysql' ? 3306 : 5432);
-  const dbUser = user || 'root';
-  const dbName = database || '';
-
-  if (!fs.existsSync(file)) {
-    return { success: false, error: 'Dump file not found locally' };
-  }
-
-  const localFile = path.resolve(file);
-  const esc = (s) => String(s).replace(/'/g, "'\\''");
-  let restoreCmd;
-  if (dbType === 'mysql') {
-    restoreCmd = `MYSQL_PWD='${esc(password)}' mysql -h ${dbHost} -P ${dbPort} -u ${dbUser} ${dbName} < ${localFile} 2>/dev/null`;
-  } else if (dbType === 'postgres') {
-    restoreCmd = `PGPASSWORD='${esc(password)}' pg_restore -h ${dbHost} -p ${dbPort} -U ${dbUser} -d ${dbName} -c ${localFile} 2>/dev/null`;
-  } else {
-    return { success: false, error: `Unsupported DB type: ${dbType}` };
-  }
-
-  const result = await exec(conn, restoreCmd);
-  return { success: result.success, error: result.stderr || result.error };
-}
-
 function checkTools() {
   const ssh = checkTool('ssh', 'ssh -V');
   const sshpass = checkTool('sshpass', 'sshpass -V');
@@ -194,4 +133,4 @@ function checkTools() {
   };
 }
 
-module.exports = { backup, restore, remoteDbBackup, remoteDbRestore, exec, checkTools };
+module.exports = { backup, restore, exec, checkTools };

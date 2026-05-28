@@ -10,7 +10,7 @@ import {
 } from '@mui/icons-material';
 import { useTranslation } from '../context/LangContext';
 
-const API = process.env.REACT_APP_API_URL || '';
+import { API } from '../utils/config';
 
 export default function Schedules() {
   const [schedules, setSchedules] = useState([]);

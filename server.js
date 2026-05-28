@@ -15,6 +15,7 @@ require('dotenv').config();
 
 const cron = require('node-cron');
 const nodemailer = require('nodemailer');
+const { z } = require('zod');
 
 const dbService = require('./services/database');
 const vmService = require('./services/vm');
@@ -68,6 +69,74 @@ const authLimiter = rateLimit({
   max: 20,
   message: { error: 'Too many login attempts, try again later' },
 });
+
+// ─── Validation helper ───────────────────────────────────────────────────────
+
+function validate(schema, data) {
+  const result = schema.safeParse(data);
+  if (!result.success) {
+    const errors = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`);
+    return { valid: false, errors };
+  }
+  return { valid: true, data: result.data };
+}
+
+const schemas = {
+  login: z.object({
+    username: z.string().min(1).max(50),
+    password: z.string().min(1).max(200),
+  }),
+  createUser: z.object({
+    username: z.string().min(2).max(50).regex(/^[a-zA-Z0-9_-]+$/),
+    password: z.string().min(4).max(200),
+    role: z.string().min(1).max(50),
+    email: z.string().email().optional().or(z.literal('')),
+  }),
+  createBackup: z.object({
+    name: z.string().min(1).max(200),
+    source: z.string().max(1000).optional(),
+    destination: z.string().max(1000).optional(),
+    type: z.string().max(50).optional(),
+    backupType: z.string().max(50).optional(),
+    config: z.any().optional(),
+  }),
+  createSchedule: z.object({
+    name: z.string().min(1).max(200),
+    cronExpression: z.string().min(1).max(100),
+    backupId: z.string().min(1).max(100),
+  }),
+  dbConnection: z.object({
+    name: z.string().min(1).max(200),
+    type: z.enum(['mysql', 'postgres', 'oracle']),
+    host: z.string().min(1).max(500),
+    port: z.number().int().min(1).max(65535).optional(),
+    user: z.string().min(1).max(200),
+    password: z.string().max(2000).optional(),
+    database: z.string().max(200).optional(),
+  }),
+  sshConnection: z.object({
+    name: z.string().min(1).max(200),
+    host: z.string().min(1).max(500),
+    port: z.number().int().min(1).max(65535).optional(),
+    user: z.string().min(1).max(200),
+    password: z.string().max(2000).optional(),
+    key: z.string().max(50000).optional(),
+  }),
+  cloudCredential: z.object({
+    name: z.string().min(1).max(200),
+    provider: z.enum(['aws', 'azure', 'gcp']),
+    credentials: z.record(z.any()),
+  }),
+  settings: z.object({
+    smtp: z.any().optional(),
+    retention: z.any().optional(),
+    notifications: z.any().optional(),
+    schedule: z.any().optional(),
+    security: z.any().optional(),
+    advanced: z.any().optional(),
+    network: z.any().optional(),
+  }),
+};
 
 // ─── Auth middlewares ──────────────────────────────────────────
 const authenticate = (req, res, next) => {
@@ -245,8 +314,9 @@ const getSettings = (db) => {
 // ─── Authentication ─────────────────────────────────────────────────────────
 
 app.post('/api/login', authLimiter, async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  const v = validate(schemas.login, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { username, password } = v.data;
   const db = await readDB();
   const user = db?.users?.find(u => u.username === username && u.active !== false);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
@@ -286,8 +356,9 @@ app.get('/api/backups', async (req, res) => {
 });
 
 app.post('/api/backups', authorize('manageBackups'), async (req, res) => {
-  const { name, source, destination, type, backupType, config } = req.body;
-  if (!name) return res.status(400).json({ error: 'Name required' });
+  const v = validate(schemas.createBackup, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { name, source, destination, type, backupType, config } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const backup = {
@@ -545,8 +616,9 @@ app.get('/api/db-connections', async (req, res) => {
 });
 
 app.post('/api/db-connections', authorize('manageBackups'), async (req, res) => {
-  const { name, type, host, port, user, password, database } = req.body;
-  if (!name || !type || !host || !user) return res.status(400).json({ error: 'Name, type, host, user required' });
+  const v = validate(schemas.dbConnection, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { name, type, host, port, user, password, database } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const conn = { id: uuidv4(), name, type, host, port: port || 3306, user, password: password || '', database: database || '' };
@@ -614,8 +686,9 @@ app.get('/api/ssh-connections', async (req, res) => {
 });
 
 app.post('/api/ssh-connections', authorize('manageBackups'), async (req, res) => {
-  const { name, host, port, user, password, key } = req.body;
-  if (!name || !host || !user) return res.status(400).json({ error: 'Name, host, user required' });
+  const v = validate(schemas.sshConnection, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { name, host, port, user, password, key } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const id = uuidv4();
@@ -678,8 +751,9 @@ app.get('/api/cloud-credentials', async (req, res) => {
 });
 
 app.post('/api/cloud-credentials', authorize('manageBackups'), async (req, res) => {
-  const { name, provider, credentials } = req.body;
-  if (!name || !provider || !credentials) return res.status(400).json({ error: 'Name, provider, credentials required' });
+  const v = validate(schemas.cloudCredential, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { name, provider, credentials } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const cred = { id: uuidv4(), name, provider, credentials, createdAt: new Date().toISOString() };
@@ -760,8 +834,9 @@ app.get('/api/schedules', async (req, res) => {
 });
 
 app.post('/api/schedules', authorize('manageSchedules'), async (req, res) => {
-  const { name, cronExpression, backupId } = req.body;
-  if (!name || !cronExpression || !backupId) return res.status(400).json({ error: 'Name, cron, backupId required' });
+  const v = validate(schemas.createSchedule, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { name, cronExpression, backupId } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
@@ -1074,8 +1149,9 @@ app.get('/api/users', authorize('manageUsers'), async (req, res) => {
 });
 
 app.post('/api/users', authorize('manageUsers'), async (req, res) => {
-  const { username, password, role, email } = req.body;
-  if (!username || !password || !role) return res.status(400).json({ error: 'Username, password, role required' });
+  const v = validate(schemas.createUser, req.body);
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  const { username, password, role, email } = v.data;
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   if (db.users.find(u => u.username === username)) return res.status(400).json({ error: 'Username exists' });
@@ -1179,9 +1255,26 @@ fs.access(buildPath).then(() => {
 const start = async () => {
   await initDB();
   refreshScheduler();
-  app.listen(PORT, HOST, () => {
-    console.log(`BCK server running on ${buildDefaultAppUrl()}`);
-  });
+
+  const sslCert = process.env.SSL_CERT_PATH;
+  const sslKey = process.env.SSL_KEY_PATH;
+
+  if (sslCert && sslKey) {
+    try {
+      const https = require('https');
+      const credentials = { key: fsSync.readFileSync(sslKey), cert: fsSync.readFileSync(sslCert) };
+      https.createServer(credentials, app).listen(PORT, HOST, () => {
+        console.log(`BCK server (HTTPS) running on ${buildDefaultAppUrl()}`);
+      });
+    } catch (e) {
+      console.error('Failed to start HTTPS server:', e.message);
+      process.exit(1);
+    }
+  } else {
+    app.listen(PORT, HOST, () => {
+      console.log(`BCK server running on ${buildDefaultAppUrl()}`);
+    });
+  }
 };
 
 start();
