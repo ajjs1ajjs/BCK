@@ -85,6 +85,90 @@ if [ -n "$MISSING" ]; then
     exit 1
 fi
 
+# ─── Install CLI tools ────────────────────────────
+set +e
+echo -e "${YELLOW}[*] Installing CLI tools for backups...${NC}"
+
+PKG=""
+if command -v apt &>/dev/null; then
+  PKG="apt"
+elif command -v dnf &>/dev/null; then
+  PKG="dnf"
+elif command -v yum &>/dev/null; then
+  PKG="yum"
+elif command -v apk &>/dev/null; then
+  PKG="apk"
+fi
+
+install_pkg() {
+  local name="$1"; local pkg_name="$2"
+  if command -v "$name" &>/dev/null; then
+    echo -e "  ${GREEN}[v] $name — already installed${NC}"
+    return 0
+  fi
+  echo -e "  ${YELLOW}[*] Installing $name...${NC}"
+  case "$PKG" in
+    apt) sudo apt-get install -y "$pkg_name" ;;
+    dnf) sudo dnf install -y "$pkg_name" ;;
+    yum) sudo yum install -y "$pkg_name" ;;
+    apk) sudo apk add "$pkg_name" ;;
+  esac 2>/dev/null
+  if command -v "$name" &>/dev/null; then
+    echo -e "  ${GREEN}[v] $name — installed${NC}"
+  else
+    echo -e "  ${RED}[!] $name — failed to install${NC}"
+  fi
+}
+
+# Database CLI tools
+install_pkg "mysqldump" "mysql-client"
+install_pkg "pg_dump" "postgresql-client"
+
+# AWS CLI
+if ! command -v aws &>/dev/null; then
+  echo -e "  ${YELLOW}[*] Installing AWS CLI...${NC}"
+  curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip 2>/dev/null && \
+    unzip -q /tmp/awscliv2.zip -d /tmp/ && sudo /tmp/aws/install --update 2>/dev/null && \
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+  command -v aws &>/dev/null && echo -e "  ${GREEN}[v] AWS CLI — installed${NC}" || echo -e "  ${RED}[!] AWS CLI — failed${NC}"
+fi
+
+# Azure CLI
+if ! command -v az &>/dev/null; then
+  echo -e "  ${YELLOW}[*] Installing Azure CLI...${NC}"
+  curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash 2>/dev/null
+  command -v az &>/dev/null && echo -e "  ${GREEN}[v] Azure CLI — installed${NC}" || echo -e "  ${RED}[!] Azure CLI — failed${NC}"
+fi
+
+# gsutil (Google Cloud SDK)
+if ! command -v gsutil &>/dev/null; then
+  echo -e "  ${YELLOW}[*] Installing Google Cloud SDK (gsutil)...${NC}"
+  curl -fsSL https://sdk.cloud.google.com | CLOUDSDK_CORE_DISABLE_PROMPTS=1 bash 2>/dev/null
+  if [ -f "$HOME/google-cloud-sdk/bin/gsutil" ]; then
+    export PATH="$HOME/google-cloud-sdk/bin:$PATH"
+    echo 'export PATH="$HOME/google-cloud-sdk/bin:$PATH"' >> "$HOME/.bashrc"
+    echo -e "  ${GREEN}[v] gsutil — installed${NC}"
+  else
+    echo -e "  ${RED}[!] gsutil — failed to install${NC}"
+  fi
+fi
+
+# govc (VMware vSphere CLI)
+if ! command -v govc &>/dev/null; then
+  echo -e "  ${YELLOW}[*] Installing govc (VMware)...${NC}"
+  GOVC_VER=$(curl -sL https://api.github.com/repos/vmware/govmomi/releases/latest 2>/dev/null | grep tag_name | cut -d'"' -f4)
+  if [ -n "$GOVC_VER" ]; then
+    curl -sL "https://github.com/vmware/govmomi/releases/download/${GOVC_VER}/govc_$(uname -s)_$(uname -m).tar.gz" 2>/dev/null | sudo tar -C /usr/local/bin -xz govc 2>/dev/null
+  fi
+  command -v govc &>/dev/null && echo -e "  ${GREEN}[v] govc — installed${NC}" || echo -e "  ${RED}[!] govc — failed${NC}"
+fi
+
+echo ""
+echo -e "  ${CYAN}Note:${NC} PowerShell for Hyper-V is available only on Windows hosts."
+echo -e "  ${CYAN}      Oracle expdp/impdp — install Oracle Instant Client manually.${NC}"
+echo ""
+set -e
+
 # ─── Install dependencies ─────────────────────────
 echo -e "${YELLOW}[*] Installing server dependencies...${NC}"
 npm install
