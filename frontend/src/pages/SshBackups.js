@@ -25,7 +25,7 @@ export default function SshBackups() {
   const [connDialogOpen, setConnDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [connForm, setConnForm] = useState({ name: '', host: '', port: 22, user: '', password: '' });
+  const [connForm, setConnForm] = useState({ name: '', host: '', port: 22, user: '', password: '', key: '' });
   const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
   const { t, lang } = useTranslation();
   const isUk = lang === 'uk';
@@ -111,7 +111,7 @@ export default function SshBackups() {
       const resp = await fetch(`${API}/api/ssh-connections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(connForm) });
       if (resp.ok) {
         setConnDialogOpen(false);
-        setConnForm({ name: '', host: '', port: 22, user: '', password: '' });
+        setConnForm({ name: '', host: '', port: 22, user: '', password: '', key: '' });
         load();
       }
     } catch { setSnack({ open: true, msg: 'Error saving SSH connection', severity: 'error' }); }
@@ -278,6 +278,7 @@ export default function SshBackups() {
             <TextField label="Port" type="number" fullWidth value={connForm.port} onChange={e => setConnForm({...connForm, port: parseInt(e.target.value) || 22})} />
             <TextField label="User" fullWidth value={connForm.user} onChange={e => setConnForm({...connForm, user: e.target.value})} placeholder="root" />
             <TextField label={isUk ? 'Пароль (або ключ через ssh-agent)' : 'Password (or use ssh-agent key)'} type="password" fullWidth value={connForm.password} onChange={e => setConnForm({...connForm, password: e.target.value})} />
+            <TextField label={isUk ? 'Приватний ключ (вставте вміст)' : 'Private Key (paste content)'} multiline rows={4} fullWidth value={connForm.key} onChange={e => setConnForm({...connForm, key: e.target.value})} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----" />
           </Box>
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>

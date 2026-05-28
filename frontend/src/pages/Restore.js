@@ -40,11 +40,13 @@ export default function Restore() {
     const config = restoreType === 'new'
       ? (['mysql', 'postgres', 'oracle'].includes(backupType) || backupType === 'ssh-db'
         ? { connectionId: target.connectionId, database: target.database, type: target.dbType }
-        : ['ssh', 'host'].includes(backupType)
-          ? { targetPath: target.targetPath }
-          : backupType === 'cloud'
-            ? { localPath: target.targetPath }
-            : { vmName: target.vmName, host: target.host, user: target.user, password: target.password })
+        : backupType === 'ssh'
+          ? { connectionId: target.connectionId, targetPath: target.targetPath }
+          : backupType === 'host'
+            ? { targetPath: target.targetPath }
+            : backupType === 'cloud'
+              ? { localPath: target.targetPath }
+              : { vmName: target.vmName, host: target.host, user: target.user, password: target.password })
       : {};
 
     try {
@@ -182,14 +184,22 @@ export default function Restore() {
                     onChange={(e) => setTarget({...target, password: e.target.value})} />
                 </>)}
                 {isHost && (
-                  <TextField
-                    label={t('targetPath') || 'Target path'}
-                    fullWidth
-                    value={target.targetPath}
-                    onChange={(e) => setTarget({...target, targetPath: e.target.value})}
-                    placeholder="/restore/host"
-                    helperText={isSsh ? "Archive will be extracted on the remote server via SSH." : "Host archive will be extracted to this directory."}
-                  />
+                  <>
+                    {isSsh && (
+                      <TextField select label={t('targetConnection') || 'Target SSH'} fullWidth value={target.connectionId}
+                        onChange={(e) => setTarget({...target, connectionId: e.target.value})}>
+                        {sshConns.map(c => <MenuItem key={c.id} value={c.id}>{c.name} ({c.host})</MenuItem>)}
+                      </TextField>
+                    )}
+                    <TextField
+                      label={t('targetPath') || 'Target path'}
+                      fullWidth
+                      value={target.targetPath}
+                      onChange={(e) => setTarget({...target, targetPath: e.target.value})}
+                      placeholder="/restore/host"
+                      helperText={isSsh ? "Archive will be extracted on the remote server via SSH." : "Host archive will be extracted to this directory."}
+                    />
+                  </>
                 )}
               </Box>
             )}

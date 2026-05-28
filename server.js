@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
@@ -126,6 +127,30 @@ const initDB = async () => {
   }
 };
 
+const SSH_KEYS_DIR = path.join(__dirname, 'data', 'ssh_keys');
+
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+function writeSshKey(id, keyContent) {
+  if (!keyContent) return '';
+  const dir = SSH_KEYS_DIR;
+  if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true });
+  const keyPath = path.join(dir, `${id}.pem`);
+  fsSync.writeFileSync(keyPath, keyContent, 'utf8');
+  fsSync.chmodSync(keyPath, 0o600);
+  return keyPath;
+}
+
+function readSshKey(keyPath) {
+  if (!keyPath) return '';
+  try { return fsSync.readFileSync(keyPath, 'utf8'); } catch { return ''; }
+}
+
+function deleteSshKey(keyPath) {
+  if (!keyPath) return;
+  try { fsSync.unlinkSync(keyPath); } catch {}
+}
+
 const readDB = async () => {
   try { return JSON.parse(await fs.readFile(DB_PATH, 'utf8')); }
   catch { return null; }
@@ -151,7 +176,7 @@ const writeDB = async (data) => {
 
 app.get('/api/ssh-connections', async (req, res) => {
   const db = await readDB();
-  const safe = (db?.sshConnections || []).map(c => ({ ...c, password: c.password ? '***' : '' }));
+  const safe = (db?.sshConnections || []).map(c => ({ ...c, password: c.password ? '***' : '', key: c.key ? '***' : '' }));
   res.json(safe);
 });
 
@@ -160,11 +185,13 @@ app.post('/api/ssh-connections', authorize('manageBackups'), async (req, res) =>
   if (!name || !host || !user) return res.status(400).json({ error: 'Name, host, user required' });
   const db = await readDB();
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const conn = { id: uuidv4(), name, host, port: port || 22, user, password: password || '', key: key || '', createdAt: new Date().toISOString() };
+  const id = uuidv4();
+  const keyPath = writeSshKey(id, key);
+  const conn = { id, name, host, port: port || 22, user, password: password || '', key: keyPath || '', createdAt: new Date().toISOString() };
   db.sshConnections.push(conn);
   if (await writeDB(db)) {
     await addLog(`SSH connection added: ${name}`, 'success');
-    res.status(201).json({ ...conn, password: '***' });
+    res.status(201).json({ ...conn, password: '***', key: '***' });
   } else res.status(500).json({ error: 'Failed to save' });
 });
 
@@ -173,12 +200,16 @@ app.put('/api/ssh-connections/:id', authorize('manageBackups'), async (req, res)
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.sshConnections.findIndex(c => c.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const { password, ...rest } = req.body;
+  const { password, key, ...rest } = req.body;
   db.sshConnections[idx] = { ...db.sshConnections[idx], ...rest };
   if (password && password !== '***') db.sshConnections[idx].password = password;
+  if (key && key !== '***') {
+    deleteSshKey(db.sshConnections[idx].key);
+    db.sshConnections[idx].key = writeSshKey(db.sshConnections[idx].id, key);
+  }
   if (await writeDB(db)) {
     await addLog(`SSH connection updated: ${db.sshConnections[idx].name}`, 'info');
-    res.json({ ...db.sshConnections[idx], password: '***' });
+    res.json({ ...db.sshConnections[idx], password: '***', key: '***' });
   } else res.status(500).json({ error: 'Failed to update' });
 });
 
@@ -187,6 +218,7 @@ app.delete('/api/ssh-connections/:id', authorize('manageBackups'), async (req, r
   if (!db) return res.status(500).json({ error: 'DB unavailable' });
   const idx = db.sshConnections.findIndex(c => c.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  deleteSshKey(db.sshConnections[idx].key);
   db.sshConnections.splice(idx, 1);
   if (await writeDB(db)) res.json({ message: 'Deleted' });
   else res.status(500).json({ error: 'Failed to delete' });
