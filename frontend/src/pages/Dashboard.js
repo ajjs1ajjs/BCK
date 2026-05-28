@@ -1,30 +1,47 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Grid, Card, CardContent, Typography, Chip, Button, Stack, Tooltip, alpha,
+  Box, Card, CardContent, Typography, Chip, Button, Stack, Tooltip, alpha,
 } from '@mui/material';
 import {
   ArrowForward as ArrowIcon, Schedule as ScheduleIcon, Backup as BackupIcon,
   Storage as StorageIcon, CloudQueue as CloudIcon, Computer as ComputerIcon,
   Storage as DatabaseIcon, Speed as SpeedIcon, Timeline as TimelineIcon,
   Info as InfoIcon, Refresh as RefreshIcon, Download as DownloadIcon,
+  Restore as RestoreIcon,
 } from '@mui/icons-material';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer, Area, AreaChart,
   CartesianGrid,
 } from 'recharts';
+import { useTranslation } from '../context/LangContext';
 
 const API = process.env.REACT_APP_API_URL || '';
+
 const C = {
-  indigo: '#6366f1', green: '#22c55e', red: '#ef4444', cyan: '#06b6d4',
-  amber: '#f59e0b', border: 'rgba(255,255,255,0.06)',
+  primary: '#38bdf8',
+  secondary: '#8b5cf6',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  error: '#f43f5e',
+  surface: 'rgba(15,23,42,0.72)',
+  border: 'rgba(148, 163, 184, 0.16)',
+  borderStrong: 'rgba(56, 189, 248, 0.34)',
 };
+
 const GLASS = {
-  borderRadius: '20px', border: `1px solid ${C.border}`,
-  background: 'linear-gradient(135deg, rgba(17,25,40,0.6) 0%, rgba(17,25,40,0.35) 100%)',
-  backdropFilter: 'blur(20px)', boxShadow: '0 8px 32px rgba(0,0,0,0.37)',
-  transition: 'all 0.3s',
-  '&:hover': { borderColor: 'rgba(255,255,255,0.12)', transform: 'translateY(-2px)' },
+  borderRadius: '16px',
+  border: `1px solid ${C.border}`,
+  background: `linear-gradient(145deg, ${C.surface} 0%, rgba(12,18,30,0.82) 100%)`,
+  backdropFilter: 'blur(18px)',
+  boxShadow: '0 18px 46px rgba(2,6,23,0.28)',
+  transition: 'border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+  minWidth: 0,
+  '&:hover': {
+    borderColor: C.borderStrong,
+    boxShadow: '0 22px 52px rgba(2,6,23,0.36), 0 0 0 1px rgba(56,189,248,0.08)',
+    transform: 'translateY(-2px)'
+  },
 };
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -47,24 +64,24 @@ const CustomTooltip = ({ active, payload, label }) => {
 const StatCard = ({ label, value, icon, color, path, svg }) => {
   const navigate = useNavigate();
   return (
-    <Card onClick={() => navigate(path)} sx={{ cursor:'pointer', height:'100%', ...GLASS }}>
-      <CardContent sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', p:'16px !important' }}>
-        <Box>
-          <Typography variant="body2" sx={{ color:alpha('#fff',0.4), fontSize:12, fontWeight:600, textTransform:'uppercase', letterSpacing:'0.5px' }}>
+    <Card onClick={() => navigate(path)} sx={{ cursor:'pointer', height:'100%', width: '100%', ...GLASS }}>
+      <CardContent sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap: 1.5, p:'18px !important', minWidth: 0 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary', fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:0, lineHeight: 1.25 }}>
             {label}
           </Typography>
-          <Typography variant="h3" sx={{ fontWeight:800, color:'#fff', mt:0.5, fontSize:32 }}>
+          <Typography variant="h3" sx={{ fontWeight:800, color:'#fff', mt:0.75, fontSize:32, lineHeight: 1 }}>
             {value}
           </Typography>
         </Box>
-        <Box sx={{ mr:-2 }}>{svg}</Box>
+        <Box sx={{ flexShrink: 0, width: { xs: 96, md: 88, xl: 96 }, display: 'flex', justifyContent: 'flex-end', mr: -1 }}>{svg}</Box>
       </CardContent>
     </Card>
   );
 };
 
 const PlatformSVG = ({ gradientId, color, children, glowColor }) => (
-  <svg width="140" height="95" viewBox="0 0 140 95" className="platform-shadow">
+  <svg width="96" height="66" viewBox="0 0 140 95" className="platform-shadow">
     <path d="M 20,48 L 70,25 L 120,48 L 70,71 Z" fill={`${color}12`} stroke={color} strokeWidth="1.2" opacity="0.6" />
     <path d="M 20,48 L 20,55 L 70,78 L 70,71 Z" fill={`${color}20`} stroke={color} strokeWidth="0.8" opacity="0.5" />
     <path d="M 70,71 L 70,78 L 120,55 L 120,48 Z" fill={`${color}08`} stroke={color} strokeWidth="0.8" opacity="0.5" />
@@ -82,12 +99,14 @@ const PlatformSVG = ({ gradientId, color, children, glowColor }) => (
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const { t, lang } = useTranslation();
   const [backups, setBackups] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [logs, setLogs] = useState([]);
   const [dbConnections, setDbConnections] = useState([]);
   const [cloudCreds, setCloudCreds] = useState([]);
   const [vmBackups, setVmBackups] = useState([]);
+  const [stats, setStats] = useState(null);
 
   const loadAll = () => {
     fetch(`${API}/api/backups`).then(r=>r.json()).then(setBackups).catch(()=>{});
@@ -96,6 +115,7 @@ export default function Dashboard() {
     fetch(`${API}/api/db-connections`).then(r=>r.json()).then(setDbConnections).catch(()=>{});
     fetch(`${API}/api/cloud-credentials`).then(r=>r.json()).then(setCloudCreds).catch(()=>{});
     fetch(`${API}/api/vm-backups`).then(r=>r.json()).then(setVmBackups).catch(()=>{});
+    fetch(`${API}/api/stats`).then(r=>r.json()).then(setStats).catch(()=>{});
   };
   useEffect(() => { loadAll(); }, []);
 
@@ -106,29 +126,40 @@ export default function Dashboard() {
   const pending = backups.filter(b => b.status === 'pending').length;
   const activeSchedules = schedules.filter(s => s.enabled !== false).length;
   const successRate = total > 0 ? Math.round((completed/total)*100) : 0;
-  const usedBytes = useMemo(() => backups.reduce((s,b) => s + (b.size || 0), 0), [backups]);
-  const usedGB = Math.round(usedBytes / 1073741824 * 10) / 10 || 0;
-  const storageLimit = 50;
-  const storagePercent = Math.min((usedGB / storageLimit) * 100, 100);
-  const recentLogs = logs.slice(0, 4);
+
+  const { usedGB, storageLimit, storagePercent, isQuota } = useMemo(() => {
+    if (stats && stats.diskSpace) {
+      const uBytes = stats.diskSpace.usedBytes;
+      const tBytes = stats.diskSpace.totalBytes;
+      const uGB = Math.round(uBytes / 1073741824 * 10) / 10;
+      const tGB = Math.round(tBytes / 1073741824 * 10) / 10;
+      const percent = tGB > 0 ? Math.min((uGB / tGB) * 100, 100) : 0;
+      return {
+        usedGB: uGB,
+        storageLimit: tGB,
+        storagePercent: percent,
+        isQuota: stats.diskSpace.isQuota
+      };
+    }
+    // Fallback if not loaded
+    const uBytes = backups.reduce((s,b) => s + (b.size || 0), 0);
+    const uGB = Math.round(uBytes / 1073741824 * 10) / 10 || 0;
+    const tGB = 50.0;
+    const percent = Math.min((uGB / tGB) * 100, 100);
+    return {
+      usedGB: uGB,
+      storageLimit: tGB,
+      storagePercent: percent,
+      isQuota: false
+    };
+  }, [stats, backups]);
+
+  const recentLogs = logs.slice(0, 5);
   const totalConnections = dbConnections.length + cloudCreds.length + vmBackups.length;
   const avgSpeed = useMemo(() => {
     const withSpeed = backups.filter(b => b.speed);
     return withSpeed.length ? Math.round(withSpeed.reduce((s,b) => s + (b.speed || 0), 0) / withSpeed.length) : 0;
   }, [backups]);
-
-  // Last 24h
-  const last24h = useMemo(() => {
-    const cutoff = Date.now() - 86400000;
-    const recent = backups.filter(b => new Date(b.createdAt).getTime() > cutoff);
-    return {
-      total: recent.length,
-      completed: recent.filter(b => b.status === 'completed').length,
-      failed: recent.filter(b => b.status === 'failed').length,
-      bytes: recent.reduce((s,b) => s + (b.size || 0), 0),
-    };
-  }, [backups]);
-  const last24hGD = Math.round(last24h.bytes / 1073741824 * 100) / 100;
 
   // Backup size per day
   const sizeChartData = useMemo(() => {
@@ -161,17 +192,27 @@ export default function Dashboard() {
 
   // Connection status
   const connectionStatus = [
-    { type:'Database', items: dbConnections, icon: <DatabaseIcon />, color: C.green, path: '/db-backups' },
-    { type:'Cloud', items: cloudCreds, icon: <CloudIcon />, color: C.cyan, path: '/cloud-backups' },
-    { type:'VM', items: vmBackups, icon: <ComputerIcon />, color: C.amber, path: '/vm-backups' },
+    { type: t('databases'), items: dbConnections, icon: <DatabaseIcon />, color: C.success, path: '/db-backups' },
+    { type: t('cloud'), items: cloudCreds, icon: <CloudIcon />, color: C.secondary, path: '/cloud-backups' },
+    { type: t('vms'), items: vmBackups, icon: <ComputerIcon />, color: C.warning, path: '/vm-backups' },
   ];
 
   // Schedules list for bottom section
-  const scheduleList = schedules.filter(s => s.enabled !== false).slice(0, 5);
+  const scheduleList = schedules.filter(s => s.enabled !== false).slice(0, 4);
   const recentBackups = backups.slice(0, 5);
 
   const exportDashboard = () => {
     window.print();
+  };
+
+  /* ── shared row style: uses CSS Grid with equal-height columns ── */
+  const gridRow = {
+    display: 'grid',
+    gap: { xs: 2.25, lg: 3 },
+    mb: { xs: 2.75, lg: 3 },
+    alignItems: 'stretch',
+    gridAutoRows: '1fr',
+    minWidth: 0,
   };
 
   return (
@@ -180,16 +221,16 @@ export default function Dashboard() {
         @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
         @keyframes ambient { 0%{backgroundPosition:0% 50%} 50%{backgroundPosition:100% 50%} 100%{backgroundPosition:0% 50%} }
         .floating { animation: float 5s ease-in-out infinite; }
-        .platform-shadow { filter: drop-shadow(0 12px 12px rgba(0,0,0,0.4)); }
+        .platform-shadow { filter: drop-shadow(0 10px 12px rgba(2,6,23,0.45)); max-width: 100%; height: auto; }
         @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
         .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
-        @media print { body { background: #0B0F19 !important; } }
+        @media print { body { background: #0b1120 !important; } }
       `}</style>
 
       {/* Animated background */}
       <Box sx={{
         position:'fixed', top:0, left:0, right:0, bottom:0, zIndex:0, pointerEvents:'none', overflow:'hidden',
-        background:'linear-gradient(-45deg, rgba(99,102,241,0.03), rgba(6,182,212,0.02), rgba(99,102,241,0.03), rgba(16,185,129,0.02))',
+        background:'linear-gradient(-45deg, rgba(56,189,248,0.035), rgba(34,197,94,0.025), rgba(139,92,246,0.028), rgba(245,158,11,0.018))',
         backgroundSize:'400% 400%', animation:'ambient 15s ease infinite',
       }} />
 
@@ -197,455 +238,418 @@ export default function Dashboard() {
       {[['15%','40%','50','120','6s','0s'], ['40%','80%','35','90','8s','1s'], ['70%','8%','45','100','7s','2s'], ['85%','90%','30','70','5s','1.5s']].map((c,i) => (
         <Box key={i} sx={{
           position:'absolute', width:c[2]+'px', height:c[3]+'px', top:c[0], left:c[1], zIndex:0, pointerEvents:'none',
-          background:'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01))',
-          backdropFilter:'blur(4px)', border:'1px solid rgba(255,255,255,0.05)', transform:'rotate(45deg)',
+          background:'linear-gradient(135deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01))',
+          backdropFilter:'blur(4px)', border:'1px solid rgba(255,255,255,0.03)', transform:'rotate(45deg)',
           borderRadius:'4px', animation:`float ${c[4]} ease-in-out infinite ${c[5]}`,
         }} />
       ))}
 
-      <Box sx={{ position:'relative', zIndex:1, maxWidth:1600, mx:'auto', px:0 }}>
+      <Box sx={{ position:'relative', zIndex:1, width: '100%', maxWidth:1440, mx:'auto', px:{ xs: 0, sm: 1 }, minWidth: 0 }}>
         {/* ===== HEADER ===== */}
-        <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', mb:3 }}>
+        <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', mb:3, flexWrap:'wrap', gap:2 }}>
           <Box>
-            <Box sx={{ display:'flex', alignItems:'center', gap:1.5, mb:0.3 }}>
-              <Typography variant="h4" sx={{ fontWeight:800, letterSpacing:'-0.5px', color:'#fff' }}>Dashboard</Typography>
-              <Tooltip title={`System ${successRate >= 80 ? 'healthy' : 'degraded'}`}>
-                <Box sx={{ display:'flex', alignItems:'center', gap:0.5, px:1.5, py:0.3, borderRadius:'20px', bgcolor:alpha(successRate >= 80 ? C.green : C.amber, 0.12) }}>
-                  <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:successRate >= 80 ? C.green : C.amber, boxShadow:`0 0 8px ${successRate >= 80 ? C.green : C.amber}`, className:'pulse-dot' }} />
-                  <Typography variant="caption" sx={{ color:successRate >= 80 ? C.green : C.amber, fontWeight:600, fontSize:11 }}>
-                    {successRate >= 80 ? 'Healthy' : total > 0 ? 'Degraded' : 'Idle'}
+            <Box sx={{ display:'flex', alignItems:'center', gap:1.5, mb:0.5 }}>
+              <Typography variant="h4" sx={{ fontWeight:800, letterSpacing:'-0.5px', color:'#fff' }}>{t('dashboard')}</Typography>
+              <Tooltip title={`${successRate >= 80 ? t('healthy') : t('degraded')}`}>
+                <Box sx={{ display:'flex', alignItems:'center', gap:0.5, px:1.5, py:0.3, borderRadius:'20px', bgcolor:alpha(successRate >= 80 ? C.success : C.warning, 0.12) }}>
+                  <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:successRate >= 80 ? C.success : C.warning, boxShadow:`0 0 8px ${successRate >= 80 ? C.success : C.warning}`, className:'pulse-dot' }} />
+                  <Typography variant="caption" sx={{ color:successRate >= 80 ? C.success : C.warning, fontWeight:600, fontSize:11 }}>
+                    {successRate >= 80 ? t('healthy') : total > 0 ? t('degraded') : t('idle')}
                   </Typography>
                 </Box>
               </Tooltip>
             </Box>
-            <Typography variant="body2" sx={{ color:alpha('#fff',0.4), fontSize:13, fontWeight:500 }}>
-              {total > 0 ? `${successRate}% success · ${completed}/${total} · ${activeSchedules} active schedule(s)` : 'No backups configured yet'}
+            <Typography variant="body2" sx={{ color:'text.secondary', fontSize:13, fontWeight:500 }}>
+              {total > 0 ? `${successRate}% ${t('success').toLowerCase()} · ${completed}/${total} · ${activeSchedules} ${t('activeSchedules').toLowerCase()}` : t('noBackupsConfigured')}
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1}>
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap', justifyContent: { xs: 'stretch', sm: 'flex-end' }, width: { xs: '100%', sm: 'auto' } }}>
             <Button onClick={loadAll} sx={{
               borderRadius:'30px', px:2.5, py:1, fontSize:12, fontWeight:600, textTransform:'none', minWidth:0,
               bgcolor:'rgba(255,255,255,0.03)', color:'rgba(255,255,255,0.6)', border:`1px solid ${C.border}`,
-              '&:hover':{bgcolor:'rgba(255,255,255,0.08)'},
+              flex: { xs: '1 1 44px', sm: '0 0 auto' }, '&:hover':{bgcolor:'rgba(255,255,255,0.08)'},
             }}><RefreshIcon sx={{ fontSize:16 }} /></Button>
             <Button onClick={exportDashboard} sx={{
               borderRadius:'30px', px:2.5, py:1, fontSize:12, fontWeight:600, textTransform:'none', minWidth:0,
               bgcolor:'rgba(255,255,255,0.03)', color:'rgba(255,255,255,0.6)', border:`1px solid ${C.border}`,
-              '&:hover':{bgcolor:'rgba(255,255,255,0.08)'},
+              flex: { xs: '1 1 44px', sm: '0 0 auto' }, '&:hover':{bgcolor:'rgba(255,255,255,0.08)'},
             }}><DownloadIcon sx={{ fontSize:16 }} /></Button>
             <Button onClick={() => navigate('/backups')} sx={{
               borderRadius:'30px', px:3, py:1, fontSize:13, fontWeight:600, textTransform:'none',
               bgcolor:'rgba(255,255,255,0.03)', color:'rgba(255,255,255,0.8)', border:`1px solid ${C.border}`,
-              '&:hover':{bgcolor:'rgba(255,255,255,0.08)', borderColor:'rgba(255,255,255,0.2)'},
-            }} endIcon={<ArrowIcon fontSize="small" />}>View All</Button>
+              flex: { xs: '1 1 100%', sm: '0 0 auto' }, '&:hover':{bgcolor:'rgba(255,255,255,0.08)', borderColor:'rgba(255,255,255,0.2)'},
+            }} endIcon={<ArrowIcon fontSize="small" />}>{t('viewAll')}</Button>
           </Stack>
         </Box>
 
-        {/* ===== ROW 1: STAT CARDS ===== */}
-        <Grid container spacing={3} sx={{ mb:4 }}>
+        {/* ===== ROW 1: 4 STAT CARDS — EQUAL WIDTH ===== */}
+        <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', xl: 'repeat(4, minmax(0, 1fr))' } }}>
           {[
-            { label:'Total Jobs', value:total, color:'#EAB308', path:'/backups', svg:
-              <PlatformSVG gradientId="g1" color="#EAB308" glowColor="#EAB308">
+            { label: t('totalJobs'), value:total, color: C.primary, path:'/backups', svg:
+              <PlatformSVG gradientId="g1" color={C.primary} glowColor={C.primary}>
                 <path d="M55,42 a12,12 0 0,1 18,-10 a16,16 0 0,1 24,0 a12,12 0 0,1 0,18 L55,50 Z" fill="url(#g1)" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))" />
               </PlatformSVG> },
-            { label:'Completed', value:completed, color:C.green, path:'/backups', svg:
-              <PlatformSVG gradientId="g2" color={C.green} glowColor={C.green}>
+            { label: t('completed'), value:completed, color:C.success, path:'/backups', svg:
+              <PlatformSVG gradientId="g2" color={C.success} glowColor={C.success}>
                 <path d="M55,35 L68,48 L85,22" fill="none" stroke="url(#g2)" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))" />
               </PlatformSVG> },
-            { label:'Failed', value:failed, color:C.red, path:'/backups', svg:
-              <PlatformSVG gradientId="g3" color={C.red} glowColor={C.red}>
+            { label: t('failed'), value:failed, color:C.error, path:'/backups', svg:
+              <PlatformSVG gradientId="g3" color={C.error} glowColor={C.error}>
                 <path d="M58,18 L58,42 M58,50 L58,54" fill="none" stroke="url(#g3)" strokeWidth="7" strokeLinecap="round" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))" />
               </PlatformSVG> },
-            { label:'Active Now', value:running + pending, color:C.cyan, path:'/backups', svg:
-              <PlatformSVG gradientId="g4" color={C.cyan} glowColor={C.cyan}>
+            { label: t('activeNow'), value:running + pending, color:C.secondary, path:'/backups', svg:
+              <PlatformSVG gradientId="g4" color={C.secondary} glowColor={C.secondary}>
                 <circle cx="70" cy="36" r="14" fill="none" stroke="url(#g4)" strokeWidth="4" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.3))" />
                 <path d="M70,20 L70,24 M70,36 L70,28 M70,36 L78,36 M80,22 L84,26" stroke="url(#g4)" strokeWidth="3" strokeLinecap="round" />
               </PlatformSVG> },
           ].map((item,i) => (
-            <Grid item xs={12} sm={6} md={3} key={i}><StatCard {...item} /></Grid>
+            <StatCard key={i} {...item} />
           ))}
-        </Grid>
+        </Box>
 
-        {/* ===== ROW 2: 3-COLUMN LAYOUT ===== */}
-        <Grid container spacing={3} sx={{ mb:3 }}>
-          {/* ---- COL 1 ---- */}
-          <Grid item xs={12} md={4}>
-            {/* System Overview + Connection Status */}
-            <Card sx={{ ...GLASS, mb:3 }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2, color:'#fff' }}>System Overview</Typography>
-                <Stack spacing={1.5}>
-                  {/* Sources */}
-                  <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                    <Box sx={{ display:'flex', alignItems:'center', gap:1 }}>
-                      <Box sx={{ display:'flex', gap:0.5 }}>
-                        {connectionStatus.map((t,i) => (
-                          <Tooltip key={i} title={`${t.type}: ${t.items.length}`}>
-                            <Box sx={{ cursor:'pointer', width:28, height:28, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(t.color, 0.12), color:t.color, fontSize:14 }} onClick={() => navigate(t.path)}>
-                              {t.icon}
-                            </Box>
-                          </Tooltip>
-                        ))}
-                      </Box>
-                      <Typography variant="body2" sx={{ color:alpha('#fff',0.7), fontWeight:600, fontSize:13 }}>Sources</Typography>
-                    </Box>
-                    <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22 }}>{totalConnections}</Typography>
-                  </Box>
+        {/* ===== ROW 2: OVERVIEW (7fr) + STORAGE (5fr) — EQUAL HEIGHT ===== */}
+        <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 7fr) minmax(280px, 5fr)' } }}>
+          {/* System Overview */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, display: 'flex', flexDirection: 'column', flex:1 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2.5, color:'#fff' }}>{t('sysOverview')}</Typography>
 
-                  {/* Connection Status Indicators */}
-                  {connectionStatus.map(t => (
-                    <Box key={t.type} sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', pl:1, cursor:'pointer' }} onClick={() => navigate(t.path)}>
-                      <Box sx={{ display:'flex', alignItems:'center', gap:1 }}>
-                        <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:t.color, boxShadow:`0 0 6px ${t.color}` }} />
-                        <Typography variant="body2" sx={{ color:alpha('#fff',0.6), fontSize:13 }}>{t.type}</Typography>
-                      </Box>
-                      <Box sx={{ display:'flex', alignItems:'center', gap:0.5 }}>
-                        <Typography variant="body2" sx={{ fontWeight:700, color:t.items.length > 0 ? '#fff' : alpha('#fff',0.3), fontSize:14 }}>
-                          {t.items.length}
-                        </Typography>
-                        <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:t.items.length > 0 ? C.green : alpha('#fff',0.15) }} />
-                      </Box>
-                    </Box>
-                  ))}
-
-                  {/* Mini topology flow */}
-                  <Box sx={{ display:'flex', alignItems:'center', justifyContent:'center', gap:1, pt:1 }}>
-                    <Box sx={{ width:32, height:32, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.indigo,0.15), color:C.indigo, fontSize:14 }}>
-                      <StorageIcon sx={{ fontSize:16 }} />
-                    </Box>
-                    <Box sx={{ flex:1, height:2, mx:0.5, background:`linear-gradient(90deg, ${alpha(C.indigo,0.5)}, ${alpha(C.cyan,0.5)})`, position:'relative' }}>
-                      <Box sx={{ position:'absolute', right:-4, top:-4, width:10, height:10, borderRadius:'50%', bgcolor:C.cyan }} />
-                    </Box>
-                    <Box sx={{ width:32, height:32, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.cyan,0.15), color:C.cyan, fontSize:14 }}>
-                      <BackupIcon sx={{ fontSize:16 }} />
-                    </Box>
-                    <Box sx={{ flex:1, height:2, mx:0.5, background:`linear-gradient(90deg, ${alpha(C.cyan,0.5)}, ${alpha(C.green,0.5)})`, position:'relative' }}>
-                      <Box sx={{ position:'absolute', right:-4, top:-4, width:10, height:10, borderRadius:'50%', bgcolor:C.green }} />
-                    </Box>
-                    <Box sx={{ width:32, height:32, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.green,0.15), color:C.green, fontSize:14 }}>
-                      <CloudIcon sx={{ fontSize:16 }} />
-                    </Box>
-                  </Box>
-                </Stack>
-              </CardContent>
-            </Card>
-
-            {/* Last 24h Summary */}
-            <Card sx={{ ...GLASS, mb:3 }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2, color:'#fff' }}>Last 24 Hours</Typography>
-                <Grid container spacing={1.5}>
-                  <Grid item xs={4}>
-                    <Box sx={{ textAlign:'center', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                      <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22 }}>{last24h.total}</Typography>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4) }}>Total</Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={4}>
-                    <Box sx={{ textAlign:'center', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                      <Typography variant="h5" sx={{ fontWeight:800, color:C.green, fontSize:22 }}>{last24h.completed}</Typography>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4) }}>Success</Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={4}>
-                    <Box sx={{ textAlign:'center', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                      <Typography variant="h5" sx={{ fontWeight:800, color:last24h.failed > 0 ? C.red : alpha('#fff',0.3), fontSize:22 }}>{last24h.failed}</Typography>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4) }}>Failed</Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={12}>
-                    <Box sx={{ textAlign:'center', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                      <Typography variant="body2" sx={{ color:alpha('#fff',0.6), fontSize:13 }}>
-                        <strong>{last24hGD.toFixed(2)} GB</strong> transferred in {last24h.total} job{last24h.total !== 1 ? 's' : ''}
-                      </Typography>
-                    </Box>
-                  </Grid>
-                </Grid>
-              </CardContent>
-            </Card>
-
-            {/* Performance */}
-            <Card sx={{ ...GLASS }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2.5, color:'#fff' }}>Performance</Typography>
-                <Grid container spacing={2}>
-                  <Grid item xs={6}>
-                    <Box sx={{ textAlign:'center', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                      <SpeedIcon sx={{ color:C.cyan, fontSize:24, mb:0.5 }} />
-                      <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22 }}>{avgSpeed}</Typography>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4) }}>MB/s avg</Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={6}>
-                    <Box sx={{ textAlign:'center', p:1.5, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)' }}>
-                      <TimelineIcon sx={{ color:C.amber, fontSize:24, mb:0.5 }} />
-                      <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22 }}>{oldBackups}</Typography>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4) }}>expiring &gt;{retentionDays}d</Typography>
-                    </Box>
-                  </Grid>
-                </Grid>
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* ---- COL 2 ---- */}
-          <Grid item xs={12} md={4}>
-            {/* Storage */}
-            <Card sx={{ ...GLASS, mb:3 }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2, color:'#fff' }}>Storage</Typography>
-                <Box sx={{ display:'flex', alignItems:'center', gap:2.5 }}>
-                  <Box sx={{ position:'relative', flexShrink:0 }}>
-                    <Box sx={{ width:110, height:110, borderRadius:'50%',
-                      background: `conic-gradient(${C.indigo} ${storagePercent}%, rgba(255,255,255,0.03) ${storagePercent}%)`,
-                      border:'4px solid rgba(255,255,255,0.03)', display:'flex', alignItems:'center', justifyContent:'center',
-                    }}>
-                      <Box sx={{ width:88, height:88, borderRadius:'50%', background:'linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))',
-                        border:'1px solid rgba(255,255,255,0.06)', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
-                        boxShadow:'inset 0 4px 12px rgba(0,0,0,0.2)' }}>
-                        <Typography variant="h4" sx={{ fontWeight:800, lineHeight:1.1, fontSize:24, color:'#fff' }}>{Math.round(storagePercent)}%</Typography>
-                        <Typography variant="caption" sx={{ color:alpha('#fff',0.4), fontSize:10, fontWeight:500 }}>used</Typography>
-                      </Box>
-                    </Box>
-                  </Box>
-                  <Box sx={{ flex:1 }}>
-                    <Box sx={{ display:'flex', justifyContent:'space-between', mb:0.5 }}>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4) }}>Used</Typography>
-                      <Typography variant="caption" sx={{ fontWeight:600, color:'#fff' }}>{usedGB.toFixed(1)} GB</Typography>
-                    </Box>
-                    <Box sx={{ height:6, borderRadius:3, bgcolor:'rgba(255,255,255,0.05)', overflow:'hidden', mb:1 }}>
-                      <Box sx={{ height:'100%', borderRadius:3, width:`${storagePercent}%`, background:`linear-gradient(90deg, ${C.indigo}, ${C.cyan})`, transition:'width 1s' }} />
-                    </Box>
-                    <Typography variant="caption" sx={{ color:alpha('#fff',0.35), fontSize:11 }}>of {storageLimit} GB total</Typography>
-                  </Box>
-                </Box>
-              </CardContent>
-            </Card>
-
-            {/* Daily Backup Size */}
-            <Card sx={{ ...GLASS, mb:3 }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:0.3, color:'#fff' }}>Daily Backup Size</Typography>
-                <Typography variant="caption" sx={{ color:alpha('#fff',0.3), display:'block', mb:1.5, fontSize:11 }}>GB per day</Typography>
-                {sizeChartData.length === 0 ? (
-                  <Box sx={{ py:4, textAlign:'center' }}>
-                    <BarChart width={300} height={120} data={[{date:'—', sizeGB:0}]}>
-                      <Bar dataKey="sizeGB" fill="rgba(255,255,255,0.05)" radius={[4,4,0,0]} />
-                    </BarChart>
-                    <Typography variant="body2" sx={{ color:alpha('#fff',0.3), mt:1, fontSize:13 }}>No data yet</Typography>
-                  </Box>
-                ) : (
-                  <Box sx={{ width:'100%', height:140 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={sizeChartData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                        <XAxis dataKey="date" tickFormatter={v=>v.slice(5)} tick={{fontSize:10}} axisLine={false} tickLine={false} stroke={alpha('#fff',0.2)} />
-                        <YAxis tick={{fontSize:10}} axisLine={false} tickLine={false} stroke={alpha('#fff',0.2)} />
-                        <ReTooltip content={<CustomTooltip />} />
-                        <Bar dataKey="sizeGB" fill="url(#barGrad)" radius={[4,4,0,0]} maxBarSize={30} />
-                        <defs>
-                          <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={C.indigo} stopOpacity={0.8} />
-                            <stop offset="100%" stopColor={C.cyan} stopOpacity={0.3} />
-                          </linearGradient>
-                        </defs>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Recent Activity */}
-            <Card sx={{ ...GLASS }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2, color:'#fff' }}>Recent Activity</Typography>
-                {recentLogs.length === 0 ? (
-                  <Box sx={{ py:3, textAlign:'center' }}>
-                    <InfoIcon sx={{ color:alpha('#fff',0.12), fontSize:36, mb:1 }} />
-                    <Typography variant="body2" sx={{ color:alpha('#fff',0.35), fontSize:13 }}>No recent activity</Typography>
-                  </Box>
-                ) : (
-                  <Stack spacing={0.5}>
-                    {recentLogs.map(log => (
-                      <Box key={log.id} sx={{ display:'flex', gap:1.5, py:0.8, borderRadius:1.5, '&:hover':{bgcolor:'rgba(255,255,255,0.03)'} }}>
-                        <Box sx={{ width:7, height:7, borderRadius:'50%', mt:0.6, flexShrink:0,
-                          bgcolor: log.status === 'error' ? C.red : log.status === 'warning' ? C.amber : log.status === 'success' ? C.green : C.cyan,
-                          boxShadow: `0 0 6px ${log.status === 'error' ? C.red : log.status === 'warning' ? C.amber : log.status === 'success' ? C.green : C.cyan}` }} />
-                        <Box sx={{ minWidth:0, flex:1 }}>
-                          <Typography variant="body2" noWrap sx={{ fontWeight:500, color:alpha('#fff',0.8), fontSize:13 }}>{log.message}</Typography>
-                          <Typography variant="caption" sx={{ color:alpha('#fff',0.25), fontSize:11 }}>{(log.timestamp || '').slice(0,19).replace('T', ' ')}</Typography>
-                        </Box>
-                      </Box>
-                    ))}
-                  </Stack>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
-
-          {/* ---- COL 3 ---- */}
-          <Grid item xs={12} md={4}>
-            {/* Backup Timeline */}
-            <Card sx={{ ...GLASS, mb:3 }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:0.3, color:'#fff' }}>Backup Timeline</Typography>
-                <Typography variant="caption" sx={{ color:alpha('#fff',0.3), display:'block', mb:1.5, fontSize:11 }}>Daily backup activity</Typography>
-                {timelineData.length === 0 ? (
-                  <Box sx={{ py:4, textAlign:'center' }}>
-                    <TimelineIcon sx={{ color:alpha('#fff',0.12), fontSize:36, mb:1 }} />
-                    <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>No data yet</Typography>
-                  </Box>
-                ) : (
-                  <Box sx={{ width:'100%', height:150 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={timelineData}>
-                        <defs>
-                          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor={C.green} stopOpacity={0.25} />
-                            <stop offset="95%" stopColor={C.green} stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                        <XAxis dataKey="date" tickFormatter={v=>v.slice(5)} tick={{fontSize:10}} axisLine={false} tickLine={false} stroke={alpha('#fff',0.2)} />
-                        <YAxis tick={{fontSize:10}} axisLine={false} tickLine={false} stroke={alpha('#fff',0.2)} />
-                        <ReTooltip content={<CustomTooltip />} />
-                        <Area type="monotone" dataKey="completed" stroke={C.green} fill="url(#areaGrad)" strokeWidth={2} />
-                        {timelineData.some(d => d.failed > 0) && <Area type="monotone" dataKey="failed" stroke={C.red} fill="none" strokeWidth={1.5} strokeDasharray="4 4" />}
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Recent Backups */}
-            <Card sx={{ ...GLASS, mb:3 }}>
-              <CardContent sx={{ p:3 }}>
-                <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:2 }}>
-                  <Typography variant="subtitle1" sx={{ fontWeight:700, color:'#fff' }}>Recent Backups</Typography>
-                  <Chip label={`${total} total`} size="small" sx={{ bgcolor:'rgba(255,255,255,0.06)', color:alpha('#fff',0.5), fontWeight:600, fontSize:11 }} />
-                </Box>
-                {recentBackups.length === 0 ? (
-                  <Box sx={{ py:3, textAlign:'center' }}>
-                    <BackupIcon sx={{ color:alpha('#fff',0.12), fontSize:36, mb:1 }} />
-                    <Typography variant="body2" sx={{ color:alpha('#fff',0.35), mb:1.5, fontSize:13 }}>No backups yet</Typography>
-                    <Button fullWidth onClick={() => navigate('/backups')} sx={{
-                      borderRadius:'12px', py:1.2, textTransform:'none', fontWeight:700, fontSize:12,
-                      background:'linear-gradient(90deg, #4f46e5, #3b82f6)', color:'#fff',
-                      boxShadow:'0 4px 16px rgba(99,102,241,0.2)',
-                      '&:hover':{background:'linear-gradient(90deg, #4338ca, #2563eb)'},
-                    }}>Create your first backup</Button>
-                  </Box>
-                ) : (
-                  <Stack spacing={0.5}>
-                    {recentBackups.map((b,i) => (
-                      <Box key={b.id} sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', py:0.8, px:1, borderRadius:1.5, '&:hover':{bgcolor:'rgba(255,255,255,0.03)'}, cursor:'pointer' }} onClick={() => navigate('/backups')}>
-                        <Box sx={{ display:'flex', alignItems:'center', gap:1.5, minWidth:0, flex:1 }}>
-                          <Box sx={{ width:6, height:6, borderRadius:'50%', flexShrink:0,
-                            bgcolor: b.status === 'completed' ? C.green : b.status === 'failed' ? C.red : b.status === 'running' ? C.cyan : C.amber,
-                            boxShadow: `0 0 4px ${b.status === 'completed' ? C.green : b.status === 'failed' ? C.red : b.status === 'running' ? C.cyan : C.amber}` }} />
-                          <Box sx={{ minWidth:0 }}>
-                            <Typography variant="body2" noWrap sx={{ fontWeight:600, color:'#fff', fontSize:13 }}>{b.name}</Typography>
-                            <Typography variant="caption" noWrap sx={{ color:alpha('#fff',0.3), fontSize:11, display:'block' }}>
-                              {(b.createdAt || '').slice(0,16).replace('T', ' ')}
-                            </Typography>
+              {/* Sources + Performance row */}
+              <Box sx={{ display:'grid', gridTemplateColumns:{ xs:'1fr', sm:'repeat(2, minmax(0, 1fr))' }, gap:2, mb:3 }}>
+                {/* Sources Indicator */}
+                <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', p:2, borderRadius:2, bgcolor:'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)', gap: 1.5 }}>
+                  <Box sx={{ display:'flex', alignItems:'center', gap:1.5, minWidth: 0 }}>
+                    <Box sx={{ display:'flex', gap:0.5, flexShrink: 0 }}>
+                      {connectionStatus.map((cs,i) => (
+                        <Tooltip key={i} title={`${cs.type}: ${cs.items.length}`}>
+                          <Box sx={{ cursor:'pointer', width:30, height:30, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(cs.color, 0.12), color:cs.color, fontSize:14 }} onClick={() => navigate(cs.path)}>
+                            {cs.icon}
                           </Box>
-                        </Box>
-                        <Chip label={b.status} size="small" sx={{ fontWeight:600, fontSize:10,
-                          bgcolor:alpha(b.status === 'completed' ? C.green : b.status === 'failed' ? C.red : b.status === 'running' ? C.cyan : C.amber, 0.12),
-                          color: b.status === 'completed' ? C.green : b.status === 'failed' ? C.red : b.status === 'running' ? C.cyan : C.amber,
-                        }} />
-                      </Box>
-                    ))}
-                  </Stack>
-                )}
-              </CardContent>
-            </Card>
+                        </Tooltip>
+                      ))}
+                    </Box>
+                    <Typography variant="body2" noWrap sx={{ color:'text.primary', fontWeight:600, fontSize:13 }}>{t('sources')}</Typography>
+                  </Box>
+                  <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22, flexShrink: 0 }}>{totalConnections}</Typography>
+                </Box>
 
-            {/* Quick Actions + Export */}
-            <Card sx={{ ...GLASS }}>
-              <CardContent sx={{ p:3 }}>
-                <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2, color:'#fff' }}>Quick Actions</Typography>
-                <Stack spacing={1}>
-                  {[
-                    { label:'New Backup', path:'/backups', grad:'linear-gradient(90deg, rgba(99,102,241,0.15), rgba(168,85,247,0.15))', border:'rgba(168,85,247,0.3)' },
-                    { label:'Restore', path:'/restore', grad:'linear-gradient(90deg, rgba(59,130,246,0.15), rgba(6,182,212,0.15))', border:'rgba(6,182,212,0.3)' },
-                    { label:'Manage Schedules', path:'/schedules', grad:'linear-gradient(90deg, rgba(234,179,8,0.1), rgba(249,115,22,0.1))', border:'rgba(249,115,22,0.25)' },
-                    { label:'Export Dashboard', path:'#export', grad:'linear-gradient(90deg, rgba(16,185,129,0.1), rgba(16,185,129,0.05))', border:'rgba(16,185,129,0.2)', action: exportDashboard },
-                  ].map(act => (
-                    <Button key={act.label} fullWidth onClick={act.action || (() => navigate(act.path))}
-                      sx={{ borderRadius:'12px', py:1.3, textTransform:'none', fontWeight:600, fontSize:13,
-                        background:act.grad, color:'rgba(255,255,255,0.85)', border:`1px solid ${act.border}`,
-                        justifyContent:'flex-start', px:2.5, '&:hover':{borderColor:'rgba(255,255,255,0.3)', color:'#fff'} }}>
-                      <Box sx={{ width:18, height:18, borderRadius:'50%', border:'1.5px solid currentColor', mr:1.5, display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:800 }}>
-                        {act.label === 'New Backup' ? '↑' : act.label === 'Restore' ? '↺' : act.label === 'Manage Schedules' ? '⚙' : '↓'}
+                {/* Performance */}
+                <Box sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', p:2, borderRadius:2, bgcolor:'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.03)', gap: 1.5 }}>
+                  <Box sx={{ display:'flex', alignItems:'center', gap:1, minWidth: 0 }}>
+                    <SpeedIcon sx={{ color: C.secondary, fontSize: 20, flexShrink: 0 }} />
+                    <Typography variant="body2" noWrap sx={{ color:'text.primary', fontWeight:600, fontSize:13 }}>{t('performance')}</Typography>
+                  </Box>
+                  <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22, flexShrink: 0 }}>{avgSpeed} <span style={{ fontSize:12, fontWeight:500, color:alpha('#fff', 0.5) }}>MB/s</span></Typography>
+                </Box>
+              </Box>
+
+              {/* Status List */}
+              <Stack spacing={1.5} sx={{ flex:1 }}>
+                {connectionStatus.map(cs => (
+                  <Box key={cs.type} sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', px:1.5, py:1, borderRadius: 1.5, '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, cursor:'pointer' }} onClick={() => navigate(cs.path)}>
+                    <Box sx={{ display:'flex', alignItems:'center', gap:1.5 }}>
+                      <Box sx={{ width:8, height:8, borderRadius:'50%', bgcolor:cs.color, boxShadow:`0 0 6px ${cs.color}` }} />
+                      <Typography variant="body2" sx={{ color:'text.secondary', fontSize:13 }}>{cs.type}</Typography>
+                    </Box>
+                    <Box sx={{ display:'flex', alignItems:'center', gap:1 }}>
+                      <Typography variant="body2" sx={{ fontWeight:700, color:cs.items.length > 0 ? '#fff' : alpha('#fff',0.3), fontSize:14 }}>
+                        {cs.items.length}
+                      </Typography>
+                      <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:cs.items.length > 0 ? C.success : alpha('#fff',0.15) }} />
+                    </Box>
+                  </Box>
+                ))}
+              </Stack>
+
+              {/* Topology flow */}
+              <Box sx={{ display:'flex', alignItems:'center', justifyContent:'center', gap:1, pt:3, mt:'auto', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+                <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.primary,0.15), color:C.primary }}>
+                  <StorageIcon sx={{ fontSize:18 }} />
+                </Box>
+                <Box sx={{ flex:1, height:2, mx:0.5, background:`linear-gradient(90deg, ${alpha(C.primary,0.5)}, ${alpha(C.secondary,0.5)})`, position:'relative' }}>
+                  <Box sx={{ position:'absolute', right:-4, top:-4, width:10, height:10, borderRadius:'50%', bgcolor:C.secondary }} />
+                </Box>
+                <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.secondary,0.15), color:C.secondary }}>
+                  <BackupIcon sx={{ fontSize:18 }} />
+                </Box>
+                <Box sx={{ flex:1, height:2, mx:0.5, background:`linear-gradient(90deg, ${alpha(C.secondary,0.5)}, ${alpha(C.success,0.5)})`, position:'relative' }}>
+                  <Box sx={{ position:'absolute', right:-4, top:-4, width:10, height:10, borderRadius:'50%', bgcolor:C.success }} />
+                </Box>
+                <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.success,0.15), color:C.success }}>
+                  <CloudIcon sx={{ fontSize:18 }} />
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+
+          {/* Storage Gauge */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, display: 'flex', flexDirection: 'column', flex:1, justifyContent: 'space-between' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2, color:'#fff' }}>{t('storage')}</Typography>
+
+              <Box sx={{ display:'flex', flexDirection: 'column', alignItems:'center', justifyContent:'center', flex:1 }}>
+                <Box sx={{ position:'relative', flexShrink:0, mb: 3 }}>
+                  <Box sx={{ width:140, height:140, borderRadius:'50%',
+                    background: `conic-gradient(${C.primary} ${storagePercent}%, rgba(255,255,255,0.03) ${storagePercent}%)`,
+                    border:'4px solid rgba(255,255,255,0.02)', display:'flex', alignItems:'center', justifyContent:'center',
+                  }}>
+                    <Box sx={{ width:112, height:112, borderRadius:'50%', background:'linear-gradient(135deg, rgba(20,25,40,0.85), rgba(15,20,35,0.75))',
+                      border:`1px solid ${C.border}`, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                      boxShadow:'inset 0 4px 12px rgba(0,0,0,0.4)' }}>
+                      <Typography variant="h4" sx={{ fontWeight:800, lineHeight:1.1, fontSize:28, color:'#fff' }}>{Math.round(storagePercent)}%</Typography>
+                      <Typography variant="caption" sx={{ color:'text.secondary', fontSize:11, fontWeight:500 }}>{t('used')}</Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              </Box>
+
+              <Box>
+                <Box sx={{ display:'flex', justifyContent:'space-between', mb:0.5 }}>
+                  <Typography variant="caption" sx={{ color:'text.secondary' }}>{t('used')}</Typography>
+                  <Typography variant="caption" sx={{ fontWeight:600, color:'#fff' }}>{usedGB.toFixed(1)} GB</Typography>
+                </Box>
+                <Box sx={{ height:6, borderRadius:3, bgcolor:'rgba(255,255,255,0.05)', overflow:'hidden', mb:1 }}>
+                  <Box sx={{ height:'100%', borderRadius:3, width:`${storagePercent}%`, background:`linear-gradient(90deg, ${C.primary}, ${C.secondary})`, transition:'width 1s' }} />
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="caption" sx={{ color:alpha('#fff',0.3), fontSize:11 }}>
+                    {t('ofTotal', { total: storageLimit.toFixed(1) })}
+                  </Typography>
+                  <Chip
+                    label={isQuota ? t('storageQuotaLimit') : t('storageRealDisk')}
+                    size="small"
+                    sx={{
+                      height: 18,
+                      fontSize: 9,
+                      fontWeight: 600,
+                      bgcolor: isQuota ? 'rgba(124, 58, 237, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                      color: isQuota ? C.primary : C.success,
+                      border: '1px solid',
+                      borderColor: isQuota ? 'rgba(124, 58, 237, 0.3)' : 'rgba(16, 185, 129, 0.3)'
+                    }}
+                  />
+                </Box>
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* ===== ROW 3: 2 CHARTS — 50/50 ===== */}
+        <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' } }}>
+          {/* Daily Backup Size */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, flex:1, display:'flex', flexDirection:'column' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:0.3, color:'#fff' }}>{t('dailyBackupSize')}</Typography>
+              <Typography variant="caption" sx={{ color:alpha('#fff',0.3), display:'block', mb:2.5, fontSize:11 }}>GB</Typography>
+              {sizeChartData.length === 0 ? (
+                <Box sx={{ py:6, textAlign:'center', flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+                  <BarChart width={300} height={160} data={[{date:'—', sizeGB:0}]}>
+                    <Bar dataKey="sizeGB" fill="rgba(255,255,255,0.03)" radius={[4,4,0,0]} />
+                  </BarChart>
+                  <Typography variant="body2" sx={{ color:alpha('#fff',0.3), mt:2, fontSize:13 }}>{t('noDataYet')}</Typography>
+                </Box>
+              ) : (
+                <Box sx={{ width:'100%', flex:1, minHeight:200 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={sizeChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="date" tickFormatter={v=>v.slice(5)} tick={{fontSize:10, fill:alpha('#fff',0.5)}} axisLine={false} tickLine={false} stroke="rgba(255,255,255,0.1)" />
+                      <YAxis tick={{fontSize:10, fill:alpha('#fff',0.5)}} axisLine={false} tickLine={false} stroke="rgba(255,255,255,0.1)" />
+                      <ReTooltip content={<CustomTooltip />} />
+                      <Bar dataKey="sizeGB" fill="url(#barGrad)" radius={[4,4,0,0]} maxBarSize={30} />
+                      <defs>
+                        <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={C.primary} stopOpacity={0.8} />
+                          <stop offset="100%" stopColor={C.secondary} stopOpacity={0.2} />
+                        </linearGradient>
+                      </defs>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Backup Timeline */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, flex:1, display:'flex', flexDirection:'column' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:0.3, color:'#fff' }}>{t('backupTimeline')}</Typography>
+              <Typography variant="caption" sx={{ color:alpha('#fff',0.3), display:'block', mb:2.5, fontSize:11 }}>{t('dailyBackupSize').toLowerCase()}</Typography>
+              {timelineData.length === 0 ? (
+                <Box sx={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', py:4 }}>
+                  <TimelineIcon sx={{ color:alpha('#fff',0.06), fontSize:48, mb:2 }} />
+                  <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>{t('noDataYet')}</Typography>
+                </Box>
+              ) : (
+                <Box sx={{ width:'100%', flex:1, minHeight:200 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={timelineData}>
+                      <defs>
+                        <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={C.success} stopOpacity={0.25} />
+                          <stop offset="95%" stopColor={C.success} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                      <XAxis dataKey="date" tickFormatter={v=>v.slice(5)} tick={{fontSize:10, fill:alpha('#fff',0.5)}} axisLine={false} tickLine={false} stroke="rgba(255,255,255,0.1)" />
+                      <YAxis tick={{fontSize:10, fill:alpha('#fff',0.5)}} axisLine={false} tickLine={false} stroke="rgba(255,255,255,0.1)" />
+                      <ReTooltip content={<CustomTooltip />} />
+                      <Area type="monotone" dataKey="completed" stroke={C.success} fill="url(#areaGrad)" strokeWidth={2} name={t('completed')} />
+                      {timelineData.some(d => d.failed > 0) && <Area type="monotone" dataKey="failed" stroke={C.error} fill="none" strokeWidth={1.5} strokeDasharray="4 4" name={t('failed')} />}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* ===== ROW 4: ACTIVITY + BACKUPS + ACTIONS — EQUAL 33% ===== */}
+        <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', lg: 'repeat(3, minmax(0, 1fr))' } }}>
+          {/* Recent Activity */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, display: 'flex', flexDirection: 'column', flex:1 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2.5, color:'#fff' }}>{t('recentActivity')}</Typography>
+              {recentLogs.length === 0 ? (
+                <Box sx={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', py:4 }}>
+                  <InfoIcon sx={{ color:alpha('#fff',0.06), fontSize:40, mb:1.5 }} />
+                  <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>{t('noRecentActivity')}</Typography>
+                </Box>
+              ) : (
+                <Stack spacing={1} sx={{ flex:1 }}>
+                  {recentLogs.map(log => (
+                    <Box key={log.id} sx={{ display:'flex', gap:1.5, py:1, px:1, borderRadius:1.5, '&:hover':{bgcolor:'rgba(255,255,255,0.02)'} }}>
+                      <Box sx={{ width:8, height:8, borderRadius:'50%', mt:0.7, flexShrink:0,
+                        bgcolor: log.status === 'error' ? C.error : log.status === 'warning' ? C.warning : log.status === 'success' ? C.success : C.secondary,
+                        boxShadow: `0 0 6px ${log.status === 'error' ? C.error : log.status === 'warning' ? C.warning : log.status === 'success' ? C.success : C.secondary}` }} />
+                      <Box sx={{ minWidth:0, flex:1 }}>
+                        <Typography variant="body2" noWrap sx={{ fontWeight:500, color:alpha('#fff',0.85), fontSize:13 }}>{log.message}</Typography>
+                        <Typography variant="caption" sx={{ color:alpha('#fff',0.25), fontSize:11 }}>{(log.timestamp || '').slice(0,19).replace('T', ' ')}</Typography>
                       </Box>
-                      {act.label}
-                    </Button>
+                    </Box>
                   ))}
                 </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
+              )}
+            </CardContent>
+          </Card>
 
-        {/* ===== BOTTOM ROW: Active Schedules ===== */}
-        <Card sx={{ ...GLASS }}>
+          {/* Recent Backups */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, display: 'flex', flexDirection: 'column', flex:1 }}>
+              <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight:700, color:'#fff' }}>{t('recentBackups')}</Typography>
+                <Chip label={`${total} ${t('totalJobs').toLowerCase()}`} size="small" sx={{ bgcolor:'rgba(255,255,255,0.04)', color:alpha('#fff',0.4), fontWeight:600, fontSize:10 }} />
+              </Box>
+              {recentBackups.length === 0 ? (
+                <Box sx={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', py:2 }}>
+                  <BackupIcon sx={{ color:alpha('#fff',0.06), fontSize:40, mb:1.5 }} />
+                  <Typography variant="body2" sx={{ color:alpha('#fff',0.35), mb:2, fontSize:13 }}>{t('noBackupsYet')}</Typography>
+                  <Button fullWidth onClick={() => navigate('/backups')} sx={{
+                    borderRadius:'12px', py:1.2, textTransform:'none', fontWeight:700, fontSize:12,
+                    background:`linear-gradient(90deg, ${C.primary}, #3b82f6)`, color:'#fff',
+                    boxShadow:'0 4px 16px rgba(124,58,237,0.2)',
+                    '&:hover':{background:`linear-gradient(90deg, #6d28d9, #2563eb)`},
+                  }}>{t('createFirstBackup')}</Button>
+                </Box>
+              ) : (
+                <Stack spacing={1} sx={{ flex:1 }}>
+                  {recentBackups.map((b) => (
+                    <Box key={b.id} sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', py:1, px:1, borderRadius:1.5, '&:hover':{bgcolor:'rgba(255,255,255,0.02)'}, cursor:'pointer' }} onClick={() => navigate('/backups')}>
+                      <Box sx={{ display:'flex', alignItems:'center', gap:1.5, minWidth:0, flex:1 }}>
+                        <Box sx={{ width:7, height:7, borderRadius:'50%', flexShrink:0,
+                          bgcolor: b.status === 'completed' ? C.success : b.status === 'failed' ? C.error : b.status === 'running' ? C.secondary : C.warning,
+                          boxShadow: `0 0 4px ${b.status === 'completed' ? C.success : b.status === 'failed' ? C.error : b.status === 'running' ? C.secondary : C.warning}` }} />
+                        <Box sx={{ minWidth:0 }}>
+                          <Typography variant="body2" noWrap sx={{ fontWeight:600, color:'#fff', fontSize:13 }}>{b.name}</Typography>
+                          <Typography variant="caption" noWrap sx={{ color:alpha('#fff',0.3), fontSize:11, display:'block' }}>
+                            {(b.createdAt || '').slice(0,16).replace('T', ' ')}
+                          </Typography>
+                        </Box>
+                      </Box>
+                      <Chip label={b.status} size="small" sx={{ fontWeight:600, fontSize:9,
+                        bgcolor:alpha(b.status === 'completed' ? C.success : b.status === 'failed' ? C.error : b.status === 'running' ? C.secondary : C.warning, 0.12),
+                        color: b.status === 'completed' ? C.success : b.status === 'failed' ? C.error : b.status === 'running' ? C.secondary : C.warning,
+                      }} />
+                    </Box>
+                  ))}
+                </Stack>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Quick Actions */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, display: 'flex', flexDirection: 'column', flex:1 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2.5, color:'#fff' }}>{t('quickActions')}</Typography>
+              <Stack spacing={1.5} sx={{ flex:1, justifyContent:'center' }}>
+                {[
+                  { label: t('newBackupBtn'), path:'/backups', grad:`linear-gradient(90deg, ${alpha(C.primary, 0.14)}, ${alpha(C.secondary, 0.1)})`, border:alpha(C.primary,0.28), icon:<BackupIcon sx={{ fontSize: 14 }} /> },
+                  { label: t('restore'), path:'/restore', grad:`linear-gradient(90deg, ${alpha(C.secondary, 0.14)}, ${alpha(C.primary, 0.08)})`, border:alpha(C.secondary,0.28), icon:<RestoreIcon sx={{ fontSize: 14 }} /> },
+                  { label: t('manageSchedulesBtn'), path:'/schedules', grad:`linear-gradient(90deg, ${alpha(C.warning, 0.12)}, ${alpha(C.warning, 0.05)})`, border:alpha(C.warning,0.26), icon:<ScheduleIcon sx={{ fontSize: 14 }} /> },
+                  { label: t('exportDashboardBtn'), path:'#export', grad:`linear-gradient(90deg, ${alpha(C.success, 0.12)}, ${alpha(C.success, 0.05)})`, border:alpha(C.success,0.24), action: exportDashboard, icon:<DownloadIcon sx={{ fontSize: 14 }} /> },
+                ].map(act => (
+                  <Button key={act.label} fullWidth onClick={act.action || (() => navigate(act.path))}
+                    sx={{ borderRadius:'12px', py:1.3, textTransform:'none', fontWeight:600, fontSize:13,
+                      background:act.grad, color:'rgba(255,255,255,0.85)', border:`1px solid ${act.border}`,
+                      justifyContent:'flex-start', px:2.5, '&:hover':{borderColor:'rgba(255,255,255,0.35)', color:'#fff'} }}>
+                    <Box sx={{ width:22, height:22, borderRadius:'8px', border:'1px solid currentColor', mr:1.5, display:'flex', alignItems:'center', justifyContent:'center', flexShrink: 0 }}>
+                      {act.icon}
+                    </Box>
+                    {act.label}
+                  </Button>
+                ))}
+              </Stack>
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* ===== ROW 5: ACTIVE SCHEDULES — FULL WIDTH ===== */}
+        <Card sx={{ ...GLASS, mb:4 }}>
           <CardContent sx={{ p:3 }}>
-            <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:2 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight:700, color:'#fff' }}>Active Schedules</Typography>
-              <Stack direction="row" spacing={1}>
-                <Chip label={`${activeSchedules} active`} size="small" sx={{ bgcolor:alpha(C.cyan,0.12), color:C.cyan, fontWeight:600, fontSize:11 }} />
+            <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:3, flexWrap:'wrap', gap:1 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, color:'#fff' }}>{t('activeSchedules')}</Typography>
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <Chip label={`${activeSchedules} ${t('active').toLowerCase()}`} size="small" sx={{ bgcolor:alpha(C.secondary,0.12), color:C.secondary, fontWeight:600, fontSize:11 }} />
                 <Button size="small" onClick={() => navigate('/schedules')} sx={{ borderRadius:'20px', textTransform:'none', fontSize:12, color:alpha('#fff',0.5), minWidth:0, p:'4px 12px', border:`1px solid ${C.border}` }}>
-                  Manage <ArrowIcon sx={{ fontSize:14, ml:0.3 }} />
+                  {t('actions')} <ArrowIcon sx={{ fontSize:14, ml:0.3 }} />
                 </Button>
               </Stack>
             </Box>
             {scheduleList.length === 0 ? (
               <Box sx={{ display:'flex', alignItems:'center', gap:1.5, py:2 }}>
-                <ScheduleIcon sx={{ color:alpha('#fff',0.15), fontSize:20 }} />
-                <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>No active schedules. Create one to automate backups.</Typography>
+                <ScheduleIcon sx={{ color:alpha('#fff',0.12), fontSize:24 }} />
+                <Typography variant="body2" sx={{ color:alpha('#fff',0.35), fontSize:13 }}>{t('noActiveSchedules')}</Typography>
               </Box>
             ) : (
-              <Grid container spacing={1.5}>
-                {scheduleList.map((s,i) => (
-                  <Grid item xs={12} sm={6} md={4} lg={3} key={s.id}>
-                    <Box sx={{ p:2, borderRadius:2, bgcolor:'rgba(255,255,255,0.03)', border:`1px solid ${C.border}`, '&:hover':{bgcolor:'rgba(255,255,255,0.06)'} }}>
-                      <Typography variant="body2" noWrap sx={{ fontWeight:700, color:'#fff', fontSize:13, mb:0.5 }}>{s.name}</Typography>
-                      <Typography variant="caption" sx={{ fontFamily:'monospace', color:alpha('#fff',0.35), fontSize:11, display:'block', mb:1 }}>
+              <Box sx={{ display:'grid', gridTemplateColumns: { xs:'1fr', sm:'repeat(2, minmax(0, 1fr))', xl:'repeat(4, minmax(0, 1fr))' }, gap:2 }}>
+                {scheduleList.map((s) => (
+                  <Box key={s.id} sx={{ p:2.5, borderRadius:2.5, bgcolor:'rgba(255,255,255,0.02)', border:`1px solid ${C.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', '&:hover':{bgcolor:'rgba(255,255,255,0.04)'} }}>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="body2" noWrap sx={{ fontWeight:700, color:'#fff', fontSize:13.5, mb:0.5 }}>{s.name}</Typography>
+                      <Typography variant="caption" sx={{ fontFamily:'monospace', color:alpha('#fff',0.45), fontSize:11, display:'block' }}>
                         {s.cronExpression || s.cron || '—'}
                       </Typography>
-                      <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
-                        <Typography variant="caption" sx={{ color:alpha('#fff',0.3), fontSize:10 }}>
-                          Next: {s.nextRun ? s.nextRun.slice(0,10) : '—'}
-                        </Typography>
-                        <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:C.green, boxShadow:`0 0 6px ${C.green}` }} />
-                      </Box>
                     </Box>
-                  </Grid>
-                ))}
-                {scheduleList.length < activeSchedules && (
-                  <Grid item xs={12} sm={6} md={4} lg={3}>
-                    <Box sx={{ p:2, borderRadius:2, border:`1px dashed ${C.border}`, textAlign:'center', height:'100%', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                      <Typography variant="caption" sx={{ color:alpha('#fff',0.25), fontSize:12 }}>
-                        +{activeSchedules - scheduleList.length} more
+                    <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <Typography variant="caption" sx={{ color:alpha('#fff',0.3), fontSize:10.5 }}>
+                        {t('nextRun')}: {s.nextRun ? s.nextRun.slice(0,10) : '—'}
                       </Typography>
+                      <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:C.success, boxShadow:`0 0 6px ${C.success}` }} />
                     </Box>
-                  </Grid>
-                )}
-              </Grid>
+                  </Box>
+                ))}
+              </Box>
             )}
           </CardContent>
         </Card>
 
         {/* Retention Summary Footer */}
-        <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mt:2, px:1 }}>
+        <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mt:2, px:1, flexWrap:'wrap', gap:1 }}>
           <Typography variant="caption" sx={{ color:alpha('#fff',0.2), fontSize:11 }}>
-            Retention: {retentionDays} days · {total} backup{total !== 1 ? 's' : ''} stored · {oldBackups} expiring soon
+            {t('retentionInfo', { days: retentionDays, total, expiring: oldBackups })}
           </Typography>
           <Typography variant="caption" sx={{ color:alpha('#fff',0.2), fontSize:11 }}>
-            Last updated: {new Date().toLocaleString()}
+            {t('lastUpdated')}: {new Date().toLocaleString(lang === 'uk' ? 'uk-UA' : 'en-US')}
           </Typography>
         </Box>
       </Box>
