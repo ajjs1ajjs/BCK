@@ -54,14 +54,6 @@ The script will:
 
 Then open **http://localhost:9000**
 
-## Default Credentials
-
-| User | Password | Role |
-|------|----------|------|
-| admin | 291263 | Admin (full access) |
-| operator | operator | Operator (manage backups) |
-| viewer | viewer | Viewer (read-only) |
-
 ## Commands
 
 ```bash

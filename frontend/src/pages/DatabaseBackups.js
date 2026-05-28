@@ -30,11 +30,11 @@ export default function DatabaseBackups() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(() => {});
+    fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/backups?type=db`).then(r => r.json()).then(b => {
       setBackups(b.filter(x => ['mysql','postgres','oracle'].includes(x.backupType || x.type)));
-    }).catch(() => {});
-    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(() => {});
+    }).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

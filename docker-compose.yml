@@ -6,9 +6,10 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=9000
+      - DB_PATH=/app/data/db.json
     restart: unless-stopped
     volumes:
-      - bck-data:/app/db.json
+      - bck-data:/app/data
 
 volumes:
   bck-data:

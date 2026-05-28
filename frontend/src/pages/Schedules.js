@@ -120,8 +120,8 @@ export default function Schedules() {
   };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/schedules`).then(r => r.json()).then(setSchedules).catch(() => {});
-    fetch(`${API}/api/backups`).then(r => r.json()).then(setBackups).catch(() => {});
+    fetch(`${API}/api/schedules`).then(r => r.json()).then(setSchedules).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/backups`).then(r => r.json()).then(setBackups).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

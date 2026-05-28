@@ -25,7 +25,7 @@ export default function VMBackups() {
   const load = useCallback(() => {
     fetch(`${API}/api/backups?type=vm`).then(r => r.json()).then(b => {
       setBackups(b.filter(x => ['vmware', 'hyperv'].includes(x.backupType || x.type)));
-    }).catch(() => {});
+    }).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

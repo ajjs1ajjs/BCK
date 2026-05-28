@@ -107,7 +107,7 @@ Use NSSM (Non-Sucking Service Manager) to create a Windows service:
 To build and run with Docker:
 ```bash
 docker build -t bck-app .
-docker run -p 6000:9000 bck-app
+docker run -p 9000:9000 bck-app
 ```
 
 Dockerfile:
@@ -117,7 +117,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --production
 COPY . .
-EXPOSE 6000
+EXPOSE 9000
 CMD ["npm", "start"]
 ```
 
@@ -126,10 +126,10 @@ CMD ["npm", "start"]
 If running on a server, ensure ports are open:
 ```bash
 # For Ubuntu/Debian:
-sudo ufw allow 6000/tcp
+sudo ufw allow 9000/tcp
 
 # For CentOS/RHEL:
-sudo firewall-cmd --permanent --add-port=6000/tcp
+sudo firewall-cmd --permanent --add-port=9000/tcp
 sudo firewall-cmd --reload
 ```
 

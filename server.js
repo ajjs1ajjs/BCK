@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
@@ -12,6 +13,9 @@ const rateLimit = require('express-rate-limit');
 
 require('dotenv').config();
 
+const cron = require('node-cron');
+const nodemailer = require('nodemailer');
+
 const dbService = require('./services/database');
 const vmService = require('./services/vm');
 const cloudService = require('./services/cloud');
@@ -22,7 +26,11 @@ const app = express();
 const PORT = process.env.PORT || 9000;
 const HOST = process.env.HOST || '0.0.0.0';
 const APP_URL = process.env.APP_URL || '';
-const JWT_SECRET = process.env.JWT_SECRET || 'bck-default-secret-change-me';
+if (!process.env.JWT_SECRET) {
+  console.warn('WARNING: No JWT_SECRET set. Using a random secret — logins will be invalid after restart.');
+  console.warn('Set JWT_SECRET in .env for persistent authentication.');
+}
+const JWT_SECRET = process.env.JWT_SECRET || require('crypto').randomBytes(64).toString('hex');
 const SALT_ROUNDS = 10;
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));
 
@@ -41,10 +49,12 @@ const buildDefaultAppUrl = () => APP_URL || `http://${getLocalIp()}:${PORT}`;
 // ─── Security middleware ────────────────────────────────────────────────────
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
 app.use(cors({
-  origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : false,
+  origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : true,
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true,
 }));
 app.use(express.json({ limit: '50mb' }));
+app.use(cookieParser());
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -61,10 +71,10 @@ const authLimiter = rateLimit({
 
 // ─── Auth middlewares ──────────────────────────────────────────
 const authenticate = (req, res, next) => {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'No token provided' });
+  const token = req.cookies?.token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
+  if (!token) return res.status(401).json({ error: 'No token provided' });
   try {
-    req.user = jwt.verify(auth.split(' ')[1], JWT_SECRET);
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch { return res.status(401).json({ error: 'Invalid or expired token' }); }
 };
@@ -175,7 +185,7 @@ function readSshKey(keyPath) {
 
 function deleteSshKey(keyPath) {
   if (!keyPath) return;
-  try { fsSync.unlinkSync(keyPath); } catch {}
+  try { fsSync.unlinkSync(keyPath); } catch (e) { console.error('Failed to delete SSH key:', e.message); }
 }
 
 const readDB = async () => {
@@ -248,7 +258,18 @@ app.post('/api/login', authLimiter, async (req, res) => {
     JWT_SECRET,
     { expiresIn: '24h' }
   );
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000,
+  });
   res.json({ token, username: user.username, role: user.role, permissions: role?.permissions || {} });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.clearCookie('token');
+  res.json({ message: 'Logged out' });
 });
 
 app.use('/api/', authenticate);
@@ -315,6 +336,30 @@ app.delete('/api/backups/:id', authorize('delete'), async (req, res) => {
   } else res.status(500).json({ error: 'Failed to delete' });
 });
 
+app.get('/api/vm-backups', async (req, res) => {
+  const db = await readDB();
+  if (!db) return res.status(500).json({ error: 'DB unavailable' });
+  const vmSources = db.vmBackups || [];
+  const vmJobs = db.backups.filter(b => ['vmware', 'hyperv'].includes(b.backupType || b.type));
+  res.json([...vmSources, ...vmJobs]);
+});
+
+app.post('/api/vm-backups', authorize('manageBackups'), async (req, res) => {
+  const { name, type, config } = req.body;
+  if (!name || !type) return res.status(400).json({ error: 'Name and type required' });
+  const db = await readDB();
+  if (!db) return res.status(500).json({ error: 'DB unavailable' });
+  const vm = {
+    id: uuidv4(), name, type: type || 'vmware', config: config || {},
+    createdAt: new Date().toISOString(),
+  };
+  if (!db.vmBackups) db.vmBackups = [];
+  db.vmBackups.push(vm);
+  if (await writeDB(db)) {
+    res.status(201).json(vm);
+  } else res.status(500).json({ error: 'Failed to save' });
+});
+
 // ─── Backup Execution ───────────────────────────────────────────────────────
 
 app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) => {
@@ -370,6 +415,18 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
         const uploadRes = await cloudService.upload(cred, job.source, job.destination);
         result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
       }
+    } else if (backupType === 'ssh') {
+      const conn = db.sshConnections.find(c => c.id === job.config?.connectionId);
+      if (!conn) {
+        result = { success: false, error: 'SSH connection not found' };
+      } else {
+        result = await sshService.backup({
+          connection: conn, name: job.name,
+          sourcePath: job.config?.sourcePath || job.source,
+          backupPath: job.destination,
+          excludes: job.config?.excludes || [],
+        });
+      }
     } else {
       result = { success: true, file: job.destination, error: null };
     }
@@ -384,10 +441,9 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
       if (result.size) db2.stats.totalSize = (db2.stats.totalSize || 0) + result.size;
       await updateStats(db2);
       await writeDB(db2);
-      await addLog(
-        result.success ? `Backup completed: ${job.name}` : `Backup failed: ${job.name} - ${result.error}`,
-        result.success ? 'success' : 'error'
-      );
+      const logMsg = result.success ? `Backup completed: ${job.name}` : `Backup failed: ${job.name} - ${result.error}`;
+      await addLog(logMsg, result.success ? 'success' : 'error');
+      await sendNotification(db2, logMsg, result.success ? 'success' : 'error');
     }
   } catch (e) {
     const db3 = await readDB();
@@ -396,7 +452,9 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
       db3.backups[idx3].status = 'failed';
       db3.backups[idx3].error = e.message;
       await writeDB(db3);
-      await addLog(`Backup error: ${job.name} - ${e.message}`, 'error');
+      const errMsg = `Backup error: ${job.name} - ${e.message}`;
+      await addLog(errMsg, 'error');
+      await sendNotification(db3, errMsg, 'error');
     }
   }
 });
@@ -440,7 +498,7 @@ app.post('/api/restore', authorize('restore'), async (req, res) => {
       });
 
       if (job.config?.cloudCredentialId && restoreFile && restoreFile.startsWith(os.tmpdir())) {
-        try { await fs.unlink(restoreFile); } catch {}
+        try { await fs.unlink(restoreFile); } catch (e) { console.error('Failed to cleanup temp file:', e.message); }
       }
     } else if (['vmware', 'hyperv'].includes(backupType)) {
       result = await vmService.restore({
@@ -466,12 +524,15 @@ app.post('/api/restore', authorize('restore'), async (req, res) => {
       result = { success: true };
     }
 
-    await addLog(
-      result.success ? `Restore completed: ${job.name}` : `Restore failed: ${job.name} - ${result.error}`,
-      result.success ? 'success' : 'error'
-    );
+    const restoreMsg = result.success ? `Restore completed: ${job.name}` : `Restore failed: ${job.name} - ${result.error}`;
+    await addLog(restoreMsg, result.success ? 'success' : 'error');
+    const dbAfter = await readDB();
+    if (dbAfter) await sendNotification(dbAfter, restoreMsg, result.success ? 'success' : 'error');
   } catch (e) {
-    await addLog(`Restore error: ${job.name} - ${e.message}`, 'error');
+    const errMsg = `Restore error: ${job.name} - ${e.message}`;
+    await addLog(errMsg, 'error');
+    const dbAfter = await readDB();
+    if (dbAfter) await sendNotification(dbAfter, errMsg, 'error');
   }
 });
 
@@ -706,6 +767,7 @@ app.post('/api/schedules', authorize('manageSchedules'), async (req, res) => {
   const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   db.schedules.push(schedule);
   if (await writeDB(db)) {
+    refreshScheduler();
     await addLog(`Schedule created: ${name}`, 'success');
     res.status(201).json(schedule);
   } else res.status(500).json({ error: 'Failed to save' });
@@ -717,8 +779,10 @@ app.put('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => 
   const idx = db.schedules.findIndex(s => s.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   db.schedules[idx] = { ...db.schedules[idx], ...req.body, updatedAt: new Date().toISOString() };
-  if (await writeDB(db)) res.json(db.schedules[idx]);
-  else res.status(500).json({ error: 'Failed to update' });
+  if (await writeDB(db)) {
+    refreshScheduler();
+    res.json(db.schedules[idx]);
+  } else res.status(500).json({ error: 'Failed to update' });
 });
 
 app.delete('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
@@ -727,9 +791,198 @@ app.delete('/api/schedules/:id', authorize('manageSchedules'), async (req, res) 
   const idx = db.schedules.findIndex(s => s.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
   db.schedules.splice(idx, 1);
-  if (await writeDB(db)) res.json({ message: 'Deleted' });
-  else res.status(500).json({ error: 'Failed to delete' });
+  if (await writeDB(db)) {
+    refreshScheduler();
+    res.json({ message: 'Deleted' });
+  } else res.status(500).json({ error: 'Failed to delete' });
 });
+
+// ─── Notification helper ─────────────────────────────────────────────────────
+
+async function sendNotification(db, message, status) {
+  const settings = getSettings(db);
+  const { notifications, smtp } = settings;
+
+  if (notifications.email && smtp.host && smtp.user && smtp.password) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtp.host,
+        port: smtp.port || 587,
+        secure: (smtp.encryption || 'tls') === 'ssl',
+        auth: { user: smtp.user, pass: smtp.password },
+      });
+      await transporter.sendMail({
+        from: smtp.from || smtp.user,
+        to: notifications.email,
+        subject: `[BCK] ${status === 'success' ? '✓' : '✗'} ${message}`,
+        text: message,
+      });
+    } catch (e) {
+      console.error('Email notification failed:', e.message);
+    }
+  }
+
+  if (notifications.slack) {
+    try {
+      await fetch(notifications.slack, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: `[BCK] ${status === 'success' ? '✓' : '✗'} ${message}` }),
+      });
+    } catch (e) {
+      console.error('Slack notification failed:', e.message);
+    }
+  }
+
+  if (notifications.discord) {
+    try {
+      await fetch(notifications.discord, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: `[BCK] ${status === 'success' ? '✓' : '✗'} ${message}` }),
+      });
+    } catch (e) {
+      console.error('Discord notification failed:', e.message);
+    }
+  }
+
+  if (notifications.telegram && notifications.telegramBotToken) {
+    try {
+      const chatId = notifications.telegram;
+      const text = encodeURIComponent(`[BCK] ${status === 'success' ? '✓' : '✗'} ${message}`);
+      await fetch(`https://api.telegram.org/bot${notifications.telegramBotToken}/sendMessage?chat_id=${chatId}&text=${text}`);
+    } catch (e) {
+      console.error('Telegram notification failed:', e.message);
+    }
+  }
+
+  if (notifications.webhook) {
+    try {
+      await fetch(notifications.webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'backup', status, message, timestamp: new Date().toISOString() }),
+      });
+    } catch (e) {
+      console.error('Webhook notification failed:', e.message);
+    }
+  }
+}
+
+// ─── Scheduler ────────────────────────────────────────────────────────────────
+
+let cronTasks = {};
+
+function refreshScheduler() {
+  for (const id of Object.keys(cronTasks)) {
+    cronTasks[id].stop();
+    delete cronTasks[id];
+  }
+
+  readDB().then((db) => {
+    if (!db) return;
+    for (const s of (db.schedules || [])) {
+      if (!s.enabled || !s.cronExpression) continue;
+      if (!cron.validate(s.cronExpression)) {
+        console.warn(`Invalid cron expression for schedule "${s.name}": ${s.cronExpression}`);
+        continue;
+      }
+      const task = cron.schedule(s.cronExpression, async () => {
+        const db2 = await readDB();
+        if (!db2) return;
+        const idx = db2.backups.findIndex(b => b.id === s.backupId);
+        if (idx === -1) return;
+        const job = db2.backups[idx];
+        job.status = 'running';
+        job.startedAt = new Date().toISOString();
+        await writeDB(db2);
+        await addLog(`Scheduled backup started: ${job.name}`, 'info');
+
+        let result;
+        const backupType = job.backupType || job.type;
+
+        try {
+          if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
+            const conn = db2.dbConnections.find(c => c.id === job.config?.connectionId);
+            result = await dbService.backup({
+              type: backupType, connection: conn || job.config, backupPath: job.destination, name: job.name,
+            });
+            if (result.success && job.config?.cloudCredentialId) {
+              const cred = db2.cloudCredentials.find(c => c.id === job.config.cloudCredentialId);
+              if (cred) {
+                const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
+                if (!uploadRes.success) {
+                  result.success = false;
+                  result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
+                }
+              }
+            }
+          } else if (['vmware', 'hyperv'].includes(backupType)) {
+            result = await vmService.backup({
+              type: backupType, vmName: job.config?.vmName || job.name,
+              host: job.config?.host, user: job.config?.user, password: job.config?.password,
+              datastore: job.config?.datastore, backupPath: job.destination,
+            });
+          } else if (backupType === 'host') {
+            result = await hostService.backup({
+              name: job.name,
+              sourcePath: job.config?.sourcePath || job.source,
+              backupPath: job.destination,
+              excludes: job.config?.excludes || [],
+            });
+          } else if (backupType === 'cloud') {
+            const cred = db2.cloudCredentials.find(c => c.id === job.config?.cloudCredentialId);
+            if (!cred) {
+              result = { success: false, error: 'Cloud credentials not found' };
+            } else {
+              const uploadRes = await cloudService.upload(cred, job.source, job.destination);
+              result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
+            }
+          } else if (backupType === 'ssh') {
+            const conn = db2.sshConnections.find(c => c.id === job.config?.connectionId);
+            result = await sshService.backup({
+              connection: conn, name: job.name,
+              sourcePath: job.config?.sourcePath || job.source,
+              backupPath: job.destination,
+              excludes: job.config?.excludes || [],
+            });
+          } else {
+            result = { success: true, file: job.destination, error: null };
+          }
+
+          const db3 = await readDB();
+          const idx3 = db3.backups.findIndex(b => b.id === s.backupId);
+          if (idx3 !== -1) {
+            db3.backups[idx3].status = result.success ? 'completed' : 'failed';
+            db3.backups[idx3].completedAt = new Date().toISOString();
+            db3.backups[idx3].resultFile = result.file || null;
+            db3.backups[idx3].error = result.error || null;
+            if (result.size) db3.stats.totalSize = (db3.stats.totalSize || 0) + result.size;
+            await updateStats(db3);
+            await writeDB(db3);
+            const logMsg = result.success ? `Scheduled backup completed: ${job.name}` : `Scheduled backup failed: ${job.name} - ${result.error}`;
+            await addLog(logMsg, result.success ? 'success' : 'error');
+            await sendNotification(db3, logMsg, result.success ? 'success' : 'error');
+          }
+        } catch (e) {
+          const db4 = await readDB();
+          const idx4 = db4.backups.findIndex(b => b.id === s.backupId);
+          if (idx4 !== -1) {
+            db4.backups[idx4].status = 'failed';
+            db4.backups[idx4].error = e.message;
+            await writeDB(db4);
+            const errMsg = `Scheduled backup error: ${job.name} - ${e.message}`;
+            await addLog(errMsg, 'error');
+            await sendNotification(db4, errMsg, 'error');
+          }
+        }
+      });
+      cronTasks[s.id] = task;
+    }
+  }).catch((err) => {
+    console.error('Scheduler refresh failed:', err.message);
+  });
+}
 
 // ─── Logs, Stats, Settings ──────────────────────────────────────────────────
 
@@ -925,6 +1178,7 @@ fs.access(buildPath).then(() => {
 
 const start = async () => {
   await initDB();
+  refreshScheduler();
   app.listen(PORT, HOST, () => {
     console.log(`BCK server running on ${buildDefaultAppUrl()}`);
   });

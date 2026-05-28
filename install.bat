@@ -53,13 +53,15 @@ if not exist "%STARTUP_DIR%\BCK.lnk" (
 for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1 -ExpandProperty IPAddress)"`) do set LOCAL_IP=%%I
 if "%LOCAL_IP%"=="" set LOCAL_IP=127.0.0.1
 if "%BCK_APP_URL%"=="" (
-    set APP_URL=http://%LOCAL_IP%:6000
+    set APP_URL=http://%LOCAL_IP%:9000
 ) else (
     set APP_URL=%BCK_APP_URL%
 )
+for /f "usebackq delims=" %%I in (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2^>nul`) do set JWT_SECRET=%%I
+if "%JWT_SECRET%"=="" set JWT_SECRET=bck-super-secret-change-in-production-2024
 (
-    echo PORT=6000
-    echo JWT_SECRET=bck-super-secret-change-in-production-2024
+    echo PORT=9000
+    echo JWT_SECRET=%JWT_SECRET%
     echo DB_PATH=./db.json
     echo NODE_ENV=production
     echo HOST=0.0.0.0
@@ -74,7 +76,6 @@ echo ╚════════════════════════
 echo.
 echo   URL:      %APP_URL%
 echo   Login:    admin
-echo   Password: 291263
 echo.
 echo   To start:  node server.js
 echo   Or double-click the BCK desktop shortcut

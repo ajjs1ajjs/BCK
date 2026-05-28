@@ -41,10 +41,10 @@ export default function CloudBackups() {
   });
 
   const load = useCallback(() => {
-    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCreds).catch(() => {});
+    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCreds).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/backups?type=cloud`).then(r => r.json()).then(b => {
       setBackups(b.filter(x => x.backupType === 'cloud').map(x => ({ ...x, type: 'cloud' })));
-    }).catch(() => {});
+    }).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

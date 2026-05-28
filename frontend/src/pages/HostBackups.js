@@ -32,7 +32,7 @@ export default function HostBackups() {
     fetch(`${API}/api/backups?type=host`)
       .then(r => r.json())
       .then(setBackups)
-      .catch(() => {});
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

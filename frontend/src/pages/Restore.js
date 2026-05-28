@@ -26,9 +26,9 @@ export default function Restore() {
   const load = useCallback(() => {
     fetch(`${API}/api/backups`).then(r => r.json()).then(b => {
       setBackups(b.filter(x => x.status === 'completed' && x.resultFile));
-    }).catch(() => {});
-    fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(() => {});
-    fetch(`${API}/api/ssh-connections`).then(r => r.json()).then(setSshConns).catch(() => {});
+    }).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/ssh-connections`).then(r => r.json()).then(setSshConns).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

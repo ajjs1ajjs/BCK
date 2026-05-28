@@ -134,11 +134,12 @@ async function remoteDbBackup(dbConfig) {
   const dbUser = user || 'root';
   const dbName = database || '';
 
+  const esc = (s) => String(s).replace(/'/g, "'\\''");
   let dumpCmd;
   if (dbType === 'mysql') {
-    dumpCmd = `MYSQL_PWD='${password}' mysqldump -h ${dbHost} -P ${dbPort} -u ${dbUser} ${dbName} 2>/dev/null`;
+    dumpCmd = `MYSQL_PWD='${esc(password)}' mysqldump -h ${dbHost} -P ${dbPort} -u ${dbUser} ${dbName} 2>/dev/null`;
   } else if (dbType === 'postgres') {
-    dumpCmd = `PGPASSWORD='${password}' pg_dump -h ${dbHost} -p ${dbPort} -U ${dbUser} -d ${dbName} -F c 2>/dev/null`;
+    dumpCmd = `PGPASSWORD='${esc(password)}' pg_dump -h ${dbHost} -p ${dbPort} -U ${dbUser} -d ${dbName} -F c 2>/dev/null`;
   } else {
     return { success: false, error: `Unsupported DB type: ${dbType}` };
   }
@@ -170,11 +171,12 @@ async function remoteDbRestore(restoreConfig) {
   }
 
   const localFile = path.resolve(file);
+  const esc = (s) => String(s).replace(/'/g, "'\\''");
   let restoreCmd;
   if (dbType === 'mysql') {
-    restoreCmd = `MYSQL_PWD='${password}' mysql -h ${dbHost} -P ${dbPort} -u ${dbUser} ${dbName} < ${localFile} 2>/dev/null`;
+    restoreCmd = `MYSQL_PWD='${esc(password)}' mysql -h ${dbHost} -P ${dbPort} -u ${dbUser} ${dbName} < ${localFile} 2>/dev/null`;
   } else if (dbType === 'postgres') {
-    restoreCmd = `PGPASSWORD='${password}' pg_restore -h ${dbHost} -p ${dbPort} -U ${dbUser} -d ${dbName} -c ${localFile} 2>/dev/null`;
+    restoreCmd = `PGPASSWORD='${esc(password)}' pg_restore -h ${dbHost} -p ${dbPort} -U ${dbUser} -d ${dbName} -c ${localFile} 2>/dev/null`;
   } else {
     return { success: false, error: `Unsupported DB type: ${dbType}` };
   }

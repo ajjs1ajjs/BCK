@@ -28,8 +28,8 @@ export default function Settings({ toggleTheme, isDark }) {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/settings`).then(r => r.json()).then(setSettings).catch(() => {});
-    fetch(`${API}/api/tools`).then(r => r.json()).then(setTools).catch(() => {});
+    fetch(`${API}/api/settings`).then(r => r.json()).then(setSettings).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/tools`).then(r => r.json()).then(setTools).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

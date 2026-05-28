@@ -51,8 +51,8 @@ REM ─── Start server ─────────────────�
 echo.
 echo ============================================
 echo    Starting server...
-echo    Open: http://localhost:6000
-echo    Login: admin / 291263
+echo    Open: http://localhost:9000
+echo    Login: admin
 echo ============================================
 node server.js
 pause

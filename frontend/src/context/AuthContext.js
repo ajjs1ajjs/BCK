@@ -6,7 +6,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('bck-auth');
+    const saved = sessionStorage.getItem('bck-auth');
     if (saved) {
       try { return JSON.parse(saved); } catch (e) { /* ignore */ }
     }
@@ -19,6 +19,7 @@ export function AuthProvider({ children }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
+        credentials: 'include',
       });
       if (!r.ok) {
         if (r.status === 429) return false;
@@ -26,7 +27,7 @@ export function AuthProvider({ children }) {
       }
       const data = await r.json();
       const u = { ...data, loggedIn: true, token: data.token };
-      localStorage.setItem('bck-auth', JSON.stringify(u));
+      sessionStorage.setItem('bck-auth', JSON.stringify(u));
       setUser(u);
       return true;
     } catch {
@@ -35,8 +36,9 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('bck-auth');
+    sessionStorage.removeItem('bck-auth');
     setUser(null);
+    fetch(`${API}/api/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
   }, []);
 
   const can = useCallback((action) => {

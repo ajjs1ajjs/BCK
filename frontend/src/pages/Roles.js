@@ -30,7 +30,7 @@ export default function Roles() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/roles`).then(r => r.json()).then(setRoles).catch(() => {});
+    fetch(`${API}/api/roles`).then(r => r.json()).then(setRoles).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

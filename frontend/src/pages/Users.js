@@ -25,8 +25,8 @@ export default function Users() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/users`).then(r => r.json()).then(setUsers).catch(() => {});
-    fetch(`${API}/api/roles`).then(r => r.json()).then(setRoles).catch(() => {});
+    fetch(`${API}/api/users`).then(r => r.json()).then(setUsers).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/roles`).then(r => r.json()).then(setRoles).catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);
