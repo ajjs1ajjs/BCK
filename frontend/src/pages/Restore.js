@@ -7,6 +7,7 @@ import {
 import {
   Restore as RestoreIcon, Refresh as RefreshIcon,
 } from '@mui/icons-material';
+import { useTranslation } from '../context/LangContext';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -16,9 +17,10 @@ export default function Restore() {
   const [step, setStep] = useState(0);
   const [selected, setSelected] = useState(null);
   const [restoreType, setRestoreType] = useState('original');
-  const [target, setTarget] = useState({ connectionId: '', database: '', vmName: '', host: '', user: '', password: '' });
+  const [target, setTarget] = useState({ connectionId: '', database: '', vmName: '', host: '', user: '', password: '', targetPath: '' });
   const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
   const [restoring, setRestoring] = useState(false);
+  const { t } = useTranslation();
 
   const load = useCallback(() => {
     fetch(`${API}/api/backups`).then(r => r.json()).then(b => {
@@ -30,13 +32,15 @@ export default function Restore() {
   useEffect(() => { load(); }, [load]);
 
   const startRestore = async () => {
-    if (!selected) { setSnack({ open: true, msg: 'Select a backup to restore', severity: 'warning' }); return; }
+    if (!selected) { setSnack({ open: true, msg: t('restorePoint'), severity: 'warning' }); return; }
     setRestoring(true);
     const backupType = selected.backupType || selected.type;
     const config = restoreType === 'new'
       ? (['mysql', 'postgres', 'oracle'].includes(backupType)
         ? { connectionId: target.connectionId }
-        : { vmName: target.vmName, host: target.host, user: target.user, password: target.password })
+        : backupType === 'host'
+          ? { targetPath: target.targetPath }
+          : { vmName: target.vmName, host: target.host, user: target.user, password: target.password })
       : {};
 
     try {
@@ -45,12 +49,12 @@ export default function Restore() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ backupId: selected.id, targetType: restoreType, config }),
       });
-      const data = await r.json();
-      setSnack({ open: true, msg: data.message, severity: 'success' });
+      await r.json();
+      setSnack({ open: true, msg: t('restoreSuccess'), severity: 'success' });
       setStep(0);
       setSelected(null);
     } catch {
-      setSnack({ open: true, msg: 'Restore failed', severity: 'error' });
+      setSnack({ open: true, msg: t('restoreFailed'), severity: 'error' });
     }
     setRestoring(false);
   };
@@ -58,30 +62,31 @@ export default function Restore() {
   const backupType = selected?.backupType || selected?.type;
   const isDB = ['mysql', 'postgres', 'oracle'].includes(backupType);
   const isVM = ['vmware', 'hyperv'].includes(backupType);
+  const isHost = backupType === 'host';
 
   return (
     <Box>
-      <Typography variant="h4" sx={{ mb: 0.5 }}>Restore</Typography>
+      <Typography variant="h4" sx={{ mb: 0.5 }}>{t('restore')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Restore backups to original or new location
+        {t('restoreSubtitle')}
       </Typography>
 
       <Stepper activeStep={step} sx={{ mb: 3 }}>
-        <Step><StepLabel>Select Backup</StepLabel></Step>
-        <Step><StepLabel>Configure Restore</StepLabel></Step>
-        <Step><StepLabel>Confirm & Restore</StepLabel></Step>
+        <Step><StepLabel>{t('restorePoint')}</StepLabel></Step>
+        <Step><StepLabel>Configure</StepLabel></Step>
+        <Step><StepLabel>{t('confirm')}</StepLabel></Step>
       </Stepper>
 
       {step === 0 && (
         <Card>
           <CardContent>
             <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-              <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>Refresh</Button>
+              <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
             </Box>
             {backups.length === 0 ? (
               <Box sx={{ py: 6, textAlign: 'center' }}>
                 <RestoreIcon sx={{ fontSize: 48, color: 'text.secondary', opacity: 0.3, mb: 1 }} />
-                <Typography color="text.secondary">No completed backups available for restore</Typography>
+                <Typography color="text.secondary">{t('noBackupsConfigured')}</Typography>
               </Box>
             ) : (
               <TableContainer>
@@ -89,10 +94,10 @@ export default function Restore() {
                   <TableHead>
                     <TableRow>
                       <TableCell sx={{ fontWeight: 600, width: 40 }}></TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Completed</TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>Source</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>{t('name')}</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>{t('type')}</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>{t('status')}</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>{t('sourcePath')}</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -102,7 +107,7 @@ export default function Restore() {
                         hover
                         selected={selected?.id === b.id}
                         onClick={() => setSelected(b)}
-                        sx={{ cursor: 'pointer', '&.Mui-selected': { bgcolor: 'rgba(99,102,241,0.08)' } }}
+                        sx={{ cursor: 'pointer', '&.Mui-selected': { bgcolor: 'rgba(124,58,237,0.08)' } }}
                       >
                         <TableCell>
                           <Radio checked={selected?.id === b.id} onChange={() => setSelected(b)} />
@@ -139,7 +144,7 @@ export default function Restore() {
             {restoreType === 'new' && (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {isDB && (<>
-                  <TextField select label="Target Connection" fullWidth value={target.connectionId}
+                  <TextField select label={t('targetConnection')} fullWidth value={target.connectionId}
                     onChange={(e) => setTarget({...target, connectionId: e.target.value})}>
                     {connections.filter(c => c.type === backupType).map(c => (
                       <MenuItem key={c.id} value={c.id}>{c.name} ({c.host})</MenuItem>
@@ -151,13 +156,23 @@ export default function Restore() {
                 {isVM && (<>
                   <TextField label="New VM Name" fullWidth value={target.vmName}
                     onChange={(e) => setTarget({...target, vmName: e.target.value})} placeholder="my-vm-restored" />
-                  <TextField label="Host" fullWidth value={target.host}
+                  <TextField label={t('host')} fullWidth value={target.host}
                     onChange={(e) => setTarget({...target, host: e.target.value})} />
-                  <TextField label="Username" fullWidth value={target.user}
+                  <TextField label={t('username')} fullWidth value={target.user}
                     onChange={(e) => setTarget({...target, user: e.target.value})} />
-                  <TextField label="Password" type="password" fullWidth value={target.password}
+                  <TextField label={t('password')} type="password" fullWidth value={target.password}
                     onChange={(e) => setTarget({...target, password: e.target.value})} />
                 </>)}
+                {isHost && (
+                  <TextField
+                    label={t('targetPath') || 'Target path'}
+                    fullWidth
+                    value={target.targetPath}
+                    onChange={(e) => setTarget({...target, targetPath: e.target.value})}
+                    placeholder="/restore/host"
+                    helperText="Host archive will be extracted to this directory."
+                  />
+                )}
               </Box>
             )}
 
@@ -183,7 +198,7 @@ export default function Restore() {
             <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
               <Button onClick={() => setStep(1)} disabled={restoring}>Back</Button>
               <Button variant="contained" color="primary" onClick={startRestore} disabled={restoring}>
-                {restoring ? 'Restoring...' : 'Start Restore'}
+                {restoring ? 'Restoring...' : t('restoreBtn')}
               </Button>
             </Box>
           </CardContent>

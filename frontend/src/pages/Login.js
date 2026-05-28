@@ -5,14 +5,18 @@ import {
 } from '@mui/material';
 import { Visibility, VisibilityOff, CloudUpload as Logo } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import { useTranslation } from '../context/LangContext';
 
 export default function Login() {
   const { login } = useAuth();
+  const { lang, setLang, t } = useTranslation();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
+
+  const toggleLang = () => setLang(lang === 'en' ? 'uk' : 'en');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -22,10 +26,10 @@ export default function Login() {
       if (ok) {
         navigate('/', { replace: true });
       } else {
-        setError('Invalid credentials. Try: admin/291263');
+        setError(t('loginError'));
       }
     } catch {
-      setError('Invalid credentials. Try: admin/291263');
+      setError(t('loginError'));
     }
   };
 
@@ -33,26 +37,39 @@ export default function Login() {
     <Box sx={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       bgcolor: 'background.default',
+      backgroundImage: 'radial-gradient(ellipse at 50% 50%, rgba(124,58,237,0.06) 0%, transparent 60%)',
     }}>
-      <Card sx={{ maxWidth: 400, width: '100%', mx: 2 }}>
+      <Card sx={{ maxWidth: 400, width: '100%', mx: 2, position: 'relative' }}>
+        <Button
+          onClick={toggleLang}
+          size="small"
+          sx={{
+            position: 'absolute', top: 16, right: 16,
+            color: 'text.secondary', fontWeight: 700, minWidth: 32, px: 1, fontSize: 11
+          }}
+        >
+          {lang === 'en' ? 'UA' : 'EN'}
+        </Button>
+
         <CardContent sx={{ p: 4 }}>
           <Box sx={{ textAlign: 'center', mb: 3 }}>
             <Box sx={{
               width: 56, height: 56, borderRadius: 2.5, mx: 'auto', mb: 1.5,
-              background: 'linear-gradient(135deg, #6366f1, #818cf8)',
+              background: 'linear-gradient(135deg, #7c3aed, #4f46e5)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
+              boxShadow: '0 4px 20px rgba(124,58,237,0.3)',
             }}>
               <Logo sx={{ fontSize: 30, color: '#fff' }} />
             </Box>
             <Typography variant="h5" sx={{ fontWeight: 700 }}>BCK Backup</Typography>
-            <Typography variant="body2" color="text.secondary">Sign in to your account</Typography>
+            <Typography variant="body2" color="text.secondary">{t('loginSubtitle')}</Typography>
           </Box>
 
           <Box component="form" onSubmit={handleSubmit}>
             {error && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2, fontSize: 12 }}>{error}</Alert>}
-            <TextField label="Username" fullWidth value={username} onChange={(e) => setUsername(e.target.value)}
+            <TextField label={t('username')} fullWidth value={username} onChange={(e) => setUsername(e.target.value)}
               sx={{ mb: 2 }} autoFocus />
-            <TextField label="Password" type={showPw ? 'text' : 'password'} fullWidth value={password}
+            <TextField label={t('password')} type={showPw ? 'text' : 'password'} fullWidth value={password}
               onChange={(e) => setPassword(e.target.value)} sx={{ mb: 3 }}
               InputProps={{
                 endAdornment: <InputAdornment position="end">
@@ -61,13 +78,10 @@ export default function Login() {
                   </IconButton>
                 </InputAdornment>,
               }} />
-            <Button type="submit" variant="contained" fullWidth size="large">Sign In</Button>
+            <Button type="submit" variant="contained" fullWidth size="large">{t('loginButton')}</Button>
           </Box>
 
-          <Box sx={{ mt: 3, p: 2, bgcolor: 'action.hover', borderRadius: 2 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>Demo Accounts</Typography>
-            <Typography variant="caption" display="block" color="text.secondary">admin/291263 — operator/operator — viewer/viewer</Typography>
-          </Box>
+
         </CardContent>
       </Card>
     </Box>

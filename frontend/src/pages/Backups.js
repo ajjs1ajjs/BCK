@@ -11,6 +11,7 @@ import {
   Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import { useTranslation } from '../context/LangContext';
 
 const API = process.env.REACT_APP_API_URL || '';
 const EMPTY = { name: '', source: '', destination: '', type: 'full' };
@@ -35,6 +36,7 @@ export default function Backups() {
   const [bulkConfirm, setBulkConfirm] = useState(null);
   const [selected, setSelected] = useState([]);
   const { can } = useAuth();
+  const { t } = useTranslation();
 
   const load = useCallback(() => {
     fetch(`${API}/api/backups`).then(r => r.json()).then(setBackups).catch(() => {});
@@ -84,7 +86,6 @@ export default function Backups() {
     }
   };
 
-  // Bulk operations
   const isAllSelected = selected.length === filtered.length && filtered.length > 0;
   const toggleSelectAll = () => {
     if (isAllSelected) { setSelected([]); }
@@ -116,20 +117,20 @@ export default function Backups() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="h4">Backups</Typography>
+        <Typography variant="h4">{t('backups')}</Typography>
         <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
-          New Backup
+          {t('newBackupBtn')}
         </Button>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Manage backup jobs — {backups.length} total
+        {t('allBackups')} — {backups.length} {t('totalJobs').toLowerCase()}
       </Typography>
 
       <Card>
         <CardContent sx={{ pb: '8px !important' }}>
           <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
             <TextField
-              size="small" placeholder="Search backups..."
+              size="small" placeholder={`${t('search')}...`}
               value={search} onChange={(e) => setSearch(e.target.value)}
               sx={{ flex: 1, maxWidth: 320 }}
               InputProps={{
@@ -137,16 +138,16 @@ export default function Backups() {
               }}
             />
             <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>
-              Refresh
+              {t('refresh')}
             </Button>
           </Box>
 
           {selected.length > 0 && (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, p: 1.5, bgcolor: 'rgba(99,102,241,0.06)', borderRadius: 2, border: '1px solid', borderColor: 'rgba(99,102,241,0.15)' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 2, p: 1.5, bgcolor: 'rgba(124,58,237,0.06)', borderRadius: 2, border: '1px solid', borderColor: 'rgba(124,58,237,0.15)' }}>
               <Typography variant="body2" sx={{ fontWeight: 600 }}>{selected.length} selected</Typography>
-              <Button size="small" variant="contained" color="success" startIcon={<RunIcon />} onClick={bulkRun}>Run All</Button>
-              {can('delete') && <Button size="small" variant="contained" color="error" startIcon={<DeleteIcon />} onClick={() => setBulkConfirm(true)}>Delete All</Button>}
-              <Button size="small" variant="text" onClick={() => setSelected([])}>Clear</Button>
+              <Button size="small" variant="contained" color="success" startIcon={<RunIcon />} onClick={bulkRun}>{t('runNow')}</Button>
+              {can('delete') && <Button size="small" variant="contained" color="error" startIcon={<DeleteIcon />} onClick={() => setBulkConfirm(true)}>{t('delete')}</Button>}
+              <Button size="small" variant="text" onClick={() => setSelected([])}>{t('cancel')}</Button>
             </Box>
           )}
 
@@ -159,13 +160,13 @@ export default function Backups() {
                       <Checkbox size="small" checked={isAllSelected} indeterminate={selected.length > 0 && !isAllSelected} onChange={toggleSelectAll} />
                     </TableCell>
                   )}
-                  <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Source</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Destination</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Created</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('name')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('sourcePath')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('destPath')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('type')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('status')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('createdAt')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }} align="right">{t('actions')}</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -173,7 +174,7 @@ export default function Backups() {
                   <TableRow>
                     <TableCell colSpan={can('delete') ? 8 : 7} align="center" sx={{ py: 6 }}>
                       <Typography color="text.secondary">
-                        {search ? 'No backups matching search' : 'No backups yet. Click "New Backup" to create one.'}
+                        {search ? t('noDataYet') : t('noBackupsConfigured')}
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -210,9 +211,9 @@ export default function Backups() {
                         </Typography>
                       </TableCell>
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-                        <Tooltip title="Run now"><IconButton size="small" onClick={() => handleRun(b.id)}><RunIcon fontSize="small" /></IconButton></Tooltip>
-                        {can('manageBackups') && <><Tooltip title="Edit"><IconButton size="small" onClick={() => openEdit(b)}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                        <Tooltip title="Delete"><IconButton size="small" onClick={() => setDeleteConfirm(b)}><DeleteIcon fontSize="small" /></IconButton></Tooltip></>}
+                        <Tooltip title={t('runNow')}><IconButton size="small" onClick={() => handleRun(b.id)}><RunIcon fontSize="small" /></IconButton></Tooltip>
+                        {can('manageBackups') && <><Tooltip title={t('edit')}><IconButton size="small" onClick={() => openEdit(b)}><EditIcon fontSize="small" /></IconButton></Tooltip>
+                        <Tooltip title={t('delete')}><IconButton size="small" onClick={() => setDeleteConfirm(b)}><DeleteIcon fontSize="small" /></IconButton></Tooltip></>}
                       </TableCell>
                     </TableRow>
                   ))
@@ -225,13 +226,13 @@ export default function Backups() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{editing ? 'Edit Backup' : 'New Backup'}</DialogTitle>
+        <DialogTitle>{editing ? t('editBackup') : t('addBackup')}</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            <TextField label="Name" fullWidth value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} />
-            <TextField label="Source path" fullWidth value={form.source} onChange={(e) => setForm({...form, source: e.target.value})} placeholder="/var/lib/mysql" />
-            <TextField label="Destination path" fullWidth value={form.destination} onChange={(e) => setForm({...form, destination: e.target.value})} placeholder="/backup/db" />
-            <TextField select label="Type" fullWidth value={form.type} onChange={(e) => setForm({...form, type: e.target.value})}>
+            <TextField label={t('name')} fullWidth value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} />
+            <TextField label={t('sourcePath')} fullWidth value={form.source} onChange={(e) => setForm({...form, source: e.target.value})} placeholder="/var/lib/mysql" />
+            <TextField label={t('destPath')} fullWidth value={form.destination} onChange={(e) => setForm({...form, destination: e.target.value})} placeholder="/backup/db" />
+            <TextField select label={t('type')} fullWidth value={form.type} onChange={(e) => setForm({...form, type: e.target.value})}>
               <MenuItem value="full">Full</MenuItem>
               <MenuItem value="incremental">Incremental</MenuItem>
               <MenuItem value="differential">Differential</MenuItem>
@@ -239,32 +240,32 @@ export default function Backups() {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSave}>{editing ? 'Update' : 'Create'}</Button>
+          <Button onClick={() => setDialogOpen(false)}>{t('cancel')}</Button>
+          <Button variant="contained" onClick={handleSave}>{editing ? t('save') : t('create')}</Button>
         </DialogActions>
       </Dialog>
 
       {/* Delete Confirm */}
       <Dialog open={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} maxWidth="xs">
-        <DialogTitle>Delete Backup</DialogTitle>
+        <DialogTitle>{t('deleteConfirmTitle')}</DialogTitle>
         <DialogContent>
-          <Typography>Are you sure you want to delete "{deleteConfirm?.name}"?</Typography>
+          <Typography>{t('deleteConfirmDesc')} ("{deleteConfirm?.name}")</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDeleteConfirm(null)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={() => handleDelete(deleteConfirm.id)}>Delete</Button>
+          <Button onClick={() => setDeleteConfirm(null)}>{t('cancel')}</Button>
+          <Button color="error" variant="contained" onClick={() => handleDelete(deleteConfirm.id)}>{t('delete')}</Button>
         </DialogActions>
       </Dialog>
 
       {/* Bulk Delete Confirm */}
       <Dialog open={!!bulkConfirm} onClose={() => setBulkConfirm(null)} maxWidth="xs">
-        <DialogTitle>Bulk Delete</DialogTitle>
+        <DialogTitle>{t('deleteConfirmTitle')}</DialogTitle>
         <DialogContent>
-          <Typography>Delete {selected.length} backup(s)? This cannot be undone.</Typography>
+          <Typography>{t('deleteConfirmDesc')} ({selected.length} {t('backups').toLowerCase()})</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBulkConfirm(null)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={bulkDelete}>Delete {selected.length}</Button>
+          <Button onClick={() => setBulkConfirm(null)}>{t('cancel')}</Button>
+          <Button color="error" variant="contained" onClick={bulkDelete}>{t('delete')} {selected.length}</Button>
         </DialogActions>
       </Dialog>
 

@@ -7,6 +7,7 @@ import {
   Refresh as RefreshIcon, Search as SearchIcon,
   FilterList as FilterIcon,
 } from '@mui/icons-material';
+import { useTranslation } from '../context/LangContext';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -14,6 +15,7 @@ export default function ActivityLog() {
   const [logs, setLogs] = useState([]);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const { t } = useTranslation();
 
   const load = useCallback(() => {
     fetch(`${API}/api/logs`).then(r => r.json()).then(setLogs).catch(() => {});
@@ -48,11 +50,11 @@ export default function ActivityLog() {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="h4">Activity Log</Typography>
-        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load}>Refresh</Button>
+        <Typography variant="h4">{t('activityLogTitle')}</Typography>
+        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
       </Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        System events and backup activity — {logs.length} entries
+        {t('activityLogSubtitle', { total: logs.length })}
       </Typography>
 
       <Card>
@@ -64,14 +66,14 @@ export default function ActivityLog() {
               sx={{ minWidth: 130 }}
               InputProps={{ startAdornment: <InputAdornment position="start"><FilterIcon fontSize="small" /></InputAdornment> }}
             >
-              <MenuItem value="all">All levels</MenuItem>
-              <MenuItem value="info">Info</MenuItem>
-              <MenuItem value="success">Success</MenuItem>
-              <MenuItem value="warning">Warning</MenuItem>
-              <MenuItem value="error">Error</MenuItem>
+              <MenuItem value="all">{t('allLevels')}</MenuItem>
+              <MenuItem value="info">{t('info')}</MenuItem>
+              <MenuItem value="success">{t('success')}</MenuItem>
+              <MenuItem value="warning">{t('warning')}</MenuItem>
+              <MenuItem value="error">{t('error')}</MenuItem>
             </TextField>
             <TextField
-              size="small" placeholder="Search log messages..."
+              size="small" placeholder={t('searchLogs')}
               value={search} onChange={(e) => setSearch(e.target.value)}
               sx={{ flex: 1, maxWidth: 320 }}
               InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
@@ -80,7 +82,7 @@ export default function ActivityLog() {
 
           {filtered.length === 0 ? (
             <Box sx={{ py: 6, textAlign: 'center' }}>
-              <Typography color="text.secondary">No log entries found</Typography>
+              <Typography color="text.secondary">{t('noLogEntries')}</Typography>
             </Box>
           ) : (
             <List disablePadding>
@@ -105,7 +107,7 @@ export default function ActivityLog() {
                       {(log.timestamp || '').slice(0, 19).replace('T', ' ')}
                     </Typography>
                   </Box>
-                  <Chip label={log.status} size="small" color={getColor(log.status)} variant="outlined" sx={{ ml: 1, textTransform: 'capitalize' }} />
+                  <Chip label={t(log.status)} size="small" color={getColor(log.status)} variant="outlined" sx={{ ml: 1, textTransform: 'capitalize' }} />
                 </ListItem>
               ))}
             </List>

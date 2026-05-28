@@ -6,7 +6,7 @@ import {
   Dashboard as DashboardIcon, Backup as BackupIcon, Schedule as ScheduleIcon,
   Assignment as LogIcon, Settings as SettingsIcon,
   Restore as RestoreIcon, Storage as DatabaseIcon, Computer as ComputerIcon,
-  Cloud as CloudIcon, Policy as PolicyIcon, History as HistoryIcon,
+  Cloud as CloudIcon, Dns as HostIcon, Policy as PolicyIcon, History as HistoryIcon,
   ExpandMore as ExpandIcon, ExpandLess as CollapseIcon,
   People as PeopleIcon, Security as SecurityIcon,
 } from '@mui/icons-material';
@@ -20,11 +20,11 @@ export default function Sidebar() {
   const { can } = useAuth();
   const { t } = useTranslation();
   const [backupOpen, setBackupOpen] = useState(
-    ['/backups', '/db-backups', '/vm-backups', '/cloud-backups', '/restore'].includes(location.pathname)
+    ['/backups', '/db-backups', '/vm-backups', '/host-backups', '/cloud-backups', '/restore'].includes(location.pathname)
   );
 
   const isActive = (path) => location.pathname === path;
-  const backupPaths = ['/backups', '/db-backups', '/vm-backups', '/cloud-backups', '/restore'];
+  const backupPaths = ['/backups', '/db-backups', '/vm-backups', '/host-backups', '/cloud-backups', '/restore'];
   const isBackupActive = backupPaths.includes(location.pathname);
   const drawerWidth = { xs: 72, md: 240 };
 
@@ -105,6 +105,7 @@ export default function Sidebar() {
                 { label: t('allBackups'), icon: <BackupIcon />, path: '/backups' },
                 { label: t('databases'), icon: <DatabaseIcon />, path: '/db-backups' },
                 { label: t('vms'), icon: <ComputerIcon />, path: '/vm-backups' },
+                { label: t('hosts') || 'Hosts', icon: <HostIcon />, path: '/host-backups' },
                 { label: t('cloud'), icon: <CloudIcon />, path: '/cloud-backups' },
                 { label: t('restore'), icon: <RestoreIcon />, path: '/restore', need: 'restore' },
               ].filter(item => item.need ? can(item.need) : true).map((item) => (

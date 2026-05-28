@@ -1,4 +1,4 @@
-const { run, checkTool } = require('./exec');
+const { runAsync, checkTool } = require('./exec');
 
 async function backup(backupConfig) {
   const { type, vmName, host, user, password, datastore, backupPath } = backupConfig;
@@ -17,7 +17,7 @@ async function backup(backupConfig) {
         GOVC_INSECURE: '1',
       };
       const outFile = `${backupPath}/${vmName}_${Date.now()}.ova`;
-      const r = run(`govc export.ova -vm "${vmName}" "${outFile}"`, { env, timeout: 3600000 });
+      const r = await runAsync('govc', ['export.ova', '-vm', vmName, outFile], { env });
       return { success: r.success, file: outFile, error: r.stderr };
     }
 
@@ -26,9 +26,15 @@ async function backup(backupConfig) {
       if (!tool.available) {
         return { success: false, error: 'PowerShell not available for Hyper-V backup.' };
       }
-      const outFile = `${backupPath}\\${vmName}_${Date.now()}.vhdx`;
-      const psCmd = `$vm = Get-VM -Name "${vmName}"; Export-VM -Name "${vmName}" -Path "${backupPath}" -ErrorAction Stop`;
-      const r = run(`powershell -Command "${psCmd}"`, { timeout: 3600000 });
+      // Run powershell with arguments to prevent injection
+      const r = await runAsync('powershell', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Param($vmName, $path) $vm = Get-VM -Name $vmName; Export-VM -Name $vmName -Path $path -ErrorAction Stop',
+        vmName,
+        backupPath
+      ]);
       return { success: r.success, error: r.stderr };
     }
 
@@ -49,13 +55,18 @@ async function restore(restoreConfig) {
         GOVC_PASSWORD: password,
         GOVC_INSECURE: '1',
       };
-      const r = run(`govc import.ova -name "${vmName}" "${file}"`, { env, timeout: 3600000 });
+      const r = await runAsync('govc', ['import.ova', '-name', vmName, file], { env });
       return { success: r.success, error: r.stderr };
     }
 
     case 'hyperv': {
-      const psCmd = `Import-VM -Path "${file}" -Copy -GenerateNewId -ErrorAction Stop`;
-      const r = run(`powershell -Command "${psCmd}"`, { timeout: 3600000 });
+      const r = await runAsync('powershell', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Param($filePath) Import-VM -Path $filePath -Copy -GenerateNewId -ErrorAction Stop',
+        file
+      ]);
       return { success: r.success, error: r.stderr };
     }
 

@@ -185,16 +185,13 @@ const updateStats = async (db) => {
   };
 
   try {
-    const stat = await fs.statfs(__dirname);
-    const totalBytes = Number(stat.blocks) * Number(stat.bsize);
-    const freeBytes = Number(stat.bavail) * Number(stat.bsize);
-    const usedBytes = totalBytes - freeBytes;
-    diskSpace = {
-      totalBytes,
-      freeBytes,
-      usedBytes,
-      isQuota: false
-    };
+    if (typeof fs.statfs === 'function') {
+      const stat = await fs.statfs(__dirname);
+      const totalBytes = Number(stat.blocks) * Number(stat.bsize);
+      const freeBytes = Number(stat.bavail) * Number(stat.bsize);
+      const usedBytes = totalBytes - freeBytes;
+      diskSpace = { totalBytes, freeBytes, usedBytes, isQuota: false };
+    }
   } catch (err) {
     console.error('Failed to retrieve disk space:', err);
   }

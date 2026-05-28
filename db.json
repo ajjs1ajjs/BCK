@@ -1,7 +1,20 @@
 {
   "backups": [],
   "schedules": [],
-  "logs": [],
+  "logs": [
+    {
+      "id": "6c4f59b7-9be2-46bd-9fd4-78eddee420fe",
+      "timestamp": "2026-05-28T06:13:48.160Z",
+      "message": "Settings updated",
+      "status": "info"
+    },
+    {
+      "id": "0407cc58-8024-403e-8c3c-083a30f7304b",
+      "timestamp": "2026-05-28T06:11:49.486Z",
+      "message": "Settings updated",
+      "status": "info"
+    }
+  ],
   "dbConnections": [],
   "cloudCredentials": [],
   "users": [
@@ -11,8 +24,8 @@
       "role": "admin",
       "email": "admin@bck.local",
       "active": true,
-      "createdAt": "2026-05-27T21:23:50.814Z",
-      "password": "$2b$10$S70RLmlr.MtrhQTp1TzHJ.RYlHB3HKfT1yvna7LKiRtVHq2cyqeFK"
+      "createdAt": "2026-05-28T06:01:41.562Z",
+      "password": "$2b$10$t4tRbnTn0RiDZFTQ5MA6Du6bCbTqqr3XLU8RLwK6t33UN5jIi4cw2"
     },
     {
       "id": "operator",
@@ -20,8 +33,8 @@
       "role": "operator",
       "email": "operator@bck.local",
       "active": true,
-      "createdAt": "2026-05-27T21:23:50.814Z",
-      "password": "$2b$10$vP3n.tdNpOtaioF.owaNPu0YTmyism5SEnIktOXfSDfQGDTmbgY9y"
+      "createdAt": "2026-05-28T06:01:41.563Z",
+      "password": "$2b$10$dGMyPmvVCThIiVhdZDoH8uTLzy18czLKq49EAiCdKL5rgz4qOuEay"
     },
     {
       "id": "viewer",
@@ -29,8 +42,8 @@
       "role": "viewer",
       "email": "viewer@bck.local",
       "active": true,
-      "createdAt": "2026-05-27T21:23:50.814Z",
-      "password": "$2b$10$haX0Pe/32wior5gi8K7sV.FQFZP6NgD9cvd5ggHQbUP1IbDXgzgEi"
+      "createdAt": "2026-05-28T06:01:41.563Z",
+      "password": "$2b$10$9zFOuXYEL5RsGr/T1xLOH..gOChWMnPhdp4lSNDeGzGKvtJKvNGi6"
     }
   ],
   "roles": [
@@ -95,7 +108,9 @@
     "retention": {
       "enabled": true,
       "days": 30,
-      "copies": 10
+      "copies": 10,
+      "customLimitEnabled": false,
+      "customLimitGB": 10
     },
     "notifications": {
       "email": false,
@@ -108,6 +123,16 @@
     },
     "schedule": {
       "timezone": "UTC"
+    },
+    "security": {
+      "sessionTimeout": 60,
+      "preventConcurrent": false,
+      "minPasswordLength": 6
+    },
+    "advanced": {
+      "tempPath": "",
+      "bandwidthLimit": 0,
+      "compressionLevel": "medium"
     }
   },
   "stats": {

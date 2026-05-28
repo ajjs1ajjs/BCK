@@ -1,4 +1,7 @@
-const { run, checkTool } = require('./exec');
+const { runAsync, checkTool } = require('./exec');
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 const PROVIDERS = {
   aws: {
@@ -29,28 +32,34 @@ async function upload(providerConfig, localPath, remotePath) {
         AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
         AWS_DEFAULT_REGION: credentials.region,
       };
-      const dest = credentials.endpoint
-        ? `s3://${credentials.bucket}/${remotePath} --endpoint-url ${credentials.endpoint}`
-        : `s3://${credentials.bucket}/${remotePath}`;
-      const r = run(`aws s3 cp "${localPath}" ${dest}`, { env, timeout: 3600000 });
+      const args = ['s3', 'cp', localPath, `s3://${credentials.bucket}/${remotePath}`];
+      if (credentials.endpoint) {
+        args.push('--endpoint-url', credentials.endpoint);
+      }
+      const r = await runAsync('aws', args, { env });
       return { success: r.success, error: r.stderr, url: `s3://${credentials.bucket}/${remotePath}` };
     }
 
     case 'azure': {
       const dest = `https://${credentials.storageAccount}.blob.core.windows.net/${credentials.container}/${remotePath}`;
-      const r = run(
-        `az storage blob upload --account-name ${credentials.storageAccount} --account-key ${credentials.accessKey} --container-name ${credentials.container} --file "${localPath}" --name "${remotePath}"`,
-        { timeout: 3600000 }
-      );
+      const args = [
+        'storage', 'blob', 'upload',
+        '--account-name', credentials.storageAccount,
+        '--account-key', credentials.accessKey,
+        '--container-name', credentials.container,
+        '--file', localPath,
+        '--name', remotePath
+      ];
+      const r = await runAsync('az', args);
       return { success: r.success, error: r.stderr, url: dest };
     }
 
     case 'gcp': {
-      const credFile = `/tmp/bck_gcp_creds_${Date.now()}.json`;
-      require('fs').writeFileSync(credFile, JSON.stringify(credentials.credentials));
+      const credFile = path.join(os.tmpdir(), `bck_gcp_creds_${Date.now()}.json`);
+      fs.writeFileSync(credFile, JSON.stringify(credentials.credentials));
       const env = { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile };
-      const r = run(`gsutil cp "${localPath}" gs://${credentials.bucket}/${remotePath}`, { env, timeout: 3600000 });
-      try { require('fs').unlinkSync(credFile); } catch {}
+      const r = await runAsync('gsutil', ['cp', localPath, `gs://${credentials.bucket}/${remotePath}`], { env });
+      try { fs.unlinkSync(credFile); } catch {}
       return { success: r.success, error: r.stderr, url: `gs://${credentials.bucket}/${remotePath}` };
     }
 
@@ -70,27 +79,33 @@ async function download(providerConfig, remotePath, localPath) {
         AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
         AWS_DEFAULT_REGION: credentials.region,
       };
-      const src = credentials.endpoint
-        ? `s3://${credentials.bucket}/${remotePath} --endpoint-url ${credentials.endpoint}`
-        : `s3://${credentials.bucket}/${remotePath}`;
-      const r = run(`aws s3 cp ${src} "${localPath}"`, { env, timeout: 3600000 });
+      const args = ['s3', 'cp', `s3://${credentials.bucket}/${remotePath}`, localPath];
+      if (credentials.endpoint) {
+        args.push('--endpoint-url', credentials.endpoint);
+      }
+      const r = await runAsync('aws', args, { env });
       return { success: r.success, error: r.stderr };
     }
 
     case 'azure': {
-      const r = run(
-        `az storage blob download --account-name ${credentials.storageAccount} --account-key ${credentials.accessKey} --container-name ${credentials.container} --name "${remotePath}" --file "${localPath}"`,
-        { timeout: 3600000 }
-      );
+      const args = [
+        'storage', 'blob', 'download',
+        '--account-name', credentials.storageAccount,
+        '--account-key', credentials.accessKey,
+        '--container-name', credentials.container,
+        '--name', remotePath,
+        '--file', localPath
+      ];
+      const r = await runAsync('az', args);
       return { success: r.success, error: r.stderr };
     }
 
     case 'gcp': {
-      const credFile = `/tmp/bck_gcp_creds_${Date.now()}.json`;
-      require('fs').writeFileSync(credFile, JSON.stringify(credentials.credentials));
+      const credFile = path.join(os.tmpdir(), `bck_gcp_creds_${Date.now()}.json`);
+      fs.writeFileSync(credFile, JSON.stringify(credentials.credentials));
       const env = { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile };
-      const r = run(`gsutil cp gs://${credentials.bucket}/${remotePath} "${localPath}"`, { env, timeout: 3600000 });
-      try { require('fs').unlinkSync(credFile); } catch {}
+      const r = await runAsync('gsutil', ['cp', `gs://${credentials.bucket}/${remotePath}`, localPath], { env });
+      try { fs.unlinkSync(credFile); } catch {}
       return { success: r.success, error: r.stderr };
     }
 
@@ -110,7 +125,11 @@ async function list(providerConfig, prefix = '') {
         AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
         AWS_DEFAULT_REGION: credentials.region,
       };
-      const r = run(`aws s3 ls s3://${credentials.bucket}/${prefix} --recursive`, { env, timeout: 120000 });
+      const args = ['s3', 'ls', `s3://${credentials.bucket}/${prefix}`, '--recursive'];
+      if (credentials.endpoint) {
+        args.push('--endpoint-url', credentials.endpoint);
+      }
+      const r = await runAsync('aws', args, { env, timeout: 120000 });
       if (!r.success) return [];
       return r.stdout.split('\n').filter(Boolean).map(line => {
         const parts = line.split(/\s+/);
@@ -119,16 +138,25 @@ async function list(providerConfig, prefix = '') {
     }
 
     case 'azure': {
-      const r = run(
-        `az storage blob list --account-name ${credentials.storageAccount} --account-key ${credentials.accessKey} --container-name ${credentials.container} --prefix "${prefix}" --query "[].{name:name, size:properties.contentLength}"`,
-        { timeout: 120000 }
-      );
+      const args = [
+        'storage', 'blob', 'list',
+        '--account-name', credentials.storageAccount,
+        '--account-key', credentials.accessKey,
+        '--container-name', credentials.container,
+        '--prefix', prefix,
+        '--query', '[].{name:name, size:properties.contentLength}'
+      ];
+      const r = await runAsync('az', args, { timeout: 120000 });
       if (!r.success) return [];
       try { return JSON.parse(r.stdout); } catch { return []; }
     }
 
     case 'gcp': {
-      const r = run(`gsutil ls -l gs://${credentials.bucket}/${prefix}`, { timeout: 120000 });
+      const credFile = path.join(os.tmpdir(), `bck_gcp_creds_${Date.now()}.json`);
+      fs.writeFileSync(credFile, JSON.stringify(credentials.credentials));
+      const env = { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile };
+      const r = await runAsync('gsutil', ['ls', '-l', `gs://${credentials.bucket}/${prefix}`], { env, timeout: 120000 });
+      try { fs.unlinkSync(credFile); } catch {}
       if (!r.success) return [];
       return r.stdout.split('\n').filter(l => l.trim()).map(l => {
         const parts = l.trim().split(/\s+/);

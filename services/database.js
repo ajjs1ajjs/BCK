@@ -1,46 +1,59 @@
-const { run, checkTool } = require('./exec');
+const { runAsync, checkTool } = require('./exec');
+const spawn = require('child_process').spawn;
+const fs = require('fs');
 
 const ENGINES = {
   mysql: {
-    dump: (conn, outFile) =>
-      `mysqldump -h ${conn.host} -P ${conn.port || 3306} -u ${conn.user} ${conn.password ? `-p${conn.password}` : ''} ${conn.database} > "${outFile}"`,
-    restore: (conn, inFile) =>
-      `mysql -h ${conn.host} -P ${conn.port || 3306} -u ${conn.user} ${conn.password ? `-p${conn.password}` : ''} ${conn.database} < "${inFile}"`,
+    dump: (conn) => ({
+      cmd: 'mysqldump',
+      args: ['-h', conn.host, '-P', String(conn.port || 3306), '-u', conn.user, conn.database],
+      env: conn.password ? { ...process.env, MYSQL_PWD: conn.password } : process.env,
+    }),
+    restore: (conn) => ({
+      cmd: 'mysql',
+      args: ['-h', conn.host, '-P', String(conn.port || 3306), '-u', conn.user, conn.database],
+      env: conn.password ? { ...process.env, MYSQL_PWD: conn.password } : process.env,
+    }),
     check: () => checkTool('mysqldump', 'mysqldump --version'),
-    list: (conn) => {
-      const r = run(`mysql -h ${conn.host} -P ${conn.port || 3306} -u ${conn.user} ${conn.password ? `-p${conn.password}` : ''} -e "SHOW DATABASES" --batch --skip-column-names 2>&1`);
+    list: async (conn) => {
+      const env = conn.password ? { ...process.env, MYSQL_PWD: conn.password } : process.env;
+      const r = await runAsync('mysql', ['-h', conn.host, '-P', String(conn.port || 3306), '-u', conn.user, '-e', 'SHOW DATABASES', '--batch', '--skip-column-names'], { env });
       if (!r.success) return [];
-      return r.stdout.split('\n').filter(d => !['information_schema','performance_schema','mysql','sys'].includes(d.trim()));
+      return r.stdout.split('\n').map(d => d.trim()).filter(d => d && !['information_schema','performance_schema','mysql','sys'].includes(d));
     },
   },
   postgres: {
-    dump: (conn, outFile) => {
-      const env = conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env;
-      return { cmd: `pg_dump -h ${conn.host} -p ${conn.port || 5432} -U ${conn.user} -d ${conn.database} -F c > "${outFile}"`, env };
-    },
-    restore: (conn, inFile) => {
-      const env = conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env;
-      return { cmd: `pg_restore -h ${conn.host} -p ${conn.port || 5432} -U ${conn.user} -d ${conn.database} -c "${inFile}"`, env };
-    },
+    dump: (conn) => ({
+      cmd: 'pg_dump',
+      args: ['-h', conn.host, '-p', String(conn.port || 5432), '-U', conn.user, '-d', conn.database, '-F', 'c'],
+      env: conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env,
+    }),
+    restore: (conn) => ({
+      cmd: 'pg_restore',
+      args: ['-h', conn.host, '-p', String(conn.port || 5432), '-U', conn.user, '-d', conn.database, '-c'],
+      env: conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env,
+    }),
     check: () => checkTool('pg_dump', 'pg_dump --version'),
-    list: (conn) => {
+    list: async (conn) => {
       const env = conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env;
-      const r = run(`psql -h ${conn.host} -p ${conn.port || 5432} -U ${conn.user} -l -t -A 2>&1`, { env });
+      const r = await runAsync('psql', ['-h', conn.host, '-p', String(conn.port || 5432), '-U', conn.user, '-l', '-t', '-A'], { env });
       if (!r.success) return [];
-      return r.stdout.split('\n').map(l => l.split('|')[0]).filter(Boolean);
+      return r.stdout.split('\n').map(l => l.split('|')[0].trim()).filter(Boolean);
     },
   },
   oracle: {
-    dump: (conn, outFile) => {
-      const env = { ...process.env, ORACLE_HOME: conn.oracleHome || '' };
-      return { cmd: `expdp ${conn.user}/${conn.password}@//${conn.host}:${conn.port || 1521}/${conn.service} directory=DATA_PUMP_DIR dumpfile="${outFile}"`, env };
-    },
-    restore: (conn, inFile) => {
-      const env = { ...process.env, ORACLE_HOME: conn.oracleHome || '' };
-      return { cmd: `impdp ${conn.user}/${conn.password}@//${conn.host}:${conn.port || 1521}/${conn.service} directory=DATA_PUMP_DIR dumpfile="${inFile}"`, env };
-    },
+    dump: (conn, outFile) => ({
+      cmd: 'expdp',
+      args: [`${conn.user}/${conn.password}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${outFile}`],
+      env: { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
+    }),
+    restore: (conn, inFile) => ({
+      cmd: 'impdp',
+      args: [`${conn.user}/${conn.password}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${inFile}`],
+      env: { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
+    }),
     check: () => checkTool('expdp', 'expdp version=2 2>&1 || echo "not found"'),
-    list: () => [],
+    list: async () => [],
   },
 };
 
@@ -50,8 +63,56 @@ function getEngine(type) {
   return engine;
 }
 
-function isDumpCmd(cmdResult) {
-  return typeof cmdResult === 'object' && cmdResult.cmd;
+function runCommandWithRedirection({ cmd, args, env, outFile, inFile }) {
+  return new Promise((resolve) => {
+    let stderr = '';
+    
+    try {
+      const spawnOpts = { env: env || process.env };
+      if (inFile) {
+        spawnOpts.stdio = ['pipe', 'pipe', 'pipe'];
+      } else if (outFile) {
+        spawnOpts.stdio = ['ignore', 'pipe', 'pipe'];
+      }
+      
+      const p = spawn(cmd, args, spawnOpts);
+      
+      if (outFile) {
+        const outStream = fs.createWriteStream(outFile);
+        p.stdout.pipe(outStream);
+        outStream.on('error', (err) => {
+          stderr += `\nWrite stream error: ${err.message}`;
+        });
+      }
+
+      if (inFile) {
+        const inStream = fs.createReadStream(inFile);
+        inStream.pipe(p.stdin);
+        inStream.on('error', (err) => {
+          stderr += `\nRead stream error: ${err.message}`;
+        });
+      }
+
+      if (p.stderr) {
+        p.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+      }
+
+      p.on('error', (err) => {
+        resolve({ success: false, error: err.message });
+      });
+
+      p.on('close', (code) => {
+        resolve({
+          success: code === 0,
+          error: code === 0 ? null : (stderr.trim() || `Exit code ${code}`),
+        });
+      });
+    } catch (err) {
+      resolve({ success: false, error: err.message });
+    }
+  });
 }
 
 async function backup(backupConfig) {
@@ -64,20 +125,34 @@ async function backup(backupConfig) {
   }
 
   const outFile = `${backupPath}/${name}_${Date.now()}.${type === 'postgres' ? 'dump' : 'sql'}`;
-  const dumpResult = engine.dump(connection, outFile);
+  const dumpConf = engine.dump(connection, outFile);
 
   let result;
-  if (isDumpCmd(dumpResult)) {
-    result = run(dumpResult.cmd, { env: dumpResult.env, timeout: 600000 });
+  if (type === 'oracle') {
+    // expdp writes internally to directory
+    const r = await runAsync(dumpConf.cmd, dumpConf.args, { env: dumpConf.env });
+    result = { success: r.success, error: r.stderr };
   } else {
-    result = run(dumpResult, { timeout: 600000 });
+    result = await runCommandWithRedirection({
+      cmd: dumpConf.cmd,
+      args: dumpConf.args,
+      env: dumpConf.env,
+      outFile,
+    });
+  }
+
+  let size = 0;
+  if (result.success) {
+    try {
+      size = (await fs.promises.stat(outFile))?.size || 0;
+    } catch {}
   }
 
   return {
     success: result.success,
     file: outFile,
-    error: result.stderr,
-    size: result.success ? ((await require('fs').promises.stat(outFile))?.size || 0) : 0,
+    error: result.error,
+    size,
   };
 }
 
@@ -90,21 +165,27 @@ async function restore(restoreConfig) {
     return { success: false, error: `${type} CLI tools not found on server` };
   }
 
-  const restoreResult = engine.restore(connection, file);
+  const restoreConf = engine.restore(connection, file);
 
   let result;
-  if (isDumpCmd(restoreResult)) {
-    result = run(restoreResult.cmd, { env: restoreResult.env, timeout: 600000 });
+  if (type === 'oracle') {
+    const r = await runAsync(restoreConf.cmd, restoreConf.args, { env: restoreConf.env });
+    result = { success: r.success, error: r.stderr };
   } else {
-    result = run(restoreResult, { timeout: 600000 });
+    result = await runCommandWithRedirection({
+      cmd: restoreConf.cmd,
+      args: restoreConf.args,
+      env: restoreConf.env,
+      inFile: file,
+    });
   }
 
-  return { success: result.success, error: result.stderr };
+  return { success: result.success, error: result.error };
 }
 
-function listDatabases(type, conn) {
+async function listDatabases(type, conn) {
   const engine = getEngine(type);
-  return engine.list(conn);
+  return await engine.list(conn);
 }
 
 function checkTools(type) {

@@ -11,6 +11,7 @@ import Dashboard from './pages/Dashboard';
 import Backups from './pages/Backups';
 import DatabaseBackups from './pages/DatabaseBackups';
 import VMBackups from './pages/VMBackups';
+import HostBackups from './pages/HostBackups';
 import CloudBackups from './pages/CloudBackups';
 import Restore from './pages/Restore';
 import Policies from './pages/Policies';
@@ -51,6 +52,7 @@ function ProtectedLayout({ isDark, toggleTheme }) {
             <Route path="/backups" element={<Backups />} />
             <Route path="/db-backups" element={<DatabaseBackups />} />
             <Route path="/vm-backups" element={<VMBackups />} />
+            <Route path="/host-backups" element={<HostBackups />} />
             <Route path="/cloud-backups" element={<CloudBackups />} />
             <Route path="/restore" element={<Restore />} />
             <Route path="/policies" element={<Policies />} />

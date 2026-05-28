@@ -9,6 +9,7 @@ import {
   Delete as DeleteIcon, CheckCircle as SuccessIcon, Error as ErrorIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
+import { useTranslation } from '../context/LangContext';
 
 const API = process.env.REACT_APP_API_URL || '';
 
@@ -18,6 +19,7 @@ export default function JobHistory() {
   const [search, setSearch] = useState('');
   const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
   const { can } = useAuth();
+  const { t } = useTranslation();
 
   const load = useCallback(() => {
     fetch(`${API}/api/backups`).then(r => r.json()).then(setBackups).catch(() => {});
@@ -37,9 +39,9 @@ export default function JobHistory() {
     try {
       await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
       load();
-      setSnack({ open: true, msg: 'Deleted', severity: 'success' });
+      setSnack({ open: true, msg: t('deleted'), severity: 'success' });
     } catch {
-      setSnack({ open: true, msg: 'Delete failed', severity: 'error' });
+      setSnack({ open: true, msg: t('deleteFailed'), severity: 'error' });
     }
   };
 
@@ -53,9 +55,9 @@ export default function JobHistory() {
 
   return (
     <Box>
-      <Typography variant="h4" sx={{ mb: 0.5 }}>Job History</Typography>
+      <Typography variant="h4" sx={{ mb: 0.5 }}>{t('history')}</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Recent backup job executions — {backups.length} total jobs
+        {t('jobHistorySubtitle', { total: backups.length })}
       </Typography>
 
       <Card>
@@ -67,38 +69,38 @@ export default function JobHistory() {
               sx={{ minWidth: 140 }}
               InputProps={{ startAdornment: <InputAdornment position="start"><FilterIcon fontSize="small" /></InputAdornment> }}
             >
-              <MenuItem value="all">All statuses</MenuItem>
-              <MenuItem value="completed">Completed</MenuItem>
-              <MenuItem value="running">Running</MenuItem>
-              <MenuItem value="failed">Failed</MenuItem>
+              <MenuItem value="all">{t('allStatuses')}</MenuItem>
+              <MenuItem value="completed">{t('completed')}</MenuItem>
+              <MenuItem value="running">{t('running')}</MenuItem>
+              <MenuItem value="failed">{t('failed')}</MenuItem>
             </TextField>
             <TextField
-              size="small" placeholder="Search jobs..."
+              size="small" placeholder={t('searchJobs')}
               value={search} onChange={(e) => setSearch(e.target.value)}
               sx={{ flex: 1, maxWidth: 300 }}
               InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
             />
-            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>Refresh</Button>
+            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
           </Box>
 
           <TableContainer>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>Job Name</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Started</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Duration</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Size</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>Result</TableCell>
-                  {can('delete') && <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>}
+                  <TableCell sx={{ fontWeight: 600 }}>{t('jobName')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('type')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('status')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('started')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('duration')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('size')}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{t('result')}</TableCell>
+                  {can('delete') && <TableCell sx={{ fontWeight: 600 }} align="right">{t('actions')}</TableCell>}
                 </TableRow>
               </TableHead>
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow><TableCell colSpan={can('delete') ? 8 : 7} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">No job history found</Typography>
+                    <Typography color="text.secondary">{t('noJobHistory')}</Typography>
                   </TableCell></TableRow>
                 ) : filtered.map((b) => (
                   <TableRow key={b.id}>
@@ -106,7 +108,7 @@ export default function JobHistory() {
                     <TableCell><Chip label={b.backupType || b.type} size="small" variant="outlined" /></TableCell>
                     <TableCell>
                       <Chip
-                        label={b.status}
+                        label={t(b.status)}
                         size="small"
                         color={b.status === 'completed' ? 'success' : b.status === 'failed' ? 'error' : b.status === 'running' ? 'info' : 'default'}
                         icon={b.status === 'completed' ? <SuccessIcon /> : b.status === 'failed' ? <ErrorIcon /> : null}
@@ -122,7 +124,7 @@ export default function JobHistory() {
                     <TableCell>
                       {b.error ? (
                         <Tooltip title={b.error}>
-                          <Chip label="Error" size="small" color="error" variant="outlined" />
+                          <Chip label={t('error')} size="small" color="error" variant="outlined" />
                         </Tooltip>
                       ) : b.status === 'completed' ? (
                         <Chip label="OK" size="small" color="success" variant="outlined" />
@@ -130,7 +132,7 @@ export default function JobHistory() {
                     </TableCell>
                     {can('delete') && (
                       <TableCell align="right">
-                        <Tooltip title="Delete"><IconButton size="small" onClick={() => deleteBackup(b.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                        <Tooltip title={t('delete')}><IconButton size="small" onClick={() => deleteBackup(b.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
                       </TableCell>
                     )}
                   </TableRow>

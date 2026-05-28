@@ -6,11 +6,12 @@
   "scripts": {
     "start": "node server.js",
     "build": "cd frontend && npm run build",
-    "install:all": "cd frontend && npm install && cd ../backup-solution && npm install",
-    "dev:backend": "cd backup-solution && npm start",
+    "install:all": "npm install && cd frontend && npm install",
+    "dev:backend": "node server.js",
     "dev:frontend": "cd frontend && npm start",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "update": "git pull && npm install && cd frontend && npm install && npm run build && sudo systemctl restart bck"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +29,7 @@
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "http-proxy-middleware": "^3.0.3",
-    "jsonwebtoken": "^9.0.3"
+    "jsonwebtoken": "^9.0.3",
+    "uuid": "^9.0.1"
   }
 }
