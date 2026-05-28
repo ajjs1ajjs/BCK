@@ -52,7 +52,7 @@ The script will:
 3. Build the frontend
 4. Start the server (Linux: auto-creates systemd service)
 
-Then open **http://localhost:6000**
+Then open **http://localhost:9000**
 
 ## Default Credentials
 
@@ -71,7 +71,7 @@ cd frontend && npm run build
 # Start production server
 node server.js
 
-# Development server (frontend on :3000, API on :6000)
+# Development server (frontend on :3000, API on :9000)
 cd frontend && npm start
 
 # Reset database

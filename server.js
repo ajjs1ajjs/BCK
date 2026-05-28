@@ -176,21 +176,32 @@ const updateStats = async (db) => {
   const failed = db.backups.filter(b => b.status === 'failed').length;
   const last = db.backups.filter(b => b.completedAt).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))[0];
 
-  // Calculate dynamic disk space
+  // Calculate dynamic disk space — scan all real physical filesystems
   let diskSpace = {
-    totalBytes: 50 * 1073741824,
-    freeBytes: 50 * 1073741824,
+    totalBytes: 2048 * 1073741824,
+    freeBytes: 2048 * 1073741824,
     usedBytes: 0,
     isQuota: false
   };
 
   try {
-    if (typeof fs.statfs === 'function') {
-      const stat = await fs.statfs(__dirname);
-      const totalBytes = Number(stat.blocks) * Number(stat.bsize);
-      const freeBytes = Number(stat.bavail) * Number(stat.bsize);
-      const usedBytes = totalBytes - freeBytes;
-      diskSpace = { totalBytes, freeBytes, usedBytes, isQuota: false };
+    const { execSync } = require('child_process');
+    const dfOut = execSync('df -B1 --output=type,size,avail,target 2>/dev/null || df -B1 2>/dev/null', { timeout: 5000, encoding: 'utf8' });
+    const lines = dfOut.split('\n').slice(1).filter(Boolean);
+    let totalSize = 0, totalAvail = 0;
+    const skipTypes = new Set(['tmpfs', 'devtmpfs', 'devpts', 'sysfs', 'proc', 'overlay', 'squashfs', 'hugetlbfs', 'mqueue', 'pstore', 'securityfs', 'cgroup2', 'cgroup', 'efivarfs', 'bpf', 'autofs', 'debugfs', 'tracefs', 'ramfs', 'nsfs', 'fuse.gvfsd-fuse', 'fuse.lxcfs', 'configfs', 'fusectl']);
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      const fstype = parts[0];
+      if (skipTypes.has(fstype)) continue;
+      const size = parseInt(parts[1], 10);
+      const avail = parseInt(parts[2], 10);
+      if (isNaN(size) || isNaN(avail) || size <= 0) continue;
+      totalSize += size;
+      totalAvail += avail;
+    }
+    if (totalSize > 0) {
+      diskSpace = { totalBytes: totalSize, freeBytes: totalAvail, usedBytes: totalSize - totalAvail, isQuota: false };
     }
   } catch (err) {
     console.error('Failed to retrieve disk space:', err);

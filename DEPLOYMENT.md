@@ -60,7 +60,7 @@ http-server build
 
 Create a `.env` file in the project root with:
 ```
-REACT_APP_API_URL=http://localhost:6000
+REACT_APP_API_URL=http://localhost:9000
 ```
 
 ## Systemd Service (Linux)
@@ -107,7 +107,7 @@ Use NSSM (Non-Sucking Service Manager) to create a Windows service:
 To build and run with Docker:
 ```bash
 docker build -t bck-app .
-docker run -p 6000:6000 bck-app
+docker run -p 6000:9000 bck-app
 ```
 
 Dockerfile:
@@ -152,11 +152,11 @@ Use Event Viewer or PowerShell logging.
 1. **Port in use**: Check for processes using the port:
    ```bash
    # Linux
-   lsof -i :6000
+   lsof -i :9000
    kill -9 [PID]
    
    # Windows
-   netstat -ano | findstr :6000
+   netstat -ano | findstr :9000
    taskkill /PID [PID] /F
    ```
 

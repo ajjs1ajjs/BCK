@@ -11,5 +11,5 @@ COPY --from=builder /app/frontend/build ./frontend/build
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY . .
-EXPOSE 6000
+EXPOSE 9000
 CMD ["node", "server.js"]
