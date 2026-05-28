@@ -73,36 +73,10 @@ const StatCard = ({ label, value, icon, color, path, svg }) => {
           <Typography variant="h3" sx={{ fontWeight:800, color:'#fff', mt:0.75, fontSize:32, lineHeight: 1 }}>
             {value}
           </Typography>
-                </Box>
-              </Box>
-
-              {disks.length > 1 && !isQuota && (
-                <Box sx={{ mt: 2.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  <Typography variant="caption" sx={{ color: alpha('#fff',0.4), fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:1, mb:1.5, display:'block' }}>{t('disks')}</Typography>
-                  <Stack spacing={1.2}>
-                    {disks.map((d, i) => {
-                      const pct = d.totalGB > 0 ? Math.min((d.usedGB / d.totalGB) * 100, 100) : 0;
-                      return (
-                        <Box key={i}>
-                          <Box sx={{ display:'flex', justifyContent:'space-between', mb:0.3 }}>
-                            <Typography variant="caption" sx={{ color: alpha('#fff',0.7), fontWeight:500, fontSize:11 }}>
-                              {d.mount === '/' ? '/ (root)' : d.mount}
-                            </Typography>
-                            <Typography variant="caption" sx={{ color: alpha('#fff',0.4), fontSize:10 }}>
-                              {d.freeGB.toFixed(1)} GB / {d.totalGB.toFixed(1)} GB
-                            </Typography>
-                          </Box>
-                          <Box sx={{ height:4, borderRadius:3, bgcolor:'rgba(255,255,255,0.04)', overflow:'hidden' }}>
-                            <Box sx={{ height:'100%', borderRadius:3, width:`${pct}%`, background:`linear-gradient(90deg, ${pct > 85 ? C.error : C.primary}, ${pct > 85 ? C.error : C.secondary})` }} />
-                          </Box>
-                        </Box>
-                      );
-                    })}
-                  </Stack>
-                </Box>
-              )}
-            </CardContent>
-          </Card>
+        </Box>
+        {svg && <Box sx={{ flexShrink:0 }}>{svg}</Box>}
+      </CardContent>
+    </Card>
   );
 };
 
@@ -380,42 +354,31 @@ export default function Dashboard() {
                 </Box>
               </Box>
 
-              {/* Status List */}
-              <Stack spacing={1.5} sx={{ flex:1 }}>
-                {connectionStatus.map(cs => (
-                  <Box key={cs.type} sx={{ display:'flex', alignItems:'center', justifyContent:'space-between', px:1.5, py:1, borderRadius: 1.5, '&:hover': { bgcolor: 'rgba(255,255,255,0.02)' }, cursor:'pointer' }} onClick={() => navigate(cs.path)}>
-                    <Box sx={{ display:'flex', alignItems:'center', gap:1.5 }}>
-                      <Box sx={{ width:8, height:8, borderRadius:'50%', bgcolor:cs.color, boxShadow:`0 0 6px ${cs.color}` }} />
-                      <Typography variant="body2" sx={{ color:'text.secondary', fontSize:13 }}>{cs.type}</Typography>
-                    </Box>
-                    <Box sx={{ display:'flex', alignItems:'center', gap:1 }}>
-                      <Typography variant="body2" sx={{ fontWeight:700, color:cs.items.length > 0 ? '#fff' : alpha('#fff',0.3), fontSize:14 }}>
-                        {cs.items.length}
-                      </Typography>
-                      <Box sx={{ width:6, height:6, borderRadius:'50%', bgcolor:cs.items.length > 0 ? C.success : alpha('#fff',0.15) }} />
-                    </Box>
-                  </Box>
-                ))}
-              </Stack>
-
-              {/* Topology flow */}
-              <Box sx={{ display:'flex', alignItems:'center', justifyContent:'center', gap:1, pt:3, mt:'auto', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
-                <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.primary,0.15), color:C.primary }}>
-                  <StorageIcon sx={{ fontSize:18 }} />
+              {disks.length > 1 && !isQuota && (
+                <Box sx={{ mt: 2.5, pt: 2, borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <Typography variant="caption" sx={{ color: alpha('#fff',0.4), fontWeight:600, fontSize:10, textTransform:'uppercase', letterSpacing:1, mb:1.5, display:'block' }}>{t('disks')}</Typography>
+                  <Stack spacing={1.2}>
+                    {disks.map((d, i) => {
+                      const pct = d.totalGB > 0 ? Math.min((d.usedGB / d.totalGB) * 100, 100) : 0;
+                      return (
+                        <Box key={i}>
+                          <Box sx={{ display:'flex', justifyContent:'space-between', mb:0.3 }}>
+                            <Typography variant="caption" sx={{ color: alpha('#fff',0.7), fontWeight:500, fontSize:11 }}>
+                              {d.mount === '/' ? '/ (root)' : d.mount}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: alpha('#fff',0.4), fontSize:10 }}>
+                              {d.freeGB.toFixed(1)} GB / {d.totalGB.toFixed(1)} GB
+                            </Typography>
+                          </Box>
+                          <Box sx={{ height:4, borderRadius:3, bgcolor:'rgba(255,255,255,0.04)', overflow:'hidden' }}>
+                            <Box sx={{ height:'100%', borderRadius:3, width:`${pct}%`, background:`linear-gradient(90deg, ${pct > 85 ? C.error : C.primary}, ${pct > 85 ? C.error : C.secondary})` }} />
+                          </Box>
+                        </Box>
+                      );
+                    })}
+                  </Stack>
                 </Box>
-                <Box sx={{ flex:1, height:2, mx:0.5, background:`linear-gradient(90deg, ${alpha(C.primary,0.5)}, ${alpha(C.secondary,0.5)})`, position:'relative' }}>
-                  <Box sx={{ position:'absolute', right:-4, top:-4, width:10, height:10, borderRadius:'50%', bgcolor:C.secondary }} />
-                </Box>
-                <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.secondary,0.15), color:C.secondary }}>
-                  <BackupIcon sx={{ fontSize:18 }} />
-                </Box>
-                <Box sx={{ flex:1, height:2, mx:0.5, background:`linear-gradient(90deg, ${alpha(C.secondary,0.5)}, ${alpha(C.success,0.5)})`, position:'relative' }}>
-                  <Box sx={{ position:'absolute', right:-4, top:-4, width:10, height:10, borderRadius:'50%', bgcolor:C.success }} />
-                </Box>
-                <Box sx={{ width:36, height:36, borderRadius:'8px', display:'flex', alignItems:'center', justifyContent:'center', bgcolor:alpha(C.success,0.15), color:C.success }}>
-                  <CloudIcon sx={{ fontSize:18 }} />
-                </Box>
-              </Box>
+              )}
             </CardContent>
           </Card>
 
