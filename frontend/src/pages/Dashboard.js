@@ -186,6 +186,11 @@ export default function Dashboard() {
     return { ...d, totalGB: tGB, usedGB: uGB, freeGB: fGB };
   });
 
+  const cloudDisks = (stats?.cloudSpaces || []).map(c => {
+    const usedGB = Math.round(c.usedBytes / 1073741824 * 10) / 10 || 0;
+    return { ...c, usedGB };
+  });
+
   const recentLogs = logs.slice(0, 5);
   const totalConnections = dbConnections.length + cloudCreds.length + vmBackups.length;
   const avgSpeed = useMemo(() => {
@@ -465,6 +470,32 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </Box>
+
+        {/* ===== CLOUD STORAGE ===== */}
+        {cloudDisks.length > 0 && (
+          <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(3, minmax(0, 1fr))' } }}>
+            {cloudDisks.map(c => {
+              const usedGB = c.usedGB;
+              const colorMap = { aws: '#ff9900', azure: '#0078d4', gcp: '#4285f4' };
+              const color = colorMap[c.provider] || C.primary;
+              return (
+                <Card key={c.id} sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+                  <CardContent sx={{ p:3 }}>
+                    <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:2 }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight:700, color:'#fff', fontSize:14 }}>{c.name}</Typography>
+                      <Chip label={c.provider.toUpperCase()} size="small" sx={{ height:18, fontSize:9, fontWeight:600, bgcolor:alpha(color,0.15), color, border:`1px solid ${alpha(color,0.3)}` }} />
+                    </Box>
+                    <Box sx={{ display:'flex', alignItems:'baseline', gap:0.5, mb:0.5 }}>
+                      <Typography variant="h5" sx={{ fontWeight:800, color:'#fff', fontSize:22 }}>{usedGB.toFixed(1)}</Typography>
+                      <Typography variant="caption" sx={{ color:alpha('#fff',0.4), fontSize:12 }}>GB {t('used')}</Typography>
+                    </Box>
+                    {c.error && <Typography variant="caption" sx={{ color:C.error, fontSize:10, mt:0.5, display:'block' }}>{c.error}</Typography>}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </Box>
+        )}
 
         {/* ===== ROW 3: 2 CHARTS — 50/50 ===== */}
         <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' } }}>

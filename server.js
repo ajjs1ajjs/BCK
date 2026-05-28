@@ -231,6 +231,35 @@ const updateStats = async (db) => {
     };
   }
 
+  // ─── Cloud storage stats ────────────────────────────────
+  let cloudSpaces = [];
+  if (db.cloudCredentials && db.cloudCredentials.length > 0) {
+    const { execSync } = require('child_process');
+    cloudSpaces = db.cloudCredentials.map(cred => {
+      try {
+        const { provider, credentials } = cred;
+        let usedBytes = 0, error = null;
+        if (provider === 'aws' && credentials.bucket) {
+          const r = execSync(`aws s3api list-objects-v2 --bucket "${credentials.bucket}" --query "[sum(Contents[].Size)]" --output text`, { timeout: 30000, encoding: 'utf8', env: { ...process.env, AWS_ACCESS_KEY_ID: credentials.accessKeyId, AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey, AWS_DEFAULT_REGION: credentials.region || 'us-east-1' } });
+          usedBytes = parseInt(r.trim(), 10) || 0;
+        } else if (provider === 'azure' && credentials.container && credentials.storageAccount) {
+          const r = execSync(`az storage blob list --account-name "${credentials.storageAccount}" --account-key "${credentials.accessKey}" --container-name "${credentials.container}" --query "[*].properties.contentLength" --output tsv`, { timeout: 30000, encoding: 'utf8' });
+          usedBytes = r.trim().split('\n').reduce((s, v) => s + (parseInt(v, 10) || 0), 0);
+        } else if (provider === 'gcp' && credentials.bucket) {
+          const credFile = path.join(os.tmpdir(), `bck_gcp_du_${Date.now()}.json`);
+          require('fs').writeFileSync(credFile, JSON.stringify(credentials.credentials));
+          try {
+            const r = execSync(`gsutil du -s "gs://${credentials.bucket}"`, { timeout: 30000, encoding: 'utf8', env: { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile } });
+            usedBytes = parseInt(r.trim().split(/\s+/)[0], 10) || 0;
+          } finally { try { require('fs').unlinkSync(credFile); } catch {} }
+        }
+        return { id: cred.id, name: cred.name, provider, usedBytes, error };
+      } catch (e) {
+        return { id: cred.id, name: cred.name, provider: cred.provider, usedBytes: 0, error: e.message };
+      }
+    });
+  }
+
   db.stats = {
     totalBackups: total,
     successfulBackups: success,
@@ -238,7 +267,8 @@ const updateStats = async (db) => {
     totalSize: db.backups.reduce((sum, b) => sum + (b.size || 0), 0),
     lastBackup: last?.completedAt || null,
     diskSpace,
-    diskSpaces
+    diskSpaces,
+    cloudSpaces
   };
 };
 
