@@ -5,3 +5,5 @@ frontend/build/
 .env.local
 *.log
 .DS_Store
+db.json
+data/ssh_keys/
