@@ -12,8 +12,6 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
     "axios": "^1.7.0",
-    "express": "^4.21.0",
-    "http-proxy-middleware": "^3.0.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.1",
@@ -26,8 +24,7 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "json-server": "json-server --watch db.json --port 4000",
-    "server": "node ../server.js"
+    "json-server": "json-server --watch db.json --port 4000"
   },
   "devDependencies": {
     "json-server": "^1.0.0-beta.15",
