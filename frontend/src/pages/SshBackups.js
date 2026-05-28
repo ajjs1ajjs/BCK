@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Box, Typography, Card, CardContent, Button, TextField, Dialog, DialogTitle,
   DialogContent, DialogActions, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Chip, IconButton, Tooltip, MenuItem, Snackbar, Alert,
+  TableHead, TableRow, Chip, IconButton, MenuItem, Snackbar, Alert,
 } from '@mui/material';
 import {
   Add as AddIcon, Delete as DeleteIcon, PlayArrow as RunIcon,
-  Refresh as RefreshIcon, Computer as SshIcon, Edit as EditIcon,
+  Computer as SshIcon, Edit as EditIcon,
 } from '@mui/icons-material';
 import { useTranslation } from '../context/LangContext';
 
@@ -97,7 +97,7 @@ export default function SshBackups() {
   };
 
   const deleteBackup = async (id) => {
-    if (!confirm(isUk ? 'Видалити?' : 'Delete?')) return;
+    if (!window.confirm(isUk ? 'Видалити?' : 'Delete?')) return;
     try {
       await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
       setSnack({ open: true, msg: isUk ? 'Видалено' : 'Deleted', severity: 'success' });
@@ -114,11 +114,11 @@ export default function SshBackups() {
         setConnForm({ name: '', host: '', port: 22, user: '', password: '' });
         load();
       }
-    } catch {}
+    } catch { setSnack({ open: true, msg: 'Error saving SSH connection', severity: 'error' }); }
   };
 
   const deleteConnection = async (id) => {
-    try { await fetch(`${API}/api/ssh-connections/${id}`, { method: 'DELETE' }); load(); } catch {}
+    try { await fetch(`${API}/api/ssh-connections/${id}`, { method: 'DELETE' }); load(); } catch { setSnack({ open: true, msg: 'Error deleting connection', severity: 'error' }); }
   };
 
   const testConnection = async (id) => {
@@ -126,7 +126,7 @@ export default function SshBackups() {
       const resp = await fetch(`${API}/api/ssh-connections/${id}/test`, { method: 'POST' });
       const data = await resp.json();
       setSnack({ open: true, msg: data.success ? (isUk ? `Підключено до ${data.hostname}` : `Connected to ${data.hostname}`) : (data.error || 'Failed'), severity: data.success ? 'success' : 'error' });
-    } catch {}
+    } catch { setSnack({ open: true, msg: 'Error testing connection', severity: 'error' }); }
   };
 
   return (

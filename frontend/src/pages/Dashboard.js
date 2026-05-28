@@ -5,7 +5,7 @@ import {
 } from '@mui/material';
 import {
   ArrowForward as ArrowIcon, Schedule as ScheduleIcon, Backup as BackupIcon,
-  Storage as StorageIcon, CloudQueue as CloudIcon, Computer as ComputerIcon,
+  CloudQueue as CloudIcon, Computer as ComputerIcon,
   Storage as DatabaseIcon, Speed as SpeedIcon, Timeline as TimelineIcon,
   Info as InfoIcon, Refresh as RefreshIcon, Download as DownloadIcon,
   Restore as RestoreIcon,
