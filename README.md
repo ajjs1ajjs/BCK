@@ -27,7 +27,7 @@ Modern web-based backup management system with scheduling, monitoring, and multi
 
 ### Linux (one-line install)
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/master/install.sh | sudo bash
 ```
 
 ### Windows
