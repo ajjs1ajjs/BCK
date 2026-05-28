@@ -13,6 +13,7 @@ import DatabaseBackups from './pages/DatabaseBackups';
 import VMBackups from './pages/VMBackups';
 import HostBackups from './pages/HostBackups';
 import CloudBackups from './pages/CloudBackups';
+import SshBackups from './pages/SshBackups';
 import Restore from './pages/Restore';
 import Policies from './pages/Policies';
 import JobHistory from './pages/JobHistory';
@@ -54,6 +55,7 @@ function ProtectedLayout({ isDark, toggleTheme }) {
             <Route path="/vm-backups" element={<VMBackups />} />
             <Route path="/host-backups" element={<HostBackups />} />
             <Route path="/cloud-backups" element={<CloudBackups />} />
+            <Route path="/ssh-backups" element={<SshBackups />} />
             <Route path="/restore" element={<Restore />} />
             <Route path="/policies" element={<Policies />} />
             <Route path="/history" element={<JobHistory />} />

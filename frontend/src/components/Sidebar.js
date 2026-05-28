@@ -9,6 +9,7 @@ import {
   Cloud as CloudIcon, Dns as HostIcon, Policy as PolicyIcon, History as HistoryIcon,
   ExpandMore as ExpandIcon, ExpandLess as CollapseIcon,
   People as PeopleIcon, Security as SecurityIcon,
+  VpnKey as SshIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -107,6 +108,7 @@ export default function Sidebar() {
                 { label: t('vms'), icon: <ComputerIcon />, path: '/vm-backups' },
                 { label: t('hosts') || 'Hosts', icon: <HostIcon />, path: '/host-backups' },
                 { label: t('cloud'), icon: <CloudIcon />, path: '/cloud-backups' },
+                { label: 'SSH', icon: <SshIcon />, path: '/ssh-backups' },
                 { label: t('restore'), icon: <RestoreIcon />, path: '/restore', need: 'restore' },
               ].filter(item => item.need ? can(item.need) : true).map((item) => (
                 <ListItemButton key={item.path} onClick={() => navigate(item.path)} selected={isActive(item.path)}

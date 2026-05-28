@@ -14,6 +14,7 @@ const API = process.env.REACT_APP_API_URL || '';
 export default function Restore() {
   const [backups, setBackups] = useState([]);
   const [connections, setConnections] = useState([]);
+  const [sshConns, setSshConns] = useState([]);
   const [step, setStep] = useState(0);
   const [selected, setSelected] = useState(null);
   const [restoreType, setRestoreType] = useState('original');
@@ -27,6 +28,7 @@ export default function Restore() {
       setBackups(b.filter(x => x.status === 'completed' && x.resultFile));
     }).catch(() => {});
     fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(() => {});
+    fetch(`${API}/api/ssh-connections`).then(r => r.json()).then(setSshConns).catch(() => {});
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -36,11 +38,13 @@ export default function Restore() {
     setRestoring(true);
     const backupType = selected.backupType || selected.type;
     const config = restoreType === 'new'
-      ? (['mysql', 'postgres', 'oracle'].includes(backupType)
-        ? { connectionId: target.connectionId }
-        : backupType === 'host'
+      ? (['mysql', 'postgres', 'oracle'].includes(backupType) || backupType === 'ssh-db'
+        ? { connectionId: target.connectionId, database: target.database, type: target.dbType }
+        : ['ssh', 'host'].includes(backupType)
           ? { targetPath: target.targetPath }
-          : { vmName: target.vmName, host: target.host, user: target.user, password: target.password })
+          : backupType === 'cloud'
+            ? { localPath: target.targetPath }
+            : { vmName: target.vmName, host: target.host, user: target.user, password: target.password })
       : {};
 
     try {
@@ -62,7 +66,8 @@ export default function Restore() {
   const backupType = selected?.backupType || selected?.type;
   const isDB = ['mysql', 'postgres', 'oracle'].includes(backupType);
   const isVM = ['vmware', 'hyperv'].includes(backupType);
-  const isHost = backupType === 'host';
+  const isHost = backupType === 'host' || backupType === 'ssh';
+  const isSsh = backupType === 'ssh' || backupType === 'ssh-db';
 
   return (
     <Box>
@@ -153,6 +158,19 @@ export default function Restore() {
                   <TextField label="Target Database" fullWidth value={target.database}
                     onChange={(e) => setTarget({...target, database: e.target.value})} placeholder="new_database_name" />
                 </>)}
+                {backupType === 'ssh-db' && (<>
+                  <TextField select label={t('targetConnection') || 'Target SSH'} fullWidth value={target.connectionId}
+                    onChange={(e) => setTarget({...target, connectionId: e.target.value})}>
+                    {sshConns.map(c => <MenuItem key={c.id} value={c.id}>{c.name} ({c.host})</MenuItem>)}
+                  </TextField>
+                  <TextField select label="DB Type" fullWidth value={target.dbType || 'mysql'}
+                    onChange={(e) => setTarget({...target, dbType: e.target.value})}>
+                    <MenuItem value="mysql">MySQL</MenuItem>
+                    <MenuItem value="postgres">PostgreSQL</MenuItem>
+                  </TextField>
+                  <TextField label="Target Database" fullWidth value={target.database}
+                    onChange={(e) => setTarget({...target, database: e.target.value})} placeholder="db_name" />
+                </>)}
                 {isVM && (<>
                   <TextField label="New VM Name" fullWidth value={target.vmName}
                     onChange={(e) => setTarget({...target, vmName: e.target.value})} placeholder="my-vm-restored" />
@@ -170,7 +188,7 @@ export default function Restore() {
                     value={target.targetPath}
                     onChange={(e) => setTarget({...target, targetPath: e.target.value})}
                     placeholder="/restore/host"
-                    helperText="Host archive will be extracted to this directory."
+                    helperText={isSsh ? "Archive will be extracted on the remote server via SSH." : "Host archive will be extracted to this directory."}
                   />
                 )}
               </Box>
