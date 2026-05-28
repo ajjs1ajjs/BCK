@@ -109,7 +109,7 @@ get_local_ip() {
 }
 
 LOCAL_IP=$(get_local_ip)
-APP_URL="${BCK_APP_URL:-http://$LOCAL_IP:6000}"
+APP_URL="${BCK_APP_URL:-http://$LOCAL_IP:9000}"
 
 if [ -f .env ]; then
     for var in APP_URL HOST; do
@@ -120,7 +120,7 @@ if [ -f .env ]; then
     sed -i "s|^APP_URL=.*|APP_URL=$APP_URL|" .env
 else
     cat > .env <<EOF
-PORT=6000
+PORT=9000
 JWT_SECRET=bck-super-secret-change-in-production-2024
 DB_PATH=./db.json
 NODE_ENV=production

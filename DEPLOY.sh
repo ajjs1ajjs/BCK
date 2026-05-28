@@ -28,4 +28,4 @@ done
 
 echo "=== Deployment complete! ==="
 echo "Run: node server.js"
-echo "Then open http://localhost:6000"
+echo "Then open http://localhost:9000"

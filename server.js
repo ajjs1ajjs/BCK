@@ -17,7 +17,7 @@ const cloudService = require('./services/cloud');
 const hostService = require('./services/host');
 
 const app = express();
-const PORT = process.env.PORT || 6000;
+const PORT = process.env.PORT || 9000;
 const HOST = process.env.HOST || '0.0.0.0';
 const APP_URL = process.env.APP_URL || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'bck-default-secret-change-me';
