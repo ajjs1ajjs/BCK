@@ -44,13 +44,13 @@ const ENGINES = {
   oracle: {
     dump: (conn, outFile) => ({
       cmd: 'expdp',
-      args: [`${conn.user}/${conn.password}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${outFile}`],
-      env: { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
+      args: [`${conn.user}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${outFile}`],
+      env: conn.password ? { ...process.env, ORACLE_HOME: conn.oracleHome || '', ORACLE_PWD: conn.password } : { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
     }),
     restore: (conn, inFile) => ({
       cmd: 'impdp',
-      args: [`${conn.user}/${conn.password}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${inFile}`],
-      env: { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
+      args: [`${conn.user}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${inFile}`],
+      env: conn.password ? { ...process.env, ORACLE_HOME: conn.oracleHome || '', ORACLE_PWD: conn.password } : { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
     }),
     check: () => checkTool('expdp', 'expdp version=2 2>&1 || echo "not found"'),
     list: async () => [],

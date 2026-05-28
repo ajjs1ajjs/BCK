@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
+const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 
 require('dotenv').config();
@@ -48,6 +49,7 @@ const getLocalIp = () => {
 const buildDefaultAppUrl = () => APP_URL || `http://${getLocalIp()}:${PORT}`;
 
 // ─── Security middleware ────────────────────────────────────────────────────
+app.use(morgan('combined'));
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
 app.use(cors({
   origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : true,
@@ -235,8 +237,6 @@ const initDB = async () => {
 
 const SSH_KEYS_DIR = path.join(__dirname, 'data', 'ssh_keys');
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
 function writeSshKey(id, keyContent) {
   if (!keyContent) return '';
   const dir = SSH_KEYS_DIR;
@@ -245,11 +245,6 @@ function writeSshKey(id, keyContent) {
   fsSync.writeFileSync(keyPath, keyContent, 'utf8');
   fsSync.chmodSync(keyPath, 0o600);
   return keyPath;
-}
-
-function readSshKey(keyPath) {
-  if (!keyPath) return '';
-  try { return fsSync.readFileSync(keyPath, 'utf8'); } catch { return ''; }
 }
 
 function deleteSshKey(keyPath) {
@@ -946,7 +941,7 @@ async function sendNotification(db, message, status) {
 
 // ─── Scheduler ────────────────────────────────────────────────────────────────
 
-let cronTasks = {};
+const cronTasks = {};
 
 function refreshScheduler() {
   for (const id of Object.keys(cronTasks)) {
