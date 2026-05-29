@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   Box, Typography, Card, CardContent, Grid, Chip, Button, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Paper, LinearProgress, Tooltip, alpha, IconButton, TextField,
+  LinearProgress, Tooltip, alpha, IconButton, TextField,
   InputAdornment, Skeleton, Dialog, DialogTitle, DialogContent,
   DialogActions, CircularProgress, List, ListItem, ListItemText,
   Divider
@@ -13,7 +13,6 @@ import {
   Search as SearchIcon, CloudDone as CloudDoneIcon, History as HistoryIcon,
   SettingsBackupRestore as RestoreIcon
 } from '@mui/icons-material';
-import { useTranslation } from '../context/LangContext';
 import { API } from '../utils/config';
 
 function formatBytes(bytes) {
@@ -37,7 +36,6 @@ function getStatusColor(status) {
 }
 
 export default function Repos() {
-  const { t } = useTranslation();
   const [backups, setBackups] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -115,7 +113,7 @@ export default function Repos() {
       if (!res.ok) {
         const errorText = await res.text();
         let parsedError = errorText;
-        try { parsedError = JSON.parse(errorText).error; } catch {}
+        try { parsedError = JSON.parse(errorText).error; } catch (e) { parsedError = errorText; }
         throw new Error(parsedError || 'S3 versioning details not found or disabled.');
       }
       const data = await res.json();
@@ -299,7 +297,7 @@ export default function Repos() {
                         if (cfg.cloudCredentialId || b.backupType === 'cloud' || b.type === 'cloud') {
                           hasCloud = true;
                         }
-                      } catch (e) {}
+                      } catch (e) { hasCloud = false; }
 
                       return (
                         <TableRow key={b.id} hover>

@@ -1,6 +1,6 @@
 import { Component } from 'react';
 import { Box, Typography, Button, Paper } from '@mui/material';
-import { ErrorOutline as ErrorIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { Error as ErrorIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 
 export default class ErrorBoundary extends Component {
   constructor(props) {
