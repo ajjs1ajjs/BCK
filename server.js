@@ -141,6 +141,12 @@ const initDB = async () => {
 const start = async () => {
   await initDB();
   refreshScheduler();
+  try {
+    const { pruneLogs } = require('./services/helpers');
+    pruneLogs();
+  } catch (e) {
+    console.error('Failed to run initial log pruning:', e.message);
+  }
 
   const sslCert = process.env.SSL_CERT_PATH;
   const sslKey = process.env.SSL_KEY_PATH;

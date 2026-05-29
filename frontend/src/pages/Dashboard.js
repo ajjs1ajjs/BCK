@@ -12,7 +12,7 @@ import {
 } from '@mui/icons-material';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer, Area, AreaChart,
-  CartesianGrid,
+  CartesianGrid, PieChart, Pie, Cell, Legend,
 } from 'recharts';
 import { useTranslation } from '../context/LangContext';
 import { C, GLASS, StatCard, PlatformSVG, CustomTooltip } from '../components/DashboardWidgets';
@@ -123,6 +123,29 @@ export default function Dashboard() {
     });
     return Object.values(byDate).sort((a,b) => a.date.localeCompare(b.date));
   }, [backups]);
+
+  // Database type distribution
+  const dbDistributionData = useMemo(() => {
+    const counts = {};
+    backups.forEach(b => {
+      const type = b.backupType || b.type || 'unknown';
+      const name = type === 'host' ? 'Files' : type.charAt(0).toUpperCase() + type.slice(1);
+      counts[name] = (counts[name] || 0) + 1;
+    });
+    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+  }, [backups]);
+
+  const dbColors = [C.primary, C.secondary, C.success, C.warning, C.error, '#10b981', '#f59e0b', '#3b82f6', '#ec4899'];
+
+  // Status rates
+  const statusRateData = useMemo(() => {
+    return [
+      { name: t('completed'), value: completed, color: C.success },
+      { name: t('failed'), value: failed, color: C.error },
+      { name: t('running'), value: running, color: C.primary },
+      { name: t('pending'), value: pending, color: C.warning },
+    ].filter(s => s.value > 0);
+  }, [completed, failed, running, pending, t]);
 
   // Connection status
   const connectionStatus = [
@@ -446,6 +469,79 @@ export default function Dashboard() {
                       <Area type="monotone" dataKey="completed" stroke={C.success} fill="url(#areaGrad)" strokeWidth={2} name={t('completed')} />
                       {timelineData.some(d => d.failed > 0) && <Area type="monotone" dataKey="failed" stroke={C.error} fill="none" strokeWidth={1.5} strokeDasharray="4 4" name={t('failed')} />}
                     </AreaChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* ===== ROW 3.5: PIE CHARTS — 50/50 ===== */}
+        <Box sx={{ ...gridRow, gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' } }}>
+          {/* Backup Type Distribution */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, flex:1, display:'flex', flexDirection:'column' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:0.5, color:'#fff' }}>{t('backupDistribution') || 'Backup Distribution'}</Typography>
+              <Typography variant="caption" sx={{ color:alpha('#fff',0.3), display:'block', mb:2.5, fontSize:11 }}>{t('byEngineType') || 'By target type'}</Typography>
+              {dbDistributionData.length === 0 ? (
+                <Box sx={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', py:4 }}>
+                  <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>{t('noDataYet')}</Typography>
+                </Box>
+              ) : (
+                <Box sx={{ width:'100%', flex:1, minHeight:220, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={dbDistributionData}
+                        cx="50%"
+                        cy="45%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {dbDistributionData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={dbColors[index % dbColors.length]} />
+                        ))}
+                      </Pie>
+                      <ReTooltip />
+                      <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: 11, color: '#fff' }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Backup Status Distribution */}
+          <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
+            <CardContent sx={{ p:3, flex:1, display:'flex', flexDirection:'column' }}>
+              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:0.5, color:'#fff' }}>{t('statusDistribution') || 'Status Rate'}</Typography>
+              <Typography variant="caption" sx={{ color:alpha('#fff',0.3), display:'block', mb:2.5, fontSize:11 }}>{t('byStatusType') || 'By job status'}</Typography>
+              {statusRateData.length === 0 ? (
+                <Box sx={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', py:4 }}>
+                  <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>{t('noDataYet')}</Typography>
+                </Box>
+              ) : (
+                <Box sx={{ width:'100%', flex:1, minHeight:220, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusRateData}
+                        cx="50%"
+                        cy="45%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {statusRateData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <ReTooltip />
+                      <Legend verticalAlign="bottom" height={36} wrapperStyle={{ fontSize: 11 }} />
+                    </PieChart>
                   </ResponsiveContainer>
                 </Box>
               )}

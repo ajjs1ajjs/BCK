@@ -108,9 +108,25 @@ async function sendNotification(message, status) {
   }
 }
 
+const pruneLogs = async () => {
+  try {
+    const settings = getSettings();
+    const retentionDays = (settings.retention && settings.retention.days) || 30;
+    const thresholdDate = new Date();
+    thresholdDate.setDate(thresholdDate.getDate() - retentionDays);
+    const thresholdStr = thresholdDate.toISOString();
+    
+    const result = db.prepare('DELETE FROM logs WHERE timestamp < ?').run(thresholdStr);
+    logger.info(`Pruned system logs older than ${retentionDays} days. Deleted ${result.changes} logs.`);
+  } catch (err) {
+    logger.error('Failed to prune system logs: ' + err.message);
+  }
+};
+
 module.exports = {
   getSettings,
   updateSetting,
   addLog,
-  sendNotification
+  sendNotification,
+  pruneLogs,
 };

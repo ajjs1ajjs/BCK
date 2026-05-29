@@ -87,5 +87,15 @@ router.delete('/api/schedules/:id', authorize('manageSchedules'), async (req, re
   }
 });
 
+// Run daily log pruning task at midnight (00:00)
+cron.schedule('0 0 * * *', () => {
+  try {
+    const { pruneLogs } = require('../services/helpers');
+    pruneLogs();
+  } catch (err) {
+    logger.error('Failed to run scheduled log pruning: ' + err.message);
+  }
+});
+
 module.exports = router;
 module.exports.refreshScheduler = refreshScheduler;

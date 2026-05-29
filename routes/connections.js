@@ -173,6 +173,34 @@ router.post('/ssh-connections/:id/test', authorize('manageBackups'), async (req,
 
 // ─── Cloud Credentials ──────────────────────────────────────────────────
 
+// Helper to test cloud connectivity before saving credentials
+async function diagnoseCloud(provider, encryptedCreds) {
+  // Decrypt credentials similar to test route
+  const credCopy = { ...encryptedCreds };
+  ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+    if (credCopy[k]) {
+      try {
+        const dec = cryptoHelper.decrypt(credCopy[k]);
+        if (k === 'credentials') {
+          try { credCopy[k] = JSON.parse(dec); } catch { credCopy[k] = dec; }
+        } else {
+          credCopy[k] = dec;
+        }
+      } catch (e) {
+        // ignore decryption errors, will be caught later
+      }
+    }
+  });
+  const toolCheck = cloudService.checkTools(provider);
+  if (!toolCheck.available) return { success: false, error: `${provider} CLI not installed` };
+  try {
+    await cloudService.list({ provider, credentials: credCopy }, '');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
 router.get('/cloud-credentials', async (req, res) => {
   const items = db.prepare('SELECT * FROM cloud_credentials').all();
   res.json(items.map(c => ({ ...c, credentials: { ...JSON.parse(c.credentials), secretAccessKey: '***', accessKey: '***', password: '***' } })));
@@ -197,6 +225,13 @@ router.post('/cloud-credentials', authorize('manageBackups'), async (req, res) =
 
   const id = uuidv4();
   const now = new Date().toISOString();
+  
+  // Validate cloud connection before saving
+  const diag = await diagnoseCloud(provider, encryptedCredentials);
+  if (!diag.success) {
+    return res.status(400).json({ error: 'Cloud diagnostics failed: ' + diag.error });
+  }
+
   try {
     db.prepare('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)')
       .run(id, name, provider, JSON.stringify(encryptedCredentials), now);
@@ -228,6 +263,12 @@ router.put('/cloud-credentials/:id', authorize('manageBackups'), async (req, res
     }
   }
   
+  // Validate cloud connection before updating
+  const diagUpdate = await diagnoseCloud(curr.provider, finalCreds);
+  if (!diagUpdate.success) {
+    return res.status(400).json({ error: 'Cloud diagnostics failed: ' + diagUpdate.error });
+  }
+
   try {
     db.prepare('UPDATE cloud_credentials SET name = ?, credentials = ? WHERE id = ?')
       .run(name || curr.name, JSON.stringify(finalCreds), req.params.id);
