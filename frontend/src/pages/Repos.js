@@ -48,7 +48,14 @@ export default function Repos() {
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [selectedBackup, setSelectedBackup] = useState(null);
 
-  const token = localStorage.getItem('token') || '';
+  const token = useMemo(() => {
+    try {
+      const saved = sessionStorage.getItem('bck-auth');
+      return saved ? JSON.parse(saved).token || '' : '';
+    } catch (e) {
+      return '';
+    }
+  }, []);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const loadData = async () => {

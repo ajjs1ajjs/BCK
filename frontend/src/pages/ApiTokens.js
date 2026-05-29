@@ -36,7 +36,14 @@ export default function ApiTokens() {
   const [revealed, setRevealed] = useState(null); // { id, token }
   const [copied, setCopied] = useState(false);
 
-  const token = localStorage.getItem('token') || '';
+  const token = (() => {
+    try {
+      const saved = sessionStorage.getItem('bck-auth');
+      return saved ? JSON.parse(saved).token || '' : '';
+    } catch (e) {
+      return '';
+    }
+  })();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const loadTokens = useCallback(async () => {

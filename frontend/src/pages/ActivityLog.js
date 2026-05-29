@@ -18,7 +18,10 @@ export default function ActivityLog() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/logs`).then(r => r.json()).then(setLogs).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/logs`)
+      .then(r => r.json())
+      .then(data => setLogs(data?.data || (Array.isArray(data) ? data : [])))
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

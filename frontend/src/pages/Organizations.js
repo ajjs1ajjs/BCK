@@ -26,7 +26,14 @@ export default function Organizations() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const token = localStorage.getItem('token') || '';
+  const token = (() => {
+    try {
+      const saved = sessionStorage.getItem('bck-auth');
+      return saved ? JSON.parse(saved).token || '' : '';
+    } catch (e) {
+      return '';
+    }
+  })();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const loadOrgs = useCallback(async () => {
