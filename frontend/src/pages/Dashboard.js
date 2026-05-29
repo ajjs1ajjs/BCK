@@ -34,7 +34,7 @@ export default function Dashboard() {
 
   const loadAll = () => {
     const handleErr = (name) => (e) => console.error(`Failed to load ${name}:`, e);
-    fetch(`${API}/api/backups`).then(r=>r.json()).then(setBackups).catch(handleErr('backups'));
+    fetch(`${API}/api/backups?limit=500`).then(r=>r.json()).then(data => setBackups(data.data || data || [])).catch(handleErr('backups'));
     fetch(`${API}/api/schedules`).then(r=>r.json()).then(setSchedules).catch(handleErr('schedules'));
     fetch(`${API}/api/db-connections`).then(r=>r.json()).then(setDbConnections).catch(handleErr('db-connections'));
     fetch(`${API}/api/cloud-credentials`).then(r=>r.json()).then(setCloudCreds).catch(handleErr('cloud-credentials'));
