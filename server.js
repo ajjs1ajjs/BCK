@@ -39,6 +39,8 @@ const rolesRouter = require('./routes/roles');
 const systemRouter = require('./routes/system');
 const tokensRouter = require('./routes/tokens');
 const organizationsRouter = require('./routes/organizations');
+const webhooksRouter = require('./routes/webhooks');
+const versionsRouter = require('./routes/versions');
 const { register: metricsRegister, metricsMiddleware, refreshMetrics } = require('./services/metrics');
 
 const app = express();
@@ -97,6 +99,8 @@ app.use('/api', rolesRouter);
 app.use('/api', systemRouter);
 app.use('/api', tokensRouter);
 app.use('/api', organizationsRouter);
+app.use('/api', webhooksRouter);
+app.use('/api', versionsRouter);
 
 // ─── Frontend Static Files ───────────────────────────────────────────────────
 
@@ -147,6 +151,7 @@ const initDB = async () => {
       insertSetting.run('schedule', JSON.stringify({ timezone: 'UTC' }));
       insertSetting.run('security', JSON.stringify({ sessionTimeout: 60, preventConcurrent: false, minPasswordLength: 6 }));
       insertSetting.run('advanced', JSON.stringify({ tempPath: '', bandwidthLimit: 0, compressionLevel: 'medium' }));
+      insertSetting.run('ldap', JSON.stringify({ enabled: false, url: 'ldap://localhost:389', baseDn: 'dc=example,dc=org', bindDn: 'cn=admin,dc=example,dc=org', bindPassword: '', userFilter: '(sAMAccountName={{username}})', groupMapping: '{}' }));
       
       const appUrl = process.env.APP_URL || '';
       const defaultAppUrl = appUrl || `http://127.0.0.1:${PORT}`;

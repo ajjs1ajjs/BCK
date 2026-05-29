@@ -3,12 +3,15 @@ import {
   Box, Typography, Card, CardContent, Grid, Chip, Button, Stack,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, LinearProgress, Tooltip, alpha, IconButton, TextField,
-  InputAdornment, Skeleton,
+  InputAdornment, Skeleton, Dialog, DialogTitle, DialogContent,
+  DialogActions, CircularProgress, List, ListItem, ListItemText,
+  Divider
 } from '@mui/material';
 import {
   Storage as StorageIcon, Folder as FolderIcon, InsertDriveFile as FileIcon,
   Refresh as RefreshIcon, Download as DownloadIcon, Delete as DeleteIcon,
-  Search as SearchIcon, CloudDone as CloudDoneIcon,
+  Search as SearchIcon, CloudDone as CloudDoneIcon, History as HistoryIcon,
+  SettingsBackupRestore as RestoreIcon
 } from '@mui/icons-material';
 import { useTranslation } from '../context/LangContext';
 import { API } from '../utils/config';
@@ -41,8 +44,14 @@ export default function Repos() {
   const [search, setSearch] = useState('');
   const [deleting, setDeleting] = useState(null);
 
+  // S3 Versioning state
+  const [versionDialogOpen, setVersionDialogOpen] = useState(false);
+  const [versioningData, setVersioningData] = useState(null);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [selectedBackup, setSelectedBackup] = useState(null);
+
   const token = localStorage.getItem('token') || '';
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const loadData = async () => {
     setLoading(true);
@@ -93,6 +102,69 @@ export default function Repos() {
 
   const handleExport = (fmt) => {
     window.open(`${API}/api/backups/export?format=${fmt}&token=${token}`, '_blank');
+  };
+
+  // S3 versioning handlers
+  const handleOpenVersions = async (backup) => {
+    setSelectedBackup(backup);
+    setVersionDialogOpen(true);
+    setLoadingVersions(true);
+    setVersioningData(null);
+    try {
+      const res = await fetch(`${API}/api/versions/${backup.id}`, { headers });
+      if (!res.ok) {
+        const errorText = await res.text();
+        let parsedError = errorText;
+        try { parsedError = JSON.parse(errorText).error; } catch {}
+        throw new Error(parsedError || 'S3 versioning details not found or disabled.');
+      }
+      const data = await res.json();
+      setVersioningData(data);
+    } catch (e) {
+      console.error('Failed to load S3 versions:', e);
+      setVersioningData({ error: e.message });
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  const handleEnableVersioning = async () => {
+    if (!selectedBackup) return;
+    try {
+      const res = await fetch(`${API}/api/versions/${selectedBackup.id}/enable`, {
+        method: 'POST',
+        headers
+      });
+      if (res.ok) {
+        alert('S3 Bucket Versioning enabled successfully!');
+        handleOpenVersions(selectedBackup);
+      } else {
+        alert('Failed to enable versioning');
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  };
+
+  const handleRestoreVersion = async (versionId) => {
+    if (!selectedBackup) return;
+    if (!window.confirm(`Are you sure you want to restore version "${versionId}"?`)) return;
+    try {
+      const res = await fetch(`${API}/api/versions/${selectedBackup.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ versionId })
+      });
+      if (res.ok) {
+        alert('Restore initiated successfully! Check Activity Log for status.');
+        setVersionDialogOpen(false);
+      } else {
+        const err = await res.json();
+        alert('Failed to initiate restore: ' + (err.error || res.statusText));
+      }
+    } catch (e) {
+      alert('Error initiating restore: ' + e.message);
+    }
   };
 
   // Aggregate stats
@@ -220,37 +292,54 @@ export default function Repos() {
                       </TableCell>
                     </TableRow>
                   )
-                  : filtered.map(b => (
-                    <TableRow key={b.id} hover>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>{b.name}</Typography>
-                        <Typography variant="caption" color="text.secondary" noWrap sx={{ maxWidth: 200, display: 'block' }}>
-                          {b.destination}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={b.backupType || b.type} size="small" variant="outlined" />
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={b.status} size="small" color={getStatusColor(b.status)} />
-                      </TableCell>
-                      <TableCell>{formatBytes(b.size)}</TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDate(b.createdAt)}</TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDate(b.completedAt)}</TableCell>
-                      <TableCell align="right">
-                        <Tooltip title="Download">
-                          <IconButton size="small" onClick={() => handleDownload(b.id)} disabled={b.status !== 'completed'}>
-                            <DownloadIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Delete">
-                          <IconButton size="small" color="error" onClick={() => handleDelete(b.id, b.name)} disabled={deleting === b.id}>
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                  : filtered.map(b => {
+                      let hasCloud = false;
+                      try {
+                        const cfg = JSON.parse(b.config || '{}');
+                        if (cfg.cloudCredentialId || b.backupType === 'cloud' || b.type === 'cloud') {
+                          hasCloud = true;
+                        }
+                      } catch (e) {}
+
+                      return (
+                        <TableRow key={b.id} hover>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>{b.name}</Typography>
+                            <Typography variant="caption" color="text.secondary" noWrap sx={{ maxWidth: 200, display: 'block' }}>
+                              {b.destination}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={b.backupType || b.type} size="small" variant="outlined" />
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={b.status} size="small" color={getStatusColor(b.status)} />
+                          </TableCell>
+                          <TableCell>{formatBytes(b.size)}</TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDate(b.createdAt)}</TableCell>
+                          <TableCell sx={{ whiteSpace: 'nowrap' }}>{formatDate(b.completedAt)}</TableCell>
+                          <TableCell align="right">
+                            {hasCloud && (
+                              <Tooltip title="S3 Version History">
+                                <IconButton size="small" color="primary" onClick={() => handleOpenVersions(b)}>
+                                  <HistoryIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                            <Tooltip title="Download">
+                              <IconButton size="small" onClick={() => handleDownload(b.id)} disabled={b.status !== 'completed'}>
+                                <DownloadIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                            <Tooltip title="Delete">
+                              <IconButton size="small" color="error" onClick={() => handleDelete(b.id, b.name)} disabled={deleting === b.id}>
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
               }
             </TableBody>
           </Table>
@@ -263,6 +352,94 @@ export default function Repos() {
           </Box>
         )}
       </Card>
+
+      {/* S3 Object Versions Dialog */}
+      <Dialog open={versionDialogOpen} onClose={() => setVersionDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          S3 Object Versions — {selectedBackup?.name}
+        </DialogTitle>
+        <DialogContent dividers>
+          {loadingVersions ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress size={30} />
+            </Box>
+          ) : versioningData?.error ? (
+            <Box sx={{ py: 2 }}>
+              <Typography color="error" variant="body2" sx={{ mb: 2 }}>
+                {versioningData.error}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 2 }}>
+                Would you like to enable versioning for this storage bucket?
+              </Typography>
+              <Button variant="contained" color="primary" onClick={handleEnableVersioning}>
+                Enable Bucket Versioning
+              </Button>
+            </Box>
+          ) : (
+            <Box>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                  Status: {versioningData?.versioningStatus || 'Unknown'}
+                </Typography>
+                {!versioningData?.versioningEnabled && (
+                  <Button size="small" variant="outlined" onClick={handleEnableVersioning}>
+                    Enable Versioning
+                  </Button>
+                )}
+              </Stack>
+              <Divider sx={{ mb: 1.5 }} />
+              <List sx={{ p: 0 }}>
+                {(!versioningData?.versions || versioningData.versions.length === 0) ? (
+                  <Typography color="text.secondary" sx={{ py: 2 }} align="center">
+                    No S3 object versions found.
+                  </Typography>
+                ) : (
+                  versioningData.versions.map((v, index) => (
+                    <Box key={v.versionId || index}>
+                      <ListItem sx={{ py: 1.5, px: 0 }}>
+                        <ListItemText
+                          primary={
+                            <Stack direction="row" alignItems="center" spacing={1}>
+                              <Typography variant="body2" fontWeight={600}>
+                                Version: {v.versionId === 'null' ? 'Null/Unversioned' : (v.versionId?.substring(0, 12) || '—')}
+                              </Typography>
+                              {v.isLatest && (
+                                <Chip label="Latest" size="small" color="success" sx={{ height: 18, fontSize: 10 }} />
+                              )}
+                              {v.isDeleteMarker && (
+                                <Chip label="Delete Marker" size="small" color="error" sx={{ height: 18, fontSize: 10 }} />
+                              )}
+                            </Stack>
+                          }
+                          secondary={
+                            <Typography variant="caption" color="text.secondary">
+                              Modified: {formatDate(v.lastModified)} {!v.isDeleteMarker && `· Size: ${formatBytes(v.size)}`}
+                            </Typography>
+                          }
+                        />
+                        {!v.isDeleteMarker && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<RestoreIcon />}
+                            onClick={() => handleRestoreVersion(v.versionId)}
+                          >
+                            Restore
+                          </Button>
+                        )}
+                      </ListItem>
+                      {index < versioningData.versions.length - 1 && <Divider />}
+                    </Box>
+                  ))
+                )}
+              </List>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setVersionDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

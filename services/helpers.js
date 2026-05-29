@@ -106,6 +106,13 @@ async function sendNotification(message, status) {
       console.error('Webhook notification failed:', e.message);
     }
   }
+
+  try {
+    const webhooks = require('./webhooks');
+    webhooks.emit('system.alert', { status, message });
+  } catch (e) {
+    console.error('Failed to emit system alert webhook:', e.message);
+  }
 }
 
 const pruneLogs = async () => {

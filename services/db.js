@@ -133,6 +133,31 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(tokenHash);
+
+  CREATE TABLE IF NOT EXISTS webhook_endpoints (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    secret TEXT,
+    events TEXT DEFAULT '[]',
+    retries INTEGER DEFAULT 3,
+    active INTEGER DEFAULT 1,
+    orgId TEXT DEFAULT 'default',
+    createdAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id TEXT PRIMARY KEY,
+    endpointId TEXT NOT NULL,
+    event TEXT NOT NULL,
+    status TEXT NOT NULL,
+    statusCode INTEGER,
+    attempt INTEGER DEFAULT 1,
+    error TEXT,
+    deliveredAt TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_wh_deliveries_endpoint ON webhook_deliveries(endpointId);
 `);
 
 // Ensure schema is up to date (add columns if they don't exist)
@@ -140,6 +165,8 @@ try {
   const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
   if (!userCols.includes('twoFactorSecret')) db.exec('ALTER TABLE users ADD COLUMN twoFactorSecret TEXT');
   if (!userCols.includes('twoFactorEnabled')) db.exec('ALTER TABLE users ADD COLUMN twoFactorEnabled INTEGER DEFAULT 0');
+  if (!userCols.includes('ldapDn')) db.exec('ALTER TABLE users ADD COLUMN ldapDn TEXT');
+  if (!userCols.includes('authProvider')) db.exec("ALTER TABLE users ADD COLUMN authProvider TEXT DEFAULT 'local'");
 } catch (e) {
   console.error('Failed to update users table schema:', e.message);
 }

@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Box, Typography, TextField, Button, Card, CardContent, Alert, InputAdornment, IconButton,
+  Box, Typography, TextField, Button, Card, CardContent, Alert, InputAdornment, IconButton, Tabs, Tab
 } from '@mui/material';
 import { Visibility, VisibilityOff, CloudUpload as Logo } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../context/LangContext';
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, loginLdap } = useAuth();
   const { lang, setLang, t } = useTranslation();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
+  const [isLdap, setIsLdap] = useState(false);
   const [error, setError] = useState('');
 
   const toggleLang = () => setLang(lang === 'en' ? 'uk' : 'en');
@@ -22,7 +23,9 @@ export default function Login() {
     e.preventDefault();
     setError('');
     try {
-      const ok = await login(username, password);
+      const ok = isLdap
+        ? await loginLdap(username, password)
+        : await login(username, password);
       if (ok) {
         navigate('/', { replace: true });
       } else {
@@ -65,9 +68,19 @@ export default function Login() {
             <Typography variant="body2" color="text.secondary">{t('loginSubtitle')}</Typography>
           </Box>
 
+          <Tabs
+            value={isLdap ? 1 : 0}
+            onChange={(e, val) => { setIsLdap(val === 1); setError(''); }}
+            variant="fullWidth"
+            sx={{ mb: 3, borderBottom: 1, borderColor: 'divider', '& .MuiTab-root': { textTransform: 'none', fontWeight: 600 } }}
+          >
+            <Tab label="Local Account" />
+            <Tab label="Enterprise LDAP" />
+          </Tabs>
+
           <Box component="form" onSubmit={handleSubmit}>
             {error && <Alert severity="warning" sx={{ mb: 2, borderRadius: 2, fontSize: 12 }}>{error}</Alert>}
-            <TextField label={t('username')} fullWidth value={username} onChange={(e) => setUsername(e.target.value)}
+            <TextField label={isLdap ? "Domain Username / UPN" : t('username')} fullWidth value={username} onChange={(e) => setUsername(e.target.value)}
               sx={{ mb: 2 }} autoFocus />
             <TextField label={t('password')} type={showPw ? 'text' : 'password'} fullWidth value={password}
               onChange={(e) => setPassword(e.target.value)} sx={{ mb: 3 }}
@@ -78,9 +91,10 @@ export default function Login() {
                   </IconButton>
                 </InputAdornment>,
               }} />
-            <Button type="submit" variant="contained" fullWidth size="large">{t('loginButton')}</Button>
+            <Button type="submit" variant="contained" fullWidth size="large">
+              {isLdap ? "Login with Active Directory" : t('loginButton')}
+            </Button>
           </Box>
-
 
         </CardContent>
       </Card>

@@ -133,6 +133,7 @@ router.get('/settings', async (req, res) => {
   const safe = {
     ...settings,
     smtp: { ...settings.smtp, password: settings.smtp?.password ? '***' : '' },
+    ldap: settings.ldap ? { ...settings.ldap, bindPassword: settings.ldap?.bindPassword ? '***' : '' } : { enabled: false, url: 'ldap://localhost:389', baseDn: '', bindDn: '', bindPassword: '', userFilter: '(sAMAccountName={{username}})', groupMapping: '{}' },
     network: {
       ...settings.network,
       localIp: getLocalIp(),
@@ -155,10 +156,15 @@ router.put('/settings', authorize('configure'), async (req, res) => {
     security: { ...current.security, ...(body.security || {}) },
     advanced: { ...current.advanced, ...(body.advanced || {}) },
     network: { ...current.network, ...(body.network || {}) },
+    ldap: { ...(current.ldap || {}), ...(body.ldap || {}) },
   };
 
   if (body.smtp && body.smtp.password === '***') {
     merged.smtp.password = current.smtp.password;
+  }
+
+  if (body.ldap && body.ldap.bindPassword === '***') {
+    merged.ldap.bindPassword = current.ldap?.bindPassword || '';
   }
 
   try {

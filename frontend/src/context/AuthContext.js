@@ -35,6 +35,25 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const loginLdap = useCallback(async (username, password) => {
+    try {
+      const r = await fetch(`${API}/api/auth/ldap`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+        credentials: 'include',
+      });
+      if (!r.ok) return false;
+      const data = await r.json();
+      const u = { ...data, loggedIn: true, token: data.token };
+      sessionStorage.setItem('bck-auth', JSON.stringify(u));
+      setUser(u);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const logout = useCallback(() => {
     sessionStorage.removeItem('bck-auth');
     setUser(null);
@@ -46,13 +65,13 @@ export function AuthProvider({ children }) {
   }, [user]);
 
   const value = useMemo(() => ({
-    user, login, logout, can,
+    user, login, loginLdap, logout, can,
     token: user?.token || null,
     isAdmin: user?.role === 'admin',
     username: user?.username || '',
     role: user?.role || 'viewer',
     loggedIn: !!user?.loggedIn,
-  }), [user, login, logout, can]);
+  }), [user, login, loginLdap, logout, can]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

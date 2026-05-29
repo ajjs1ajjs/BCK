@@ -158,4 +158,89 @@ router.post('/users/2fa/disable', authenticate, async (req, res) => {
   }
 });
 
+// POST /api/auth/ldap — LDAP/Active Directory login
+router.post('/auth/ldap', authLimiter, async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+
+  try {
+    const { getSettings } = require('../services/helpers');
+    const settings = getSettings();
+    const ldapConfig = settings.ldap;
+
+    if (!ldapConfig || !ldapConfig.enabled) {
+      return res.status(400).json({ error: 'LDAP authentication is not enabled' });
+    }
+
+    const ldapService = require('../services/ldap');
+    const result = await ldapService.authenticate(ldapConfig, username, password);
+
+    if (!result.success) {
+      return res.status(401).json({ error: result.error || 'LDAP authentication failed' });
+    }
+
+    const { user: ldapUser } = result;
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+
+    // Find or auto-provision local user record from LDAP data
+    let localUser = db.prepare('SELECT * FROM users WHERE ldapDn = ? OR username = ?')
+      .get(ldapUser.ldapDn, ldapUser.username);
+
+    if (!localUser) {
+      // Auto-provision LDAP user
+      const { v4: uuidv4 } = require('uuid');
+      const bcrypt = require('bcryptjs');
+      const { SALT_ROUNDS } = require('../services/config');
+      const newId = uuidv4();
+      const tempPw = await bcrypt.hash(uuidv4(), SALT_ROUNDS); // unusable local password
+
+      db.prepare(`
+        INSERT INTO users (id, username, password, role, email, active, ldapDn, authProvider, createdAt)
+        VALUES (?, ?, ?, ?, ?, 1, ?, 'ldap', ?)
+      `).run(newId, ldapUser.username, tempPw, ldapUser.role, ldapUser.email, ldapUser.ldapDn, new Date().toISOString());
+
+      localUser = db.prepare('SELECT * FROM users WHERE id = ?').get(newId);
+      await addLog(`LDAP user auto-provisioned: ${ldapUser.username}`, 'info');
+    } else {
+      // Update role from LDAP group mapping on every login
+      db.prepare('UPDATE users SET role = ?, email = ?, active = 1 WHERE id = ?')
+        .run(ldapUser.role, ldapUser.email || localUser.email, localUser.id);
+    }
+
+    const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(localUser.role || ldapUser.role);
+    const permissions = role ? JSON.parse(role.permissions) : {};
+
+    const token = jwt.sign(
+      { id: localUser.id, username: localUser.username, role: localUser.role || ldapUser.role, permissions },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    await addLog(`LDAP user "${ldapUser.username}" logged in from ${ip}`, 'info');
+    res.json({ token, username: localUser.username, role: localUser.role, permissions });
+  } catch (err) {
+    res.status(500).json({ error: 'LDAP login error: ' + err.message });
+  }
+});
+
+// POST /api/auth/ldap/test — test LDAP connection (admin only)
+router.post('/auth/ldap/test', authenticate, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const ldapService = require('../services/ldap');
+    const result = await ldapService.testConnection(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+

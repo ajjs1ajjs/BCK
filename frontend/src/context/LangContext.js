@@ -343,6 +343,14 @@ const translations = {
     storageQuotaLimit: "Quota Limit",
     storageRealDisk: "Physical Disk",
     disks: "Disks",
+    settingsLdap: "LDAP / SSO",
+    ldapEnabled: "Enable LDAP Authentication",
+    ldapServerUrl: "LDAP Server URL",
+    ldapBaseDn: "Base DN",
+    ldapBindDn: "Bind DN",
+    ldapBindPassword: "Bind Password",
+    ldapUserFilter: "User Search Filter",
+    ldapGroupMapping: "Group Role Mapping (JSON)",
   },
   uk: {
     // common
@@ -684,6 +692,14 @@ const translations = {
     storageQuotaLimit: "Обмеження квоти",
     storageRealDisk: "Фізичний диск",
     disks: "Диски",
+    settingsLdap: "LDAP / SSO",
+    ldapEnabled: "Увімкнути LDAP авторизацію",
+    ldapServerUrl: "URL сервера LDAP",
+    ldapBaseDn: "Base DN",
+    ldapBindDn: "Bind DN",
+    ldapBindPassword: "Пароль зв'язку (Bind Password)",
+    ldapUserFilter: "Фільтр пошуку користувачів",
+    ldapGroupMapping: "Мапінг груп ролей (JSON)",
   }
 };
 

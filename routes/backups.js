@@ -19,6 +19,7 @@ const backupQueue = require('../services/queue');
 const { authenticate, authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { addLog, sendNotification, getSettings } = require('../services/helpers');
+const webhooks = require('../services/webhooks');
 
 // Helper to prune backups according to retention policies
 const pruneBackups = async (job) => {
@@ -91,6 +92,13 @@ const executeBackup = async (jobId) => {
     const jobData = db.prepare('SELECT * FROM backups WHERE id = ?').get(jobId);
     db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
       .run('running', new Date().toISOString(), jobId);
+
+    // Emit backup.started event
+    webhooks.emit('backup.started', {
+      id: jobId, name: jobData.name,
+      type: jobData.backupType || jobData.type,
+      startedAt: new Date().toISOString(),
+    });
 
     if (global.io) {
       global.io.emit('jobStarted', { id: jobId, name: jobData.name });
@@ -209,7 +217,20 @@ const executeBackup = async (jobId) => {
       const logMsg = result.success ? `Backup completed: ${jobData.name}` : `Backup failed: ${jobData.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');
       await sendNotification(logMsg, result.success ? 'success' : 'error');
-      
+
+      // Emit typed webhook event
+      const eventType = result.success ? 'backup.completed' : 'backup.failed';
+      webhooks.emit(eventType, {
+        id: jobId,
+        name: jobData.name,
+        type: jobData.backupType || jobData.type,
+        status: result.success ? 'completed' : 'failed',
+        size: result.size || 0,
+        file: result.file || null,
+        error: result.error || null,
+        completedAt: new Date().toISOString(),
+      });
+
       if (result.success) {
         await pruneBackups(job);
       }
@@ -419,7 +440,13 @@ router.post('/restore', authorize('restore'), async (req, res) => {
               }
             });
             const tempFile = path.join(os.tmpdir(), path.basename(restoreFile || 'restore.sql'));
-            const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+            let downloadRes;
+            if (config?.versionId) {
+              const s3versions = require('../services/s3versions');
+              downloadRes = await s3versions.restoreVersion(cred, path.basename(restoreFile), config.versionId, tempFile);
+            } else {
+              downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+            }
             if (downloadRes.success) {
               restoreFile = tempFile;
               tempDownloadedFile = tempFile;
@@ -465,7 +492,13 @@ router.post('/restore', authorize('restore'), async (req, res) => {
               }
             });
             const tempFile = path.join(os.tmpdir(), path.basename(restoreFile));
-            const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+            let downloadRes;
+            if (config?.versionId) {
+              const s3versions = require('../services/s3versions');
+              downloadRes = await s3versions.restoreVersion(cred, path.basename(restoreFile), config.versionId, tempFile);
+            } else {
+              downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+            }
             if (downloadRes.success) {
               restoreFile = tempFile;
               tempDownloadedFile = tempFile;
@@ -504,7 +537,13 @@ router.post('/restore', authorize('restore'), async (req, res) => {
           } else {
             const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
             const localDest = targetType === 'original' ? job.destination : (config?.localPath || job.destination);
-            const downloadRes = await cloudService.download(cred, job.destination, localDest);
+            let downloadRes;
+            if (config?.versionId) {
+              const s3versions = require('../services/s3versions');
+              downloadRes = await s3versions.restoreVersion(cred, job.destination, config.versionId, localDest);
+            } else {
+              downloadRes = await cloudService.download(cred, job.destination, localDest);
+            }
             result = { success: downloadRes.success, error: downloadRes.error };
           }
         } else {

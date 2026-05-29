@@ -9,9 +9,12 @@ Enterprise-grade web-based backup management system with scheduling, monitoring,
 - **Restore** — One-click restore from any backup point
 - **Multi-Source** — MySQL, PostgreSQL, Oracle, MSSQL, MongoDB, Redis; VMware, Hyper-V; AWS S3, GCS, Azure Blob; MinIO (S3-compatible); SSH remote; Linux/Windows host directories
 - **Dashboard Analytics** — Real-time charts (area, pie), storage gauges, activity timeline, backup engine and status distribution
-- **Repositories** — Browse all backup files, disk usage meter, download/delete, export CSV/JSON
+- **Repositories & S3 Versioning** — Browse all backups, disk usage, download/delete; track and restore S3 object versions
 - **Multi-Tenant Organizations** — Manage multiple organizations with isolated data, default org always protected
 - **API Tokens** — Generate `bck_` prefixed tokens for CI/CD pipelines; scoped permissions, expiry, one-time reveal
+- **LDAP / Active Directory SSO** — Authenticate enterprise users against LDAP/AD with group-to-role mappings
+- **Outgoing Webhooks** — Typed event subscriptions, HMAC-SHA256 signatures, exponential backoff retries, and delivery history logs
+- **Terraform Provider** — Provision backups, schedules, and connections declaratively via custom Go-based provider
 - **Prometheus Metrics** — `/metrics` endpoint with HTTP counters, backup stats, disk gauges, Node.js internals (optional `METRICS_TOKEN` protection)
 - **Grafana Integration** — Pre-built auto-provisioned dashboard; full Prometheus + Grafana stack via `docker-compose.full.yml`
 - **MinIO S3 Storage** — S3-compatible object storage included in the full stack; plug-in as cloud destination
@@ -97,20 +100,26 @@ BCK/
 │   ├── host.js            # Host directory backup service
 │   ├── crypto.js          # AES-256 encryption helpers
 │   ├── helpers.js         # addLog, sendNotification, pruneLogs, pruneBackupFiles
-│   └── queue.js           # Async backup execution queue
+│   ├── queue.js           # Async backup execution queue
+│   ├── webhooks.js        # Webhooks dispatch & retry service
+│   ├── ldap.js            # LDAP/Active Directory SSO service
+│   └── s3versions.js      # S3 object versioning & restore service
 ├── routes/
-│   ├── auth.js            # Login, logout, 2FA (TOTP)
+│   ├── auth.js            # Login, logout, 2FA (TOTP), LDAP/AD auth
 │   ├── backups.js         # CRUD + run + download + export (CSV/JSON)
 │   ├── connections.js     # DB / SSH / Cloud credential management
 │   ├── schedules.js       # Cron schedules + lastRunAt + log pruning cron
 │   ├── users.js           # User management
 │   ├── roles.js           # Role management
+│   ├── webhooks.js        # Webhooks CRUD & test
+│   ├── versions.js        # S3 object version list, enable, restore
 │   └── system.js          # Logs (paginated + export), stats, settings
 ├── middleware/
 │   ├── auth.js            # JWT authenticate + RBAC authorize
 │   ├── rateLimit.js       # Per-endpoint rate limiters
 │   ├── validation.js      # Zod-based request validation
 │   └── ipAllowlist.js     # IP allowlist middleware
+├── terraform-provider/    # Go-based custom Terraform Provider configurations & examples
 └── frontend/src/
     ├── pages/             # Dashboard, Backups, Repos, Logs, Settings, etc.
     ├── components/
@@ -125,6 +134,8 @@ BCK/
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/login` | Authenticate user (rate limited: 5/15 min) |
+| POST | `/api/auth/ldap` | LDAP / Active Directory SSO Login |
+| POST | `/api/auth/ldap/test` | Test LDAP server credentials and connection |
 | POST | `/api/logout` | Logout + audit log |
 | GET/POST | `/api/backups` | List (paginated) / Create backup |
 | GET | `/api/backups?export=csv\|json` | Export all backups |
@@ -141,6 +152,12 @@ BCK/
 | GET | `/api/health` | Health check |
 | GET | `/api/tools` | CLI tool availability check |
 | POST | `/api/cloud-credentials/:id/test` | Test cloud connectivity |
+| GET/POST/DELETE | `/api/webhooks` | CRUD operations for outgoing webhook endpoints |
+| POST | `/api/webhooks/:id/test` | Test-fire ping payload to webhook |
+| GET | `/api/webhooks/:id/deliveries` | Retrieve delivery logs for webhook |
+| GET | `/api/versions/:backupId` | List object versions in S3/MinIO bucket |
+| POST | `/api/versions/:backupId/enable` | Enable object versioning on S3 bucket |
+| POST | `/api/versions/:id/restore` | Restore specific version ID from S3 |
 
 ## Security Notes
 
