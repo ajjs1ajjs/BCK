@@ -1,21 +1,23 @@
 const logger = require('./logger');
 
 class TaskQueue {
-  constructor(concurrency = 2) {
+  constructor(concurrency = 2, maxRetries = 3) {
     this.concurrency = concurrency;
+    this.maxRetries = maxRetries;
     this.running = 0;
     this.queue = [];
   }
 
   /**
    * Adds a task to the queue.
-   * @param {string} id Unique identifier for the task (e.g., backup ID)
+   * @param {string} id Unique identifier for the task
    * @param {Function} task Async function to execute
-   * @param {Object} metadata Additional info for logging
+   * @param {Object} metadata Additional info
+   * @param {number} retry Attempt number (starts at 0)
    */
-  push(id, task, metadata = {}) {
+  push(id, task, metadata = {}, retry = 0) {
     return new Promise((resolve, reject) => {
-      this.queue.push({ id, task, metadata, resolve, reject });
+      this.queue.push({ id, task, metadata, retry, resolve, reject });
       this.next();
     });
   }
@@ -25,19 +27,38 @@ class TaskQueue {
       return;
     }
 
-    const { id, task, metadata, resolve, reject } = this.queue.shift();
+    const item = this.queue.shift();
+    const { id, task, metadata, retry, resolve, reject } = item;
     this.running++;
 
-    logger.info(`Starting task ${id} (${metadata.name || 'unknown'}). Queue size: ${this.queue.length}`);
+    const attemptLabel = retry > 0 ? ` (Attempt ${retry + 1})` : '';
+    logger.info(`Starting task ${id}${attemptLabel}. Queue size: ${this.queue.length}`);
+
+    if (global.io) {
+      global.io.emit('taskStarted', { id, name: metadata.name, retry });
+      global.io.emit('queueStats', this.getStats());
+    }
 
     try {
       const result = await task();
       resolve(result);
     } catch (err) {
-      logger.error(`Task ${id} failed: ${err.message}`);
-      reject(err);
+      if (retry < this.maxRetries) {
+        logger.warn(`Task ${id} failed, retrying in 30s... (${retry + 1}/${this.maxRetries})`);
+        setTimeout(() => {
+          this.push(id, task, metadata, retry + 1)
+            .then(resolve)
+            .catch(reject);
+        }, 30000);
+      } else {
+        logger.error(`Task ${id} failed after ${this.maxRetries} retries: ${err.message}`);
+        reject(err);
+      }
     } finally {
       this.running--;
+      if (global.io) {
+        global.io.emit('queueStats', this.getStats());
+      }
       this.next();
     }
   }
@@ -52,6 +73,9 @@ class TaskQueue {
 }
 
 // Create a singleton instance
-const backupQueue = new TaskQueue(parseInt(process.env.MAX_CONCURRENT_BACKUPS) || 2);
+const backupQueue = new TaskQueue(
+  parseInt(process.env.MAX_CONCURRENT_BACKUPS) || 2,
+  parseInt(process.env.MAX_BACKUP_RETRIES) || 3
+);
 
 module.exports = backupQueue;

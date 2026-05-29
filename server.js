@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const path = require('path');
@@ -22,6 +22,7 @@ if (!process.env.ENCRYPTION_KEY) {
   process.exit(1);
 }
 
+const { run, runAsync, checkTool, getDiskStats } = require('./services/exec');
 const { db, migrate } = require('./services/db');
 const cryptoHelper = require('./services/crypto');
 const logger = require('./services/logger');
@@ -520,15 +521,26 @@ app.post('/api/vm-backups', authorize('manageBackups'), async (req, res) => {
 });
 
 const executeBackup = async (jobId) => {
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(jobId);
+  if (!b) throw new Error('Job not found');
+  
+  if (global.io) {
+    global.io.emit('jobQueued', { id: jobId, name: b.name });
+    global.io.emit('queueStats', backupQueue.getStats());
+  }
+
   return backupQueue.push(jobId, async () => {
-    const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(jobId);
-    if (!b) throw new Error('Job not found');
-    
+    const jobData = db.prepare('SELECT * FROM backups WHERE id = ?').get(jobId);
     db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
       .run('running', new Date().toISOString(), jobId);
 
+    if (global.io) {
+      global.io.emit('jobStarted', { id: jobId, name: jobData.name });
+      global.io.emit('queueStats', backupQueue.getStats());
+    }
+
     try {
-      const job = { ...b, config: JSON.parse(b.config) };
+      const job = { ...jobData, config: JSON.parse(jobData.config) };
       let result;
       const backupType = job.backupType || job.type;
 
@@ -617,23 +629,34 @@ const executeBackup = async (jobId) => {
       db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = ? WHERE id = ?')
         .run(status, now, result.file || null, result.error || null, result.size || 0, jobId);
 
-      const logMsg = result.success ? `Backup completed: ${job.name}` : `Backup failed: ${job.name} - ${result.error}`;
+      const logMsg = result.success ? `Backup completed: ${jobData.name}` : `Backup failed: ${jobData.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');
       await sendNotification(logMsg, result.success ? 'success' : 'error');
       
       if (result.success) {
         await pruneBackups(job);
       }
+
+      if (global.io) {
+        global.io.emit('jobCompleted', { id: jobId, name: jobData.name, status: result.success ? 'completed' : 'failed' });
+        global.io.emit('queueStats', backupQueue.getStats());
+      }
+
       return result;
     } catch (e) {
       db.prepare('UPDATE backups SET status = ?, error = ? WHERE id = ?')
         .run('failed', e.message, jobId);
-      const errMsg = `Backup error: ${b.name} - ${e.message}`;
+      const errMsg = `Backup error: ${jobData.name} - ${e.message}`;
       await addLog(errMsg, 'error');
       await sendNotification(errMsg, 'error');
+
+      if (global.io) {
+        global.io.emit('jobFailed', { id: jobId, name: jobData.name, error: e.message });
+        global.io.emit('queueStats', backupQueue.getStats());
+      }
       throw e;
     }
-  }, { name: db.prepare('SELECT name FROM backups WHERE id = ?').get(jobId)?.name });
+  }, { name: b.name });
 };
 
 // ─── Backup Execution ───────────────────────────────────────────────────────
@@ -1353,247 +1376,46 @@ const start = async () => {
 
   const sslCert = process.env.SSL_CERT_PATH;
   const sslKey = process.env.SSL_KEY_PATH;
+  let server;
 
   if (sslCert && sslKey) {
     try {
       const https = require('https');
       const credentials = { key: fsSync.readFileSync(sslKey), cert: fsSync.readFileSync(sslCert) };
-      https.createServer(credentials, app).listen(PORT, HOST, () => {
-        console.log(`BCK server (HTTPS) running on ${buildDefaultAppUrl()}`);
-      });
+      server = https.createServer(credentials, app);
     } catch (e) {
       console.error('Failed to start HTTPS server:', e.message);
       process.exit(1);
     }
   } else {
-    app.listen(PORT, HOST, () => {
-      console.log(`BCK server running on ${buildDefaultAppUrl()}`);
-    });
-  }
-};
-
-start();
-
-module.exports = app;
-
-// ─── Logs, Stats, Settings ──────────────────────────────────────────────────
-
-app.get('/api/logs', authorize('viewLogs'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const { level, limit: qLimit } = req.query;
-  let items = db.logs;
-  if (level) items = items.filter(l => l.status === level);
-  if (qLimit) items = items.slice(0, parseInt(qLimit));
-  res.json(items);
-});
-
-app.get('/api/stats', async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  await updateStats(db);
-  res.json(db.stats);
-});
-
-app.get('/api/settings', async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const settings = getSettings(db);
-  const safe = {
-    ...settings,
-    smtp: {
-      ...settings.smtp,
-      password: settings.smtp?.password ? '***' : '',
-    },
-    network: {
-      ...settings.network,
-      localIp: getLocalIp(),
-      effectiveAppUrl: settings.network?.appUrl || buildDefaultAppUrl(),
-    },
-  };
-  res.json(safe);
-});
-
-app.put('/api/settings', authorize('configure'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const body = req.body;
-  const current = getSettings(db);
-
-  const merged = {
-    smtp: { ...current.smtp, ...(body.smtp || {}) },
-    retention: { ...current.retention, ...(body.retention || {}) },
-    notifications: { ...current.notifications, ...(body.notifications || {}) },
-    schedule: { ...current.schedule, ...(body.schedule || {}) },
-    security: { ...current.security, ...(body.security || {}) },
-    advanced: { ...current.advanced, ...(body.advanced || {}) },
-    network: {
-      ...current.network,
-      appUrl: body.network?.appUrl ?? current.network.appUrl,
-      bindHost: body.network?.bindHost ?? current.network.bindHost,
-    },
-  };
-
-  if (body.smtp && body.smtp.password === '***') {
-    merged.smtp.password = db.settings?.smtp?.password || '';
+    server = require('http').createServer(app);
   }
 
-  db.settings = merged;
-  if (await writeDB(db)) {
-    await addLog('Settings updated', 'info');
-    const safe = {
-      ...db.settings,
-      smtp: {
-        ...db.settings.smtp,
-        password: db.settings.smtp?.password ? '***' : '',
-      },
-      network: {
-        ...db.settings.network,
-        localIp: getLocalIp(),
-        effectiveAppUrl: db.settings.network?.appUrl || buildDefaultAppUrl(),
-      },
-    };
-    res.json(safe);
-  } else res.status(500).json({ error: 'Failed to save' });
-});
-
-// ─── Users ──────────────────────────────────────────────────────────────────
-
-app.get('/api/users', authorize('manageUsers'), async (req, res) => {
-  const db = await readDB();
-  const safe = (db?.users || []).map(u => ({ ...u, password: '***' }));
-  res.json(safe);
-});
-
-app.post('/api/users', authorize('manageUsers'), async (req, res) => {
-  const v = validate(schemas.createUser, req.body);
-  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
-  const { username, password, role, email } = v.data;
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  if (db.users.find(u => u.username === username)) return res.status(400).json({ error: 'Username exists' });
-  const hashed = await bcrypt.hash(password, SALT_ROUNDS);
-  const user = { id: uuidv4(), username, password: hashed, role, email: email || '', active: true, createdAt: new Date().toISOString() };
-  db.users.push(user);
-  if (await writeDB(db)) {
-    await addLog(`User created: ${username}`, 'success');
-    res.status(201).json({ ...user, password: '***' });
-  } else res.status(500).json({ error: 'Failed to save' });
-});
-
-app.put('/api/users/:id', authorize('manageUsers'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.users.findIndex(u => u.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const { password, ...rest } = req.body;
-  if (password && password !== '***') db.users[idx].password = await bcrypt.hash(password, SALT_ROUNDS);
-  Object.assign(db.users[idx], rest);
-  if (await writeDB(db)) {
-    await addLog(`User updated: ${db.users[idx].username}`, 'info');
-    res.json({ ...db.users[idx], password: '***' });
-  } else res.status(500).json({ error: 'Failed to update' });
-});
-
-app.delete('/api/users/:id', authorize('manageUsers'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.users.findIndex(u => u.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const [deleted] = db.users.splice(idx, 1);
-  if (await writeDB(db)) {
-    await addLog(`User deleted: ${deleted.username}`, 'warning');
-    res.json({ message: 'Deleted' });
-  } else res.status(500).json({ error: 'Failed to delete' });
-});
-
-// ─── Roles ──────────────────────────────────────────────────────────────────
-
-app.get('/api/roles', authorize('manageRoles'), async (req, res) => {
-  const db = await readDB();
-  res.json(db?.roles || []);
-});
-
-app.post('/api/roles', authorize('manageRoles'), async (req, res) => {
-  const { name, description, permissions } = req.body;
-  if (!name || !permissions) return res.status(400).json({ error: 'Name and permissions required' });
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const role = { id: uuidv4(), name, description: description || '', level: 1, permissions };
-  db.roles.push(role);
-  if (await writeDB(db)) {
-    await addLog(`Role created: ${name}`, 'success');
-    res.status(201).json(role);
-  } else res.status(500).json({ error: 'Failed to save' });
-});
-
-app.put('/api/roles/:id', authorize('manageRoles'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.roles.findIndex(r => r.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  Object.assign(db.roles[idx], req.body);
-  if (await writeDB(db)) {
-    await addLog(`Role updated: ${db.roles[idx].name}`, 'info');
-    res.json(db.roles[idx]);
-  } else res.status(500).json({ error: 'Failed to update' });
-});
-
-app.delete('/api/roles/:id', authorize('manageRoles'), async (req, res) => {
-  const db = await readDB();
-  if (!db) return res.status(500).json({ error: 'DB unavailable' });
-  const idx = db.roles.findIndex(r => r.id === req.params.id);
-  if (idx === -1) return res.status(404).json({ error: 'Not found' });
-  const [deleted] = db.roles.splice(idx, 1);
-  if (await writeDB(db)) {
-    await addLog(`Role deleted: ${deleted.name}`, 'warning');
-    res.json({ message: 'Deleted' });
-  } else res.status(500).json({ error: 'Failed to delete' });
-});
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-// ─── Frontend ───────────────────────────────────────────────────────────────
-
-const buildPath = path.join(__dirname, 'frontend', 'build');
-fs.access(buildPath).then(() => {
-  app.use(express.static(buildPath));
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(buildPath, 'index.html'));
+  const { Server } = require('socket.io');
+  const io = new Server(server, {
+    cors: {
+      origin: process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : true,
+      methods: ["GET", "POST"],
+      credentials: true
+    }
   });
-}).catch(() => {
-  console.log('No production build found — API only');
-});
 
-// ─── Start ──────────────────────────────────────────────────────────────────
+  global.io = io;
 
-const start = async () => {
-  await initDB();
-  refreshScheduler();
-
-  const sslCert = process.env.SSL_CERT_PATH;
-  const sslKey = process.env.SSL_KEY_PATH;
-
-  if (sslCert && sslKey) {
-    try {
-      const https = require('https');
-      const credentials = { key: fsSync.readFileSync(sslKey), cert: fsSync.readFileSync(sslCert) };
-      https.createServer(credentials, app).listen(PORT, HOST, () => {
-        console.log(`BCK server (HTTPS) running on ${buildDefaultAppUrl()}`);
-      });
-    } catch (e) {
-      console.error('Failed to start HTTPS server:', e.message);
-      process.exit(1);
-    }
-  } else {
-    app.listen(PORT, HOST, () => {
-      console.log(`BCK server running on ${buildDefaultAppUrl()}`);
+  io.on('connection', (socket) => {
+    logger.info(`New client connected: ${socket.id}`);
+    socket.emit('queueStats', backupQueue.getStats());
+    socket.on('disconnect', () => {
+      logger.info(`Client disconnected: ${socket.id}`);
     });
-  }
+  });
+
+  server.listen(PORT, HOST, () => {
+    console.log(`BCK server running on ${buildDefaultAppUrl()}`);
+  });
 };
 
 start();
 
 module.exports = app;
+

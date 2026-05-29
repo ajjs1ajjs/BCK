@@ -85,4 +85,43 @@ function checkTool(name, checkCmd, checkArgs = ['--version']) {
   return r.success ? { available: true, version: r.stdout } : { available: false };
 }
 
-module.exports = { run, runAsync, checkTool };
+const os = require('os');
+const path = require('path');
+
+/**
+ * Gets real disk statistics for a path.
+ */
+function getDiskStats(dirPath) {
+  const absolutePath = path.resolve(dirPath);
+  try {
+    if (os.platform() === 'win32') {
+      const drive = absolutePath.substring(0, 1);
+      const result = spawnSync('powershell', ['-NoProfile', '-Command', `Get-Volume -DriveLetter ${drive} | Select-Object SizeRemaining, Size`], { encoding: 'utf8' });
+      if (result.status === 0) {
+        const lines = result.stdout.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length >= 2) {
+          const parts = lines[1].split(/\s+/);
+          const free = parseInt(parts[0], 10);
+          const total = parseInt(parts[1], 10);
+          return { free, total };
+        }
+      }
+    } else {
+      const result = spawnSync('df', ['-B1', absolutePath], { encoding: 'utf8' });
+      if (result.status === 0) {
+        const lines = result.stdout.split('\n');
+        if (lines.length >= 2) {
+          const parts = lines[1].split(/\s+/);
+          const total = parseInt(parts[1], 10);
+          const free = parseInt(parts[3], 10);
+          return { free, total };
+        }
+      }
+    }
+  } catch (err) {
+    // ignore
+  }
+  return { free: 1024 * 1024 * 1024, total: 10 * 1024 * 1024 * 1024 }; // Fallback
+}
+
+module.exports = { run, runAsync, checkTool, getDiskStats };

@@ -1,4 +1,4 @@
-const { run, runAsync, checkTool } = require('./exec');
+const { run, runAsync, checkTool, getDiskStats } = require('./exec');
 const spawn = require('child_process').spawn;
 const fs = require('fs');
 const zlib = require('zlib');
@@ -65,39 +65,6 @@ const ENGINES = {
     list: async () => [],
   },
 };
-
-function getDiskSpace(dirPath) {
-  const absolutePath = path.resolve(dirPath);
-  try {
-    if (os.platform() === 'win32') {
-      const drive = absolutePath.substring(0, 1);
-      const r = run('powershell', ['-NoProfile', '-Command', `Get-Volume -DriveLetter ${drive} | Select-Object SizeRemaining, Size`]);
-      if (r.success) {
-        const lines = r.stdout.split('\n').map(l => l.trim()).filter(Boolean);
-        if (lines.length >= 2) {
-          const parts = lines[1].split(/\s+/);
-          const free = parseInt(parts[0], 10);
-          const total = parseInt(parts[1], 10);
-          return { free, total };
-        }
-      }
-    } else {
-      const r = run('df', ['-B1', absolutePath]);
-      if (r.success) {
-        const lines = r.stdout.split('\n');
-        if (lines.length >= 2) {
-          const parts = lines[1].split(/\s+/);
-          const total = parseInt(parts[1], 10);
-          const free = parseInt(parts[3], 10);
-          return { free, total };
-        }
-      }
-    }
-  } catch (err) {
-    // ignore
-  }
-  return { free: 1024 * 1024 * 1024, total: 10 * 1024 * 1024 * 1024 }; // 1GB free fallback
-}
 
 function getEngine(type) {
   const engine = ENGINES[type];
@@ -188,7 +155,7 @@ async function backup(backupConfig) {
   }
 
   // Disk space check
-  const disk = getDiskSpace(backupPath);
+  const disk = getDiskStats(backupPath);
   if (disk && disk.free < 50 * 1024 * 1024) { // Less than 50MB free
     return { success: false, error: `Insufficient disk space: only ${(disk.free / 1024 / 1024).toFixed(2)}MB free` };
   }
