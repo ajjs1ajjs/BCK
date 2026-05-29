@@ -27,6 +27,7 @@ function refreshScheduler() {
     }
     const task = cron.schedule(s.cronExpression, async () => {
       logger.info(`Triggering scheduled backup: ${s.name} (Job: ${s.backupId})`);
+      db.prepare('UPDATE schedules SET lastRunAt = ? WHERE id = ?').run(new Date().toISOString(), s.id);
       executeBackup(s.backupId).catch(() => {});
     });
     cronTasks[s.id] = task;
@@ -59,7 +60,7 @@ router.post('/schedules', authorize('manageSchedules'), async (req, res) => {
 });
 
 // PUT /api/schedules/:id
-router.put('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
+router.put('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   const s = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
   if (!s) return res.status(404).json({ error: 'Not found' });
   
@@ -77,7 +78,7 @@ router.put('/api/schedules/:id', authorize('manageSchedules'), async (req, res) 
 });
 
 // DELETE /api/schedules/:id
-router.delete('/api/schedules/:id', authorize('manageSchedules'), async (req, res) => {
+router.delete('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   try {
     db.prepare('DELETE FROM schedules WHERE id = ?').run(req.params.id);
     refreshScheduler();

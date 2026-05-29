@@ -29,26 +29,37 @@ const buildDefaultAppUrl = () => {
   return appUrl || `http://${getLocalIp()}:${PORT}`;
 };
 
-// GET /api/logs
+// GET /api/logs — with pagination and optional export
 router.get('/logs', authorize('viewLogs'), async (req, res) => {
-  const { level, limit: qLimit } = req.query;
-  let query = 'SELECT * FROM logs';
+  const { level, page, limit: qLimit, export: exportFmt } = req.query;
+  const pageSize = Math.min(parseInt(qLimit) || 100, 500);
+  const pageNum = Math.max(parseInt(page) || 1, 1);
+  const offset = (pageNum - 1) * pageSize;
+
+  const conditions = [];
   const params = [];
-  
-  if (level) {
-    query += ' WHERE status = ?';
-    params.push(level);
+  if (level) { conditions.push('status = ?'); params.push(level); }
+
+  const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+  const total = db.prepare(`SELECT COUNT(*) as cnt FROM logs${where}`).get(...params).cnt;
+
+  // Export mode: return all matching rows as CSV or JSON file
+  if (exportFmt === 'csv' || exportFmt === 'json') {
+    const all = db.prepare(`SELECT * FROM logs${where} ORDER BY timestamp DESC`).all(...params);
+    if (exportFmt === 'json') {
+      res.setHeader('Content-Disposition', 'attachment; filename="logs.json"');
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(JSON.stringify(all, null, 2));
+    }
+    const header = 'id,timestamp,status,message\n';
+    const rows = all.map(r => `"${r.id}","${r.timestamp}","${r.status}","${(r.message || '').replace(/"/g, '""')}"`).join('\n');
+    res.setHeader('Content-Disposition', 'attachment; filename="logs.csv"');
+    res.setHeader('Content-Type', 'text/csv');
+    return res.send(header + rows);
   }
-  
-  query += ' ORDER BY timestamp DESC';
-  
-  if (qLimit) {
-    query += ' LIMIT ?';
-    params.push(parseInt(qLimit));
-  }
-  
-  const items = db.prepare(query).all(...params);
-  res.json(items);
+
+  const items = db.prepare(`SELECT * FROM logs${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
+  res.json({ data: items, total, page: pageNum, pageSize, totalPages: Math.ceil(total / pageSize) });
 });
 
 // POST /api/settings/test-notification

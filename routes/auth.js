@@ -10,11 +10,11 @@ const { JWT_SECRET } = require('../services/config');
 const cryptoHelper = require('../services/crypto');
 const { addLog } = require('../services/helpers');
 const { authenticate } = require('../middleware/auth');
-const { authLimiter } = require('../middleware/rateLimit');
+const { authLimiter, loginLimiter } = require('../middleware/rateLimit');
 const { validate } = require('../middleware/validation');
 
 // POST /api/login
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const v = validate('login', req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { username, password } = v.data;
@@ -50,7 +50,9 @@ router.post('/login', authLimiter, async (req, res) => {
     sameSite: 'strict',
     maxAge: 24 * 60 * 60 * 1000,
   });
-  
+
+  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+  await addLog(`User "${user.username}" logged in from ${ip}`, 'info');
   res.json({ token, username: user.username, role: user.role, permissions });
 });
 
@@ -96,7 +98,9 @@ router.post('/login/2fa', authLimiter, async (req, res) => {
 });
 
 // POST /api/logout
-router.post('/logout', (req, res) => {
+router.post('/logout', authenticate, async (req, res) => {
+  const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+  await addLog(`User "${req.user?.username || 'unknown'}" logged out from ${ip}`, 'info');
   res.clearCookie('token');
   res.json({ message: 'Logged out' });
 });

@@ -7,6 +7,7 @@ import { LangProvider } from './context/LangContext';
 import { SocketProvider } from './context/SocketContext';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Backups from './pages/Backups';
@@ -49,24 +50,26 @@ function ProtectedLayout({ isDark, toggleTheme }) {
           bgcolor: 'background.default',
           backgroundImage: 'radial-gradient(ellipse at 18% 44%, rgba(56,189,248,0.07) 0%, transparent 58%), radial-gradient(ellipse at 82% 18%, rgba(34,197,94,0.045) 0%, transparent 50%), radial-gradient(ellipse at 55% 90%, rgba(139,92,246,0.04) 0%, transparent 48%)',
         }}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/backups" element={<Backups />} />
-            <Route path="/db-backups" element={<DatabaseBackups />} />
-            <Route path="/vm-backups" element={<VMBackups />} />
-            <Route path="/host-backups" element={<HostBackups />} />
-            <Route path="/cloud-backups" element={<CloudBackups />} />
-            <Route path="/ssh-backups" element={<SshBackups />} />
-            <Route path="/restore" element={<Restore />} />
-            <Route path="/policies" element={<Policies />} />
-            <Route path="/history" element={<JobHistory />} />
-            <Route path="/schedules" element={<Schedules />} />
-            <Route path="/logs" element={<ActivityLog />} />
-            <Route path="/repos" element={<Repos />} />
-            <Route path="/settings" element={<Settings toggleTheme={toggleTheme} isDark={isDark} />} />
-            <Route path="/users" element={<Users />} />
-            <Route path="/roles" element={<Roles />} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/backups" element={<Backups />} />
+              <Route path="/db-backups" element={<DatabaseBackups />} />
+              <Route path="/vm-backups" element={<VMBackups />} />
+              <Route path="/host-backups" element={<HostBackups />} />
+              <Route path="/cloud-backups" element={<CloudBackups />} />
+              <Route path="/ssh-backups" element={<SshBackups />} />
+              <Route path="/restore" element={<Restore />} />
+              <Route path="/policies" element={<Policies />} />
+              <Route path="/history" element={<JobHistory />} />
+              <Route path="/schedules" element={<Schedules />} />
+              <Route path="/logs" element={<ActivityLog />} />
+              <Route path="/repos" element={<Repos />} />
+              <Route path="/settings" element={<Settings toggleTheme={toggleTheme} isDark={isDark} />} />
+              <Route path="/users" element={<Users />} />
+              <Route path="/roles" element={<Roles />} />
+            </Routes>
+          </ErrorBoundary>
         </Box>
       </Box>
     </Box>

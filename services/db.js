@@ -102,22 +102,32 @@ db.exec(`
     notifyOn TEXT,
     description TEXT,
     createdAt TEXT,
-    updatedAt TEXT
+    updatedAt TEXT,
+    lastRunAt TEXT
   );
+
+  CREATE INDEX IF NOT EXISTS idx_backups_status ON backups(status);
+  CREATE INDEX IF NOT EXISTS idx_backups_createdAt ON backups(createdAt);
+  CREATE INDEX IF NOT EXISTS idx_backups_type ON backups(type);
+  CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+  CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(status);
+  CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
 `);
 
 // Ensure schema is up to date (add columns if they don't exist)
 try {
-  const tableInfo = db.prepare('PRAGMA table_info(users)').all();
-  const columns = tableInfo.map(c => c.name);
-  if (!columns.includes('twoFactorSecret')) {
-    db.exec('ALTER TABLE users ADD COLUMN twoFactorSecret TEXT');
-  }
-  if (!columns.includes('twoFactorEnabled')) {
-    db.exec('ALTER TABLE users ADD COLUMN twoFactorEnabled INTEGER DEFAULT 0');
-  }
+  const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
+  if (!userCols.includes('twoFactorSecret')) db.exec('ALTER TABLE users ADD COLUMN twoFactorSecret TEXT');
+  if (!userCols.includes('twoFactorEnabled')) db.exec('ALTER TABLE users ADD COLUMN twoFactorEnabled INTEGER DEFAULT 0');
 } catch (e) {
   console.error('Failed to update users table schema:', e.message);
+}
+
+try {
+  const schedCols = db.prepare('PRAGMA table_info(schedules)').all().map(c => c.name);
+  if (!schedCols.includes('lastRunAt')) db.exec('ALTER TABLE schedules ADD COLUMN lastRunAt TEXT');
+} catch (e) {
+  console.error('Failed to update schedules table schema:', e.message);
 }
 
 // Migration from db.json

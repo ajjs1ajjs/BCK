@@ -236,21 +236,41 @@ const executeBackup = async (jobId) => {
   }, { name: b.name });
 };
 
-// GET /api/backups
+// GET /api/backups — with pagination, filtering, and optional export
 router.get('/backups', async (req, res) => {
-  const { type } = req.query;
-  let query = 'SELECT * FROM backups';
+  const { type, status, page, limit: qLimit, export: exportFmt } = req.query;
+  const pageSize = Math.min(parseInt(qLimit) || 100, 500);
+  const pageNum = Math.max(parseInt(page) || 1, 1);
+  const offset = (pageNum - 1) * pageSize;
+
+  const conditions = [];
   const params = [];
-  
-  if (type) {
-    query += ' WHERE backupType = ? OR type = ?';
-    params.push(type, type);
+  if (type) { conditions.push('(backupType = ? OR type = ?)'); params.push(type, type); }
+  if (status) { conditions.push('status = ?'); params.push(status); }
+
+  const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+  const total = db.prepare(`SELECT COUNT(*) as cnt FROM backups${where}`).get(...params).cnt;
+
+  // Export mode
+  if (exportFmt === 'csv' || exportFmt === 'json') {
+    const all = db.prepare(`SELECT * FROM backups${where} ORDER BY createdAt DESC`).all(...params);
+    const parsed = all.map(b => ({ ...b, config: JSON.parse(b.config) }));
+    if (exportFmt === 'json') {
+      res.setHeader('Content-Disposition', 'attachment; filename="backups.json"');
+      res.setHeader('Content-Type', 'application/json');
+      return res.send(JSON.stringify(parsed, null, 2));
+    }
+    const header = 'id,name,backupType,status,size,createdAt,completedAt\n';
+    const rows = parsed.map(b =>
+      `"${b.id}","${b.name}","${b.backupType || b.type}","${b.status}","${b.size || 0}","${b.createdAt || ''}","${b.completedAt || ''}"`
+    ).join('\n');
+    res.setHeader('Content-Disposition', 'attachment; filename="backups.csv"');
+    res.setHeader('Content-Type', 'text/csv');
+    return res.send(header + rows);
   }
-  
-  query += ' ORDER BY createdAt DESC';
-  
-  const items = db.prepare(query).all(...params);
-  res.json(items.map(b => ({ ...b, config: JSON.parse(b.config) })));
+
+  const items = db.prepare(`SELECT * FROM backups${where} ORDER BY createdAt DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
+  res.json({ data: items.map(b => ({ ...b, config: JSON.parse(b.config) })), total, page: pageNum, pageSize, totalPages: Math.ceil(total / pageSize) });
 });
 
 // POST /api/backups
