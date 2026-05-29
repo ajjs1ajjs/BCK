@@ -195,14 +195,22 @@ LOCAL_IP=$(get_local_ip)
 APP_URL="${BCK_APP_URL:-http://$LOCAL_IP:9000}"
 
 if [ -f .env ]; then
-    for var in APP_URL HOST; do
+    for var in APP_URL HOST ENCRYPTION_KEY; do
         if ! grep -q "^$var=" .env; then
-            [ "$var" = "HOST" ] && echo "HOST=0.0.0.0" >> .env || echo "APP_URL=$APP_URL" >> .env
+            if [ "$var" = "HOST" ]; then
+                echo "HOST=0.0.0.0" >> .env
+            elif [ "$var" = "ENCRYPTION_KEY" ]; then
+                EK=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "7ebdf6589b8b2563d260ac810cca2531fc18f8b1509af8678ef50a12ae38d1d9")
+                echo "ENCRYPTION_KEY=$EK" >> .env
+            else
+                echo "APP_URL=$APP_URL" >> .env
+            fi
         fi
     done
     sed -i "s|^APP_URL=.*|APP_URL=$APP_URL|" .env
 else
     JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "bck-super-secret-change-in-production-2024")
+    ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2>/dev/null || echo "7ebdf6589b8b2563d260ac810cca2531fc18f8b1509af8678ef50a12ae38d1d9")
     cat > .env <<EOF
 PORT=9000
 JWT_SECRET=$JWT_SECRET
@@ -210,6 +218,7 @@ DB_PATH=./db.json
 NODE_ENV=production
 HOST=0.0.0.0
 APP_URL=$APP_URL
+ENCRYPTION_KEY=$ENCRYPTION_KEY
 EOF
 fi
 

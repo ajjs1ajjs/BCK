@@ -59,6 +59,8 @@ if "%BCK_APP_URL%"=="" (
 )
 for /f "usebackq delims=" %%I in (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2^>nul`) do set JWT_SECRET=%%I
 if "%JWT_SECRET%"=="" set JWT_SECRET=bck-super-secret-change-in-production-2024
+for /f "usebackq delims=" %%I in (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2^>nul`) do set ENCRYPTION_KEY=%%I
+if "%ENCRYPTION_KEY%"=="" set ENCRYPTION_KEY=7ebdf6589b8b2563d260ac810cca2531fc18f8b1509af8678ef50a12ae38d1d9
 (
     echo PORT=9000
     echo JWT_SECRET=%JWT_SECRET%
@@ -66,6 +68,7 @@ if "%JWT_SECRET%"=="" set JWT_SECRET=bck-super-secret-change-in-production-2024
     echo NODE_ENV=production
     echo HOST=0.0.0.0
     echo APP_URL=%APP_URL%
+    echo ENCRYPTION_KEY=%ENCRYPTION_KEY%
 ) > .env
 
 REM ─── Done ────────────────────────────────────────
