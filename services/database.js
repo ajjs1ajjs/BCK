@@ -45,6 +45,12 @@ const ENGINES = {
     },
   },
   oracle: {
+    /**
+     * NOTE on Oracle Data Pump:
+     * expdp/impdp create and read files relative to the Oracle server's DATA_PUMP_DIR.
+     * This service assumes the backup system is running on the same host as Oracle 
+     * or has access to its data pump directory via a shared mount.
+     */
     dump: (conn, outFile) => ({
       cmd: 'expdp',
       args: [`${conn.user}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${outFile}`],
@@ -99,9 +105,10 @@ function getEngine(type) {
   return engine;
 }
 
-function runCommandWithRedirection({ cmd, args, env, outFile, inFile }) {
+function runCommandWithRedirection({ cmd, args, env, outFile, inFile, timeout = 3600000 }) {
   return new Promise((resolve) => {
     let stderr = '';
+    let timer;
     
     try {
       const spawnOpts = { env: env || process.env };
@@ -113,6 +120,13 @@ function runCommandWithRedirection({ cmd, args, env, outFile, inFile }) {
       
       const p = spawn(cmd, args, spawnOpts);
       
+      if (timeout) {
+        timer = setTimeout(() => {
+          p.kill('SIGTERM');
+          resolve({ success: false, error: `Process timed out after ${timeout}ms` });
+        }, timeout);
+      }
+
       if (outFile) {
         const outStream = fs.createWriteStream(outFile);
         if (outFile.endsWith('.gz')) {
@@ -146,16 +160,19 @@ function runCommandWithRedirection({ cmd, args, env, outFile, inFile }) {
       }
 
       p.on('error', (err) => {
+        if (timer) clearTimeout(timer);
         resolve({ success: false, error: err.message });
       });
 
       p.on('close', (code) => {
+        if (timer) clearTimeout(timer);
         resolve({
           success: code === 0,
           error: code === 0 ? null : (stderr.trim() || `Exit code ${code}`),
         });
       });
     } catch (err) {
+      if (timer) clearTimeout(timer);
       resolve({ success: false, error: err.message });
     }
   });

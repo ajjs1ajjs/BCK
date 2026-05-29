@@ -36,6 +36,7 @@ const cloudService = require('./services/cloud');
 const hostService = require('./services/host');
 const sshService = require('./services/ssh');
 
+const backupQueue = require('./services/queue');
 const app = express();
 const PORT = process.env.PORT || 9000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -518,19 +519,14 @@ app.post('/api/vm-backups', authorize('manageBackups'), async (req, res) => {
   }
 });
 
-// ─── Backup Execution ───────────────────────────────────────────────────────
+const executeBackup = async (jobId) => {
+  return backupQueue.push(jobId, async () => {
+    const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(jobId);
+    if (!b) throw new Error('Job not found');
+    
+    db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
+      .run('running', new Date().toISOString(), jobId);
 
-app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) => {
-  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
-  if (!b) return res.status(404).json({ error: 'Not found' });
-
-  db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
-    .run('running', new Date().toISOString(), req.params.id);
-
-  res.json({ message: `Backup ${b.name} started`, id: b.id });
-
-  // Run in background
-  (async () => {
     try {
       const job = { ...b, config: JSON.parse(b.config) };
       let result;
@@ -618,8 +614,8 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
 
       const status = result.success ? 'completed' : 'failed';
       const now = new Date().toISOString();
-      db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = size + ? WHERE id = ?')
-        .run(status, now, result.file || null, result.error || null, result.size || 0, job.id);
+      db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = ? WHERE id = ?')
+        .run(status, now, result.file || null, result.error || null, result.size || 0, jobId);
 
       const logMsg = result.success ? `Backup completed: ${job.name}` : `Backup failed: ${job.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');
@@ -628,14 +624,26 @@ app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) =>
       if (result.success) {
         await pruneBackups(job);
       }
+      return result;
     } catch (e) {
       db.prepare('UPDATE backups SET status = ?, error = ? WHERE id = ?')
-        .run('failed', e.message, b.id);
+        .run('failed', e.message, jobId);
       const errMsg = `Backup error: ${b.name} - ${e.message}`;
       await addLog(errMsg, 'error');
       await sendNotification(errMsg, 'error');
+      throw e;
     }
-  })();
+  }, { name: db.prepare('SELECT name FROM backups WHERE id = ?').get(jobId)?.name });
+};
+
+// ─── Backup Execution ───────────────────────────────────────────────────────
+
+app.post('/api/backups/:id/run', authorize('manageBackups'), async (req, res) => {
+  const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  if (!b) return res.status(404).json({ error: 'Not found' });
+
+  executeBackup(req.params.id).catch(() => {});
+  res.json({ message: `Backup ${b.name} added to queue`, id: b.id });
 });
 
 // ─── Restore ────────────────────────────────────────────────────────────────
@@ -1310,115 +1318,16 @@ function refreshScheduler() {
       continue;
     }
     const task = cron.schedule(s.cronExpression, async () => {
-      const jobRaw = db.prepare('SELECT * FROM backups WHERE id = ?').get(s.backupId);
-      if (!jobRaw) return;
-      const job = { ...jobRaw, config: JSON.parse(jobRaw.config) };
-
-      db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
-        .run('running', new Date().toISOString(), job.id);
-      await addLog(`Scheduled backup started: ${job.name}`, 'info');
-
-      try {
-        let result;
-        const backupType = job.backupType || job.type;
-
-        if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
-          const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(job.config?.connectionId);
-          const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
-          result = await dbService.backup({
-            type: backupType, connection: conn, backupPath: job.destination, name: job.name,
-          });
-          if (result.success && job.config?.cloudCredentialId) {
-            const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
-            if (credRaw) {
-              const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
-              ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
-                if (cred.credentials[k] && cred.credentials[k] !== '***') {
-                  try {
-                    const dec = cryptoHelper.decrypt(cred.credentials[k]);
-                    if (k === 'credentials') {
-                      try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
-                    } else {
-                      cred.credentials[k] = dec;
-                    }
-                  } catch (e) {}
-                }
-              });
-              const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
-              if (!uploadRes.success) {
-                result.success = false;
-                result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
-              }
-            }
-          }
-        } else if (['vmware', 'hyperv'].includes(backupType)) {
-          result = await vmService.backup({
-            type: backupType, vmName: job.config?.vmName || job.name,
-            host: job.config?.host, user: job.config?.user, password: job.config?.password,
-            datastore: job.config?.datastore, backupPath: job.destination,
-          });
-        } else if (backupType === 'host') {
-          result = await hostService.backup({
-            name: job.name,
-            sourcePath: job.config?.sourcePath || job.source,
-            backupPath: job.destination,
-            excludes: job.config?.excludes || [],
-          });
-        } else if (backupType === 'cloud') {
-          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config?.cloudCredentialId);
-          if (credRaw) {
-            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
-            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
-              if (cred.credentials[k] && cred.credentials[k] !== '***') {
-                 try {
-                   const dec = cryptoHelper.decrypt(cred.credentials[k]);
-                   if (k === 'credentials') {
-                     try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
-                   } else {
-                     cred.credentials[k] = dec;
-                   }
-                 } catch (e) {}
-              }
-            });
-            const uploadRes = await cloudService.upload(cred, job.source, job.destination);
-            result = { success: uploadRes.success, file: uploadRes.url || job.source, error: uploadRes.error || null };
-          }
-        } else if (backupType === 'ssh') {
-          const connRaw = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(job.config?.connectionId);
-          if (connRaw) {
-            const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
-            result = await sshService.backup({
-              connection: conn, name: job.name,
-              sourcePath: job.config?.sourcePath || job.source,
-              backupPath: job.destination,
-              excludes: job.config?.excludes || [],
-            });
-          }
-        } else {
-          result = { success: true, file: job.destination, error: null };
-        }
-
-        const status = result?.success ? 'completed' : 'failed';
-        db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = size + ? WHERE id = ?')
-          .run(status, new Date().toISOString(), result?.file || null, result?.error || null, result?.size || 0, job.id);
-        const logMsg = result?.success ? `Scheduled backup completed: ${job.name}` : `Scheduled backup failed: ${job.name} - ${result?.error}`;
-        await addLog(logMsg, result?.success ? 'success' : 'error');
-        await sendNotification(logMsg, result?.success ? 'success' : 'error');
-        
-        if (result?.success) {
-          await pruneBackups(job);
-        }
-      } catch (e) {
-        db.prepare('UPDATE backups SET status = ?, error = ? WHERE id = ?')
-          .run('failed', e.message, job.id);
-        const errMsg = `Scheduled backup error: ${job.name} - ${e.message}`;
-        await addLog(errMsg, 'error');
-        await sendNotification(errMsg, 'error');
-      }
+      logger.info(`Triggering scheduled backup: ${s.name} (Job: ${s.backupId})`);
+      executeBackup(s.backupId).catch(() => {});
     });
     cronTasks[s.id] = task;
   }
 }
+
+app.get('/api/stats/queue', (req, res) => {
+  res.json(backupQueue.getStats());
+});
 
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
