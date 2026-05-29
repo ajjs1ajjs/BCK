@@ -102,6 +102,25 @@ const ENGINES = {
       return r.stdout.split('\n').map(d => d.trim()).filter(Boolean);
     },
   },
+  mssql: {
+    dump: (conn, outFile) => ({
+      cmd: 'sqlcmd',
+      args: ['-S', `${conn.host},${conn.port || 1433}`, '-U', conn.user, '-Q', `BACKUP DATABASE [${conn.database}] TO DISK='${outFile}' WITH FORMAT, INIT`],
+      env: conn.password ? { ...process.env, SQLCMDPASSWORD: conn.password } : process.env,
+    }),
+    restore: (conn, file) => ({
+      cmd: 'sqlcmd',
+      args: ['-S', `${conn.host},${conn.port || 1433}`, '-U', conn.user, '-Q', `RESTORE DATABASE [${conn.database}] FROM DISK='${file}' WITH REPLACE`],
+      env: conn.password ? { ...process.env, SQLCMDPASSWORD: conn.password } : process.env,
+    }),
+    check: () => checkTool('sqlcmd', 'sqlcmd', ['-?']),
+    list: async (conn) => {
+      const env = conn.password ? { ...process.env, SQLCMDPASSWORD: conn.password } : process.env;
+      const r = await runAsync('sqlcmd', ['-S', `${conn.host},${conn.port || 1433}`, '-U', conn.user, '-h', '-1', '-W', '-Q', "SELECT name FROM sys.databases WHERE name NOT IN ('master', 'tempdb', 'model', 'msdb')"], { env });
+      if (!r.success) throw new Error(r.stderr || 'Connection failed');
+      return r.stdout.split('\n').map(d => d.trim()).filter(Boolean);
+    },
+  },
 };
 
 function getEngine(type) {
@@ -198,11 +217,12 @@ async function backup(backupConfig) {
     return { success: false, error: `Insufficient disk space: only ${(disk.free / 1024 / 1024).toFixed(2)}MB free` };
   }
 
-  const outFile = path.join(backupPath, `${name}_${Date.now()}.${type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : 'sql')}`);
+  const extension = type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : (type === 'mssql' ? 'bak' : 'sql'));
+  const outFile = path.join(backupPath, `${name}_${Date.now()}.${extension}`);
   const dumpConf = engine.dump(connection, outFile);
 
   let result;
-  if (type === 'oracle') {
+  if (type === 'oracle' || type === 'mssql') {
     const r = await runAsync(dumpConf.cmd, dumpConf.args, { env: dumpConf.env });
     result = { success: r.success, error: r.stderr };
   } else {
@@ -241,7 +261,7 @@ async function restore(restoreConfig) {
   const restoreConf = engine.restore(connection, file);
 
   let result;
-  if (type === 'oracle') {
+  if (type === 'oracle' || type === 'mssql') {
     const r = await runAsync(restoreConf.cmd, restoreConf.args, { env: restoreConf.env });
     result = { success: r.success, error: r.stderr };
   } else {

@@ -42,7 +42,7 @@ router.post('/db-connections', authorize('manageBackups'), async (req, res) => {
   const v = validate('dbConnection', req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, type, host, port, user, password, database } = v.data;
-  const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017 };
+  const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017, mssql: 1433 };
   const finalPort = port || defaultPorts[type] || 3306;
   const conn = { id: uuidv4(), name, type, host, port: finalPort, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
   
@@ -64,7 +64,7 @@ router.put('/db-connections/:id', authorize('manageBackups'), async (req, res) =
     update.password = cryptoHelper.encrypt(req.body.password);
   }
   
-  const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017 };
+  const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017, mssql: 1433 };
   const finalType = req.body.type || conn.type;
   const portInput = req.body.hasOwnProperty('port') ? req.body.port : conn.port;
   update.port = portInput || defaultPorts[finalType] || 3306;

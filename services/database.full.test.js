@@ -231,4 +231,60 @@ describe('Database Service Tests', () => {
 
     expect(result).toEqual(['database1', 'database2']);
   });
+
+  test('should handle MS SQL Server backup correctly', async () => {
+    checkTool.mockReturnValue({ available: true, version: 'sqlcmd' });
+    runAsync.mockResolvedValue({ success: true, stdout: 'Backup completed' });
+    
+    const result = await backup({
+      type: 'mssql',
+      connection: { 
+        host: 'localhost',
+        port: 1433,
+        user: 'sa',
+        password: 'testpass',
+        database: 'testdb'
+      },
+      backupPath: '/tmp',
+      name: 'test_mssql'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  test('should handle MS SQL Server restore correctly', async () => {
+    checkTool.mockReturnValue({ available: true, version: 'sqlcmd' });
+    runAsync.mockResolvedValue({ success: true, stdout: 'Restore completed' });
+    
+    const result = await restore({
+      type: 'mssql',
+      connection: { 
+        host: 'localhost',
+        port: 1433,
+        user: 'sa',
+        password: 'testpass',
+        database: 'testdb'
+      },
+      file: '/tmp/test.bak'
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  test('should list MS SQL Server databases correctly', async () => {
+    runAsync.mockResolvedValue({ 
+      success: true, 
+      stdout: 'master_db\napp_db\n' 
+    });
+    
+    const result = await listDatabases('mssql', { 
+      host: 'localhost',
+      port: 1433,
+      user: 'sa',
+      password: 'testpass'
+    });
+
+    expect(result).toEqual(['master_db', 'app_db']);
+  });
 });

@@ -38,7 +38,7 @@ export default function Restore() {
     setRestoring(true);
     const backupType = selected.backupType || selected.type;
     const config = restoreType === 'new'
-      ? (['mysql', 'postgres', 'oracle'].includes(backupType) || backupType === 'ssh-db'
+      ? (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'].includes(backupType) || backupType === 'ssh-db'
         ? { connectionId: target.connectionId, database: target.database, type: target.dbType }
         : backupType === 'ssh'
           ? { connectionId: target.connectionId, targetPath: target.targetPath }
@@ -66,7 +66,7 @@ export default function Restore() {
   };
 
   const backupType = selected?.backupType || selected?.type;
-  const isDB = ['mysql', 'postgres', 'oracle'].includes(backupType);
+  const isDB = ['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'].includes(backupType);
   const isVM = ['vmware', 'hyperv'].includes(backupType);
   const isHost = backupType === 'host' || backupType === 'ssh';
   const isSsh = backupType === 'ssh' || backupType === 'ssh-db';
