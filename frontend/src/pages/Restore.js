@@ -24,7 +24,8 @@ export default function Restore() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups`).then(r => r.json()).then(b => {
+    fetch(`${API}/api/backups?limit=500`).then(r => r.json()).then(data => {
+      const b = data.data || data || [];
       setBackups(b.filter(x => x.status === 'completed' && x.resultFile));
     }).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));

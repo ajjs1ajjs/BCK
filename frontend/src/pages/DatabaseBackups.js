@@ -31,7 +31,8 @@ export default function DatabaseBackups() {
 
   const load = useCallback(() => {
     fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/backups?type=db`).then(r => r.json()).then(b => {
+    fetch(`${API}/api/backups?limit=500&type=db`).then(r => r.json()).then(data => {
+      const b = data.data || data || [];
       setBackups(b.filter(x => ['mysql','postgres','oracle', 'mongodb', 'mssql', 'redis'].includes(x.backupType || x.type)));
     }).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(e => console.error('Load error:', e));
