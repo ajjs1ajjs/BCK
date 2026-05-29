@@ -39,10 +39,10 @@ if ! command -v node &> /dev/null; then
 else
     echo -e "${GREEN}[v] Node.js: $(node --version)${NC}"
 fi
-
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo -e "${YELLOW}[*] Updating via git pull...${NC}"
     cd "$INSTALL_DIR"
+    rm -f package-lock.json frontend/package-lock.json
     git checkout -- package-lock.json frontend/package-lock.json 2>/dev/null || true
     git pull
 elif [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/server.js" ]; then
