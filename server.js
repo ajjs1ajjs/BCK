@@ -30,6 +30,8 @@ const logger = require('./services/logger');
 const cron = require('node-cron');
 const nodemailer = require('nodemailer');
 const { z } = require('zod');
+const { authenticator } = require('otplib');
+const qrcode = require('qrcode');
 
 const dbService = require('./services/database');
 const vmService = require('./services/vm');
@@ -63,6 +65,28 @@ const getLocalIp = () => {
 const buildDefaultAppUrl = () => APP_URL || `http://${getLocalIp()}:${PORT}`;
 
 // ─── Security middleware ────────────────────────────────────────────────────
+
+const ipAllowlistMiddleware = (req, res, next) => {
+  const settings = getSettings();
+  const allowedIps = settings.security?.allowedIps;
+  
+  if (!allowedIps || allowedIps.trim() === '') {
+    return next();
+  }
+
+  const clientIp = req.ip || req.connection.remoteAddress;
+  const list = allowedIps.split(',').map(ip => ip.trim());
+
+  if (list.includes(clientIp) || list.includes('127.0.0.1') || list.includes('::1')) {
+    return next();
+  }
+
+  logger.warn(`Blocked request from unauthorized IP: ${clientIp}`);
+  res.status(403).json({ error: 'Access denied: IP not allowed' });
+};
+
+app.use(ipAllowlistMiddleware);
+
 app.use(morgan('combined'));
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false }));
 app.use(cors({
@@ -361,6 +385,16 @@ app.post('/api/login', authLimiter, async (req, res) => {
   const match = await bcrypt.compare(password, user.password);
   if (!match) return res.status(401).json({ error: 'Invalid credentials' });
   
+  // Check for 2FA
+  if (user.twoFactorEnabled) {
+    const tempToken = jwt.sign(
+      { id: user.id, partial: true },
+      JWT_SECRET,
+      { expiresIn: '5m' }
+    );
+    return res.json({ requires2FA: true, tempToken });
+  }
+
   const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(user.role);
   const permissions = role ? JSON.parse(role.permissions) : {};
   
@@ -378,6 +412,98 @@ app.post('/api/login', authLimiter, async (req, res) => {
   });
   
   res.json({ token, username: user.username, role: user.role, permissions });
+});
+
+app.post('/api/login/2fa', authLimiter, async (req, res) => {
+  const { tempToken, code } = req.body;
+  if (!tempToken || !code) return res.status(400).json({ error: 'Token and code required' });
+
+  try {
+    const decoded = jwt.verify(tempToken, JWT_SECRET);
+    if (!decoded.partial) throw new Error('Invalid token type');
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.id);
+    if (!user || !user.twoFactorEnabled) return res.status(401).json({ error: 'Invalid session' });
+
+    const isValid = authenticator.verify({
+      token: code,
+      secret: cryptoHelper.decrypt(user.twoFactorSecret)
+    });
+
+    if (!isValid) return res.status(401).json({ error: 'Invalid 2FA code' });
+
+    const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(user.role);
+    const permissions = role ? JSON.parse(role.permissions) : {};
+    
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role, permissions },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+    
+    res.json({ token, username: user.username, role: user.role, permissions });
+  } catch (e) {
+    res.status(401).json({ error: 'Session expired or invalid' });
+  }
+});
+
+// ─── 2FA Management ──────────────────────────────────────────────────────────
+
+app.post('/api/users/2fa/setup', authenticate, async (req, res) => {
+  const secret = authenticator.generateSecret();
+  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(req.user.id);
+  const otpauth = authenticator.keyuri(user.username, 'BCK-Backup', secret);
+  
+  try {
+    const qrCodeUrl = await qrcode.toDataURL(otpauth);
+    res.json({ secret, qrCodeUrl });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
+app.post('/api/users/2fa/verify', authenticate, async (req, res) => {
+  const { secret, code } = req.body;
+  if (!secret || !code) return res.status(400).json({ error: 'Secret and code required' });
+
+  const isValid = authenticator.verify({ token: code, secret });
+  if (!isValid) return res.status(400).json({ error: 'Invalid verification code' });
+
+  try {
+    db.prepare('UPDATE users SET twoFactorSecret = ?, twoFactorEnabled = 1 WHERE id = ?')
+      .run(cryptoHelper.encrypt(secret), req.user.id);
+    await addLog(`User ${req.user.username} enabled 2FA`, 'info');
+    res.json({ success: true, message: '2FA enabled successfully' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.post('/api/users/2fa/disable', authenticate, async (req, res) => {
+  try {
+    db.prepare('UPDATE users SET twoFactorSecret = NULL, twoFactorEnabled = 0 WHERE id = ?')
+      .run(req.user.id);
+    await addLog(`User ${req.user.username} disabled 2FA`, 'warning');
+    res.json({ success: true, message: '2FA disabled' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+app.post('/api/settings/test-notification', authorize('configure'), async (req, res) => {
+  try {
+    await sendNotification('This is a test notification from BCK Backup System.', 'success');
+    res.json({ success: true, message: 'Test notification sent' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to send test notification: ' + err.message });
+  }
 });
 
 app.post('/api/logout', (req, res) => {

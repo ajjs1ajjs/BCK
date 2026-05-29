@@ -32,6 +32,8 @@ db.exec(`
     role TEXT,
     email TEXT,
     active INTEGER DEFAULT 1,
+    twoFactorSecret TEXT,
+    twoFactorEnabled INTEGER DEFAULT 0,
     createdAt TEXT
   );
 
@@ -103,6 +105,20 @@ db.exec(`
     updatedAt TEXT
   );
 `);
+
+// Ensure schema is up to date (add columns if they don't exist)
+try {
+  const tableInfo = db.prepare('PRAGMA table_info(users)').all();
+  const columns = tableInfo.map(c => c.name);
+  if (!columns.includes('twoFactorSecret')) {
+    db.exec('ALTER TABLE users ADD COLUMN twoFactorSecret TEXT');
+  }
+  if (!columns.includes('twoFactorEnabled')) {
+    db.exec('ALTER TABLE users ADD COLUMN twoFactorEnabled INTEGER DEFAULT 0');
+  }
+} catch (e) {
+  console.error('Failed to update users table schema:', e.message);
+}
 
 // Migration from db.json
 function migrate(jsonPath) {
