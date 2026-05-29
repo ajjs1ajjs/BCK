@@ -21,7 +21,7 @@ const ENGINES = {
     list: async (conn) => {
       const env = conn.password ? { ...process.env, MYSQL_PWD: conn.password } : process.env;
       const r = await runAsync('mysql', ['-h', conn.host, '-P', String(conn.port || 3306), '-u', conn.user, '-e', 'SHOW DATABASES', '--batch', '--skip-column-names'], { env });
-      if (!r.success) return [];
+      if (!r.success) throw new Error(r.stderr || 'Connection failed');
       return r.stdout.split('\n').map(d => d.trim()).filter(d => d && !['information_schema','performance_schema','mysql','sys'].includes(d));
     },
   },
@@ -40,7 +40,7 @@ const ENGINES = {
     list: async (conn) => {
       const env = conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env;
       const r = await runAsync('psql', ['-h', conn.host, '-p', String(conn.port || 5432), '-U', conn.user, '-l', '-t', '-A'], { env });
-      if (!r.success) return [];
+      if (!r.success) throw new Error(r.stderr || 'Connection failed');
       return r.stdout.split('\n').map(l => l.split('|')[0].trim()).filter(Boolean);
     },
   },
@@ -98,7 +98,7 @@ const ENGINES = {
       if (conn.user) args.push('--username', conn.user);
       if (conn.password) args.push('--password', conn.password);
       const r = await runAsync(shell, args);
-      if (!r.success) return [];
+      if (!r.success) throw new Error(r.stderr || 'Connection failed');
       return r.stdout.split('\n').map(d => d.trim()).filter(Boolean);
     },
   },

@@ -1,4 +1,4 @@
-const { backup, restore, checkTools, PROVIDERS } = require('./cloud');
+const { backup, restore, checkTools, PROVIDERS, list } = require('./cloud');
 const { runAsync, checkTool } = require('./exec');
 
 // Mock the runAsync and checkTool functions to prevent actual system calls during tests
@@ -14,10 +14,11 @@ describe('Cloud Service Tests', () => {
     checkTool.mockReset();
   });
 
-  test('should export backup, restore, checkTools and PROVIDERS functions', () => {
+  test('should export backup, restore, checkTools, list and PROVIDERS functions', () => {
     expect(typeof backup).toBe('function');
     expect(typeof restore).toBe('function');
     expect(typeof checkTools).toBe('function');
+    expect(typeof list).toBe('function');
     expect(typeof PROVIDERS).toBe('object');
   });
 
@@ -200,5 +201,81 @@ describe('Cloud Service Tests', () => {
     expect(PROVIDERS.aws).toBeDefined();
     expect(PROVIDERS.azure).toBeDefined();
     expect(PROVIDERS.gcp).toBeDefined();
+  });
+
+  test('should list AWS objects successfully', async () => {
+    runAsync.mockResolvedValue({
+      success: true,
+      stdout: '2026-05-29 12:00:00        1024 backup_file.sql.gz\n'
+    });
+    const result = await list({
+      provider: 'aws',
+      credentials: { bucket: 'test-bucket' }
+    });
+    expect(result).toEqual([{ date: '2026-05-29 12:00:00', size: '1024', key: 'backup_file.sql.gz' }]);
+  });
+
+  test('should throw error when AWS list fails', async () => {
+    runAsync.mockResolvedValue({
+      success: false,
+      stderr: 'Access Denied'
+    });
+    await expect(list({
+      provider: 'aws',
+      credentials: { bucket: 'test-bucket' }
+    })).rejects.toThrow('Access Denied');
+  });
+
+  test('should list Azure blobs successfully', async () => {
+    runAsync.mockResolvedValue({
+      success: true,
+      stdout: '[{"name": "file1", "size": 500}]'
+    });
+    const result = await list({
+      provider: 'azure',
+      credentials: { storageAccount: 'acc', accessKey: 'key', container: 'cont' }
+    });
+    expect(result).toEqual([{ name: 'file1', size: 500 }]);
+  });
+
+  test('should throw error when Azure list fails', async () => {
+    runAsync.mockResolvedValue({
+      success: false,
+      stderr: 'Auth error'
+    });
+    await expect(list({
+      provider: 'azure',
+      credentials: { storageAccount: 'acc', accessKey: 'key', container: 'cont' }
+    })).rejects.toThrow('Auth error');
+  });
+
+  test('should list GCP objects successfully', async () => {
+    runAsync.mockResolvedValue({
+      success: true,
+      stdout: '     1024  gs://test-bucket/file1\n'
+    });
+    const result = await list({
+      provider: 'gcp',
+      credentials: { bucket: 'test-bucket', credentials: {} }
+    });
+    expect(result).toEqual([{ size: '1024', key: 'gs://test-bucket/file1' }]);
+  });
+
+  test('should throw error when GCP list fails', async () => {
+    runAsync.mockResolvedValue({
+      success: false,
+      stderr: 'Bucket not found'
+    });
+    await expect(list({
+      provider: 'gcp',
+      credentials: { bucket: 'test-bucket', credentials: {} }
+    })).rejects.toThrow('Bucket not found');
+  });
+
+  test('should throw error for unsupported provider in list', async () => {
+    await expect(list({
+      provider: 'unsupported',
+      credentials: {}
+    })).rejects.toThrow('Unsupported cloud provider: unsupported');
   });
 });

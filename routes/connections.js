@@ -42,7 +42,9 @@ router.post('/db-connections', authorize('manageBackups'), async (req, res) => {
   const v = validate('dbConnection', req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { name, type, host, port, user, password, database } = v.data;
-  const conn = { id: uuidv4(), name, type, host, port: port || 3306, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
+  const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017 };
+  const finalPort = port || defaultPorts[type] || 3306;
+  const conn = { id: uuidv4(), name, type, host, port: finalPort, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
   
   try {
     db.prepare('INSERT INTO db_connections (id, name, type, host, port, user, password, database) VALUES (@id, @name, @type, @host, @port, @user, @password, @database)')
@@ -61,6 +63,11 @@ router.put('/db-connections/:id', authorize('manageBackups'), async (req, res) =
   if (req.body.password && req.body.password !== '***') {
     update.password = cryptoHelper.encrypt(req.body.password);
   }
+  
+  const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017 };
+  const finalType = req.body.type || conn.type;
+  const portInput = req.body.hasOwnProperty('port') ? req.body.port : conn.port;
+  update.port = portInput || defaultPorts[finalType] || 3306;
   
   try {
     db.prepare('UPDATE db_connections SET name = @name, type = @type, host = @host, port = @port, user = @user, password = @password, database = @database WHERE id = @id')
@@ -86,7 +93,7 @@ router.post('/db-connections/:id/test', authorize('manageBackups'), async (req, 
   const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
     const dbs = await dbService.listDatabases(conn.type, conn);
-    res.json({ success: dbs.length > 0, databases: dbs });
+    res.json({ success: true, databases: dbs });
   } catch (err) {
     res.json({ success: false, error: err.message, databases: [] });
   }

@@ -130,7 +130,7 @@ async function list(providerConfig, prefix = '') {
         args.push('--endpoint-url', credentials.endpoint);
       }
       const r = await runAsync('aws', args, { env, timeout: 120000 });
-      if (!r.success) return [];
+      if (!r.success) throw new Error(r.stderr || 'AWS command failed');
       return r.stdout.split('\n').filter(Boolean).map(line => {
         const parts = line.split(/\s+/);
         return { date: parts[0] + ' ' + parts[1], size: parts[2], key: parts.slice(3).join(' ') };
@@ -147,8 +147,8 @@ async function list(providerConfig, prefix = '') {
         '--query', '[].{name:name, size:properties.contentLength}'
       ];
       const r = await runAsync('az', args, { timeout: 120000 });
-      if (!r.success) return [];
-      try { return JSON.parse(r.stdout); } catch { return []; }
+      if (!r.success) throw new Error(r.stderr || 'Azure command failed');
+      try { return JSON.parse(r.stdout); } catch (e) { throw new Error('Failed to parse Azure list output: ' + e.message); }
     }
 
     case 'gcp': {
@@ -157,7 +157,7 @@ async function list(providerConfig, prefix = '') {
       const env = { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile };
       const r = await runAsync('gsutil', ['ls', '-l', `gs://${credentials.bucket}/${prefix}`], { env, timeout: 120000 });
       try { fs.unlinkSync(credFile); } catch {}
-      if (!r.success) return [];
+      if (!r.success) throw new Error(r.stderr || 'GCP command failed');
       return r.stdout.split('\n').filter(l => l.trim()).map(l => {
         const parts = l.trim().split(/\s+/);
         return { size: parts[0], key: parts.slice(1).join(' ') };
@@ -165,7 +165,7 @@ async function list(providerConfig, prefix = '') {
     }
 
     default:
-      return [];
+      throw new Error(`Unsupported cloud provider: ${provider}`);
   }
 }
 
