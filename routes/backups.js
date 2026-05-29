@@ -102,7 +102,7 @@ const executeBackup = async (jobId) => {
       let result;
       const backupType = job.backupType || job.type;
 
-      if (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'].includes(backupType)) {
+      if (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql', 'redis'].includes(backupType)) {
         const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(job.config?.connectionId);
         const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
         result = await dbService.backup({
@@ -377,7 +377,7 @@ router.post('/restore', authorize('restore'), async (req, res) => {
       let result;
       const backupType = job.backupType || job.type;
 
-      if (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'].includes(backupType)) {
+      if (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql', 'redis'].includes(backupType)) {
         const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(config?.connectionId);
         const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : null;
         let restoreFile = job.resultFile || config?.file;

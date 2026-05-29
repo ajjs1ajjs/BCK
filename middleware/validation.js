@@ -26,7 +26,7 @@ const schemas = {
   }),
   dbConnection: z.object({
     name: z.string().min(1).max(200),
-    type: z.enum(['mysql', 'postgres', 'oracle', 'mongodb', 'mssql']),
+    type: z.enum(['mysql', 'postgres', 'oracle', 'mongodb', 'mssql', 'redis']),
     host: z.string().min(1).max(500),
     port: z.number().int().min(1).max(65535).optional(),
     user: z.string().min(1).max(200).optional().or(z.literal('')),

@@ -351,6 +351,7 @@ export default function Policies() {
               <MenuItem value="oracle">Oracle</MenuItem>
               <MenuItem value="mongodb">MongoDB</MenuItem>
               <MenuItem value="mssql">MS SQL Server</MenuItem>
+              <MenuItem value="redis">Redis</MenuItem>
               <MenuItem value="vmware">VMware</MenuItem>
               <MenuItem value="hyperv">Hyper-V</MenuItem>
               <MenuItem value="cloud">Cloud Storage</MenuItem>

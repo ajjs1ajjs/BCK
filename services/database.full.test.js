@@ -287,4 +287,53 @@ describe('Database Service Tests', () => {
 
     expect(result).toEqual(['master_db', 'app_db']);
   });
+
+  test('should handle Redis backup correctly', async () => {
+    checkTool.mockReturnValue({ available: true, version: '7.0.0' });
+    runAsync.mockResolvedValue({ success: true, stdout: 'Transfer finished' });
+    
+    const result = await backup({
+      type: 'redis',
+      connection: { 
+        host: 'localhost',
+        port: 6379,
+        password: 'testpass'
+      },
+      backupPath: '/tmp',
+      name: 'test_redis'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  test('should handle Redis restore correctly (should throw/reject)', async () => {
+    checkTool.mockReturnValue({ available: true, version: '7.0.0' });
+    
+    await expect(restore({
+      type: 'redis',
+      connection: { 
+        host: 'localhost',
+        port: 6379,
+        password: 'testpass'
+      },
+      file: '/tmp/test.rdb'
+    })).rejects.toThrow('Redis restore must be performed manually');
+  });
+
+  test('should check Redis tool correctly', () => {
+    checkTool.mockReturnValue({ available: true, version: '7.0.0' });
+    const result = checkTools('redis');
+    expect(result).toEqual({ available: true, version: '7.0.0' });
+  });
+
+  test('should list Redis databases correctly', async () => {
+    const result = await listDatabases('redis', { 
+      host: 'localhost',
+      port: 6379,
+      password: 'testpass'
+    });
+
+    expect(result).toEqual(['db0', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8', 'db9', 'db10', 'db11', 'db12', 'db13', 'db14', 'db15']);
+  });
 });

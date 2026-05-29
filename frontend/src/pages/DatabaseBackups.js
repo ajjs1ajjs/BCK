@@ -13,7 +13,7 @@ import {
 import { useTranslation } from '../context/LangContext';
 
 import { API } from '../utils/config';
-const DB_TYPES = ['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'];
+const DB_TYPES = ['mysql', 'postgres', 'oracle', 'mongodb', 'mssql', 'redis'];
 
 export default function DatabaseBackups() {
   const [tab, setTab] = useState(0);
@@ -32,7 +32,7 @@ export default function DatabaseBackups() {
   const load = useCallback(() => {
     fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/backups?type=db`).then(r => r.json()).then(b => {
-      setBackups(b.filter(x => ['mysql','postgres','oracle', 'mongodb', 'mssql'].includes(x.backupType || x.type)));
+      setBackups(b.filter(x => ['mysql','postgres','oracle', 'mongodb', 'mssql', 'redis'].includes(x.backupType || x.type)));
     }).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(e => console.error('Load error:', e));
   }, []);
@@ -261,6 +261,7 @@ export default function DatabaseBackups() {
               if (type === 'oracle') port = 1521;
               if (type === 'mongodb') port = 27017;
               if (type === 'mssql') port = 1433;
+              if (type === 'redis') port = 6379;
               setConnForm({...connForm, type, port });
             }}>
               {DB_TYPES.map(t => <MenuItem key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</MenuItem>)}

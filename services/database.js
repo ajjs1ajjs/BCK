@@ -121,6 +121,19 @@ const ENGINES = {
       return r.stdout.split('\n').map(d => d.trim()).filter(Boolean);
     },
   },
+  redis: {
+    dump: (conn, outFile) => {
+      const args = ['-h', conn.host, '-p', String(conn.port || 6379)];
+      if (conn.password) args.push('-a', conn.password);
+      args.push('--rdb', outFile);
+      return { cmd: 'redis-cli', args, env: process.env };
+    },
+    restore: () => {
+      throw new Error('Redis restore must be performed manually by replacing the dump.rdb file in the Redis data directory and restarting the service.');
+    },
+    check: () => checkTool('redis-cli', 'redis-cli', ['--version']),
+    list: async () => ['db0', 'db1', 'db2', 'db3', 'db4', 'db5', 'db6', 'db7', 'db8', 'db9', 'db10', 'db11', 'db12', 'db13', 'db14', 'db15'],
+  },
 };
 
 function getEngine(type) {
@@ -217,12 +230,12 @@ async function backup(backupConfig) {
     return { success: false, error: `Insufficient disk space: only ${(disk.free / 1024 / 1024).toFixed(2)}MB free` };
   }
 
-  const extension = type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : (type === 'mssql' ? 'bak' : 'sql'));
+  const extension = type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : (type === 'mssql' ? 'bak' : (type === 'redis' ? 'rdb' : 'sql')));
   const outFile = path.join(backupPath, `${name}_${Date.now()}.${extension}`);
   const dumpConf = engine.dump(connection, outFile);
 
   let result;
-  if (type === 'oracle' || type === 'mssql') {
+  if (type === 'oracle' || type === 'mssql' || type === 'redis') {
     const r = await runAsync(dumpConf.cmd, dumpConf.args, { env: dumpConf.env });
     result = { success: r.success, error: r.stderr };
   } else {
@@ -261,7 +274,7 @@ async function restore(restoreConfig) {
   const restoreConf = engine.restore(connection, file);
 
   let result;
-  if (type === 'oracle' || type === 'mssql') {
+  if (type === 'oracle' || type === 'mssql' || type === 'redis') {
     const r = await runAsync(restoreConf.cmd, restoreConf.args, { env: restoreConf.env });
     result = { success: r.success, error: r.stderr };
   } else {
