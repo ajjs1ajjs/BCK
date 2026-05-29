@@ -1,5 +1,5 @@
 /* BCK Backup System — Service Worker */
-const CACHE_NAME = 'bck-v1';
+const CACHE_NAME = 'bck-v2';
 const STATIC_ASSETS = [
   '/',
   '/static/js/main.chunk.js',

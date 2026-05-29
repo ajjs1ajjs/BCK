@@ -41,9 +41,12 @@ export default function CloudBackups() {
   });
 
   const load = useCallback(() => {
-    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCreds).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/cloud-credentials`)
+      .then(r => r.json())
+      .then(data => setCreds(Array.isArray(data) ? data : []))
+      .catch(e => console.error('Load error:', e));
     fetch(`${API}/api/backups?limit=500&type=cloud`).then(r => r.json()).then(data => {
-      const b = data.data || data || [];
+      const b = data?.data || (Array.isArray(data) ? data : []);
       setBackups(b.filter(x => x.backupType === 'cloud').map(x => ({ ...x, type: 'cloud' })));
     }).catch(e => console.error('Load error:', e));
   }, []);

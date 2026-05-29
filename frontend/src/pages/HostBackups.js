@@ -31,7 +31,7 @@ export default function HostBackups() {
   const load = useCallback(() => {
     fetch(`${API}/api/backups?type=host`)
       .then(r => r.json())
-      .then(setBackups)
+      .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
   }, []);
 

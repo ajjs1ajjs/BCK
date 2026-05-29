@@ -60,7 +60,7 @@ export default function Repos() {
       ]);
       const bData = await bRes.json();
       const sData = await sRes.json();
-      setBackups(bData.data || bData || []);
+      setBackups(bData?.data || (Array.isArray(bData) ? bData : []));
       setStats(sData);
     } catch (e) {
       console.error('Repos load error:', e);

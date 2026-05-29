@@ -23,7 +23,10 @@ export default function JobHistory() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups`).then(r => r.json()).then(setBackups).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/backups`)
+      .then(r => r.json())
+      .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

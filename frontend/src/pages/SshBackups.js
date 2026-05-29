@@ -31,9 +31,18 @@ export default function SshBackups() {
   const isUk = lang === 'uk';
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?type=ssh`).then(r => r.json()).then(setBackups).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/ssh-connections`).then(r => r.json()).then(setSshConns).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/backups?type=ssh`)
+      .then(r => r.json())
+      .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
+      .catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/ssh-connections`)
+      .then(r => r.json())
+      .then(data => setSshConns(Array.isArray(data) ? data : []))
+      .catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/cloud-credentials`)
+      .then(r => r.json())
+      .then(data => setCloudCreds(Array.isArray(data) ? data : []))
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

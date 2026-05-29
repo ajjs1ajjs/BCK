@@ -39,7 +39,10 @@ export default function Backups() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?limit=500`).then(r => r.json()).then(data => setBackups(data.data || data || [])).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/backups?limit=500`)
+      .then(r => r.json())
+      .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

@@ -24,7 +24,7 @@ export default function VMBackups() {
 
   const load = useCallback(() => {
     fetch(`${API}/api/backups?limit=500&type=vm`).then(r => r.json()).then(data => {
-      const b = data.data || data || [];
+      const b = data?.data || (Array.isArray(data) ? data : []);
       setBackups(b.filter(x => ['vmware', 'hyperv'].includes(x.backupType || x.type)));
     }).catch(e => console.error('Load error:', e));
   }, []);

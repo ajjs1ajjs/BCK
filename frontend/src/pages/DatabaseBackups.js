@@ -30,12 +30,18 @@ export default function DatabaseBackups() {
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/db-connections`)
+      .then(r => r.json())
+      .then(data => setConnections(Array.isArray(data) ? data : []))
+      .catch(e => console.error('Load error:', e));
     fetch(`${API}/api/backups?limit=500&type=db`).then(r => r.json()).then(data => {
-      const b = data.data || data || [];
+      const b = data?.data || (Array.isArray(data) ? data : []);
       setBackups(b.filter(x => ['mysql','postgres','oracle', 'mongodb', 'mssql', 'redis'].includes(x.backupType || x.type)));
     }).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/cloud-credentials`)
+      .then(r => r.json())
+      .then(data => setCloudCreds(Array.isArray(data) ? data : []))
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);

@@ -34,12 +34,30 @@ export default function Dashboard() {
 
   const loadAll = () => {
     const handleErr = (name) => (e) => console.error(`Failed to load ${name}:`, e);
-    fetch(`${API}/api/backups?limit=500`).then(r=>r.json()).then(data => setBackups(data.data || data || [])).catch(handleErr('backups'));
-    fetch(`${API}/api/schedules`).then(r=>r.json()).then(setSchedules).catch(handleErr('schedules'));
-    fetch(`${API}/api/db-connections`).then(r=>r.json()).then(setDbConnections).catch(handleErr('db-connections'));
-    fetch(`${API}/api/cloud-credentials`).then(r=>r.json()).then(setCloudCreds).catch(handleErr('cloud-credentials'));
-    fetch(`${API}/api/vm-backups`).then(r=>r.json()).then(setVmBackups).catch(handleErr('vm-backups'));
-    fetch(`${API}/api/stats`).then(r=>r.json()).then(setStats).catch(handleErr('stats'));
+    fetch(`${API}/api/backups?limit=500`)
+      .then(r => r.json())
+      .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
+      .catch(handleErr('backups'));
+    fetch(`${API}/api/schedules`)
+      .then(r => r.json())
+      .then(data => setSchedules(Array.isArray(data) ? data : []))
+      .catch(handleErr('schedules'));
+    fetch(`${API}/api/db-connections`)
+      .then(r => r.json())
+      .then(data => setDbConnections(Array.isArray(data) ? data : []))
+      .catch(handleErr('db-connections'));
+    fetch(`${API}/api/cloud-credentials`)
+      .then(r => r.json())
+      .then(data => setCloudCreds(Array.isArray(data) ? data : []))
+      .catch(handleErr('cloud-credentials'));
+    fetch(`${API}/api/vm-backups`)
+      .then(r => r.json())
+      .then(data => setVmBackups(Array.isArray(data) ? data : []))
+      .catch(handleErr('vm-backups'));
+    fetch(`${API}/api/stats`)
+      .then(r => r.json())
+      .then(setStats)
+      .catch(handleErr('stats'));
   };
   useEffect(() => { loadAll(); }, []);
 
