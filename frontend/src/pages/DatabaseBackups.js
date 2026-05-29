@@ -13,7 +13,7 @@ import {
 import { useTranslation } from '../context/LangContext';
 
 import { API } from '../utils/config';
-const DB_TYPES = ['mysql', 'postgres', 'oracle'];
+const DB_TYPES = ['mysql', 'postgres', 'oracle', 'mongodb'];
 
 export default function DatabaseBackups() {
   const [tab, setTab] = useState(0);
@@ -32,7 +32,7 @@ export default function DatabaseBackups() {
   const load = useCallback(() => {
     fetch(`${API}/api/db-connections`).then(r => r.json()).then(setConnections).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/backups?type=db`).then(r => r.json()).then(b => {
-      setBackups(b.filter(x => ['mysql','postgres','oracle'].includes(x.backupType || x.type)));
+      setBackups(b.filter(x => ['mysql','postgres','oracle', 'mongodb'].includes(x.backupType || x.type)));
     }).catch(e => console.error('Load error:', e));
     fetch(`${API}/api/cloud-credentials`).then(r => r.json()).then(setCloudCreds).catch(e => console.error('Load error:', e));
   }, []);
@@ -252,7 +252,14 @@ export default function DatabaseBackups() {
         <DialogContent>
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField label={t('name')} fullWidth value={connForm.name} onChange={(e) => setConnForm({...connForm, name: e.target.value})} />
-            <TextField select label={t('type')} fullWidth value={connForm.type} onChange={(e) => setConnForm({...connForm, type: e.target.value, port: e.target.value === 'mysql' ? 3306 : e.target.value === 'postgres' ? 5432 : 1521 })}>
+            <TextField select label={t('type')} fullWidth value={connForm.type} onChange={(e) => {
+              const type = e.target.value;
+              let port = 3306;
+              if (type === 'postgres') port = 5432;
+              if (type === 'oracle') port = 1521;
+              if (type === 'mongodb') port = 27017;
+              setConnForm({...connForm, type, port });
+            }}>
               {DB_TYPES.map(t => <MenuItem key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</MenuItem>)}
             </TextField>
             <TextField label={t('host')} fullWidth value={connForm.host} onChange={(e) => setConnForm({...connForm, host: e.target.value})} />

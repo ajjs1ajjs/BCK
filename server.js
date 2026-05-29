@@ -147,12 +147,12 @@ const schemas = {
   }),
   dbConnection: z.object({
     name: z.string().min(1).max(200),
-    type: z.enum(['mysql', 'postgres', 'oracle']),
+    type: z.enum(['mysql', 'postgres', 'oracle', 'mongodb']),
     host: z.string().min(1).max(500),
     port: z.number().int().min(1).max(65535).optional(),
-    user: z.string().min(1).max(200),
-    password: z.string().max(2000).optional(),
-    database: z.string().max(200).optional(),
+    user: z.string().min(1).max(200).optional().or(z.literal('')),
+    password: z.string().max(2000).optional().or(z.literal('')),
+    database: z.string().max(200).optional().or(z.literal('')),
   }),
   sshConnection: z.object({
     name: z.string().min(1).max(200),
@@ -337,39 +337,6 @@ const initDB = async () => {
       insertSetting.run('network', JSON.stringify({ appUrl: APP_URL, bindHost: HOST }));
     })();
   }
-};
-
-// ─── Helpers ──────────────────────────────────────────────────────────
-
-const updateStats = async (db) => {
-  const total = db.backups.length;
-  const success = db.backups.filter(b => b.status === 'completed').length;
-  const failed = db.backups.filter(b => b.status === 'failed').length;
-  const last = db.backups.filter(b => b.completedAt).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))[0];
-  db.stats = {
-    totalBackups: total,
-    successfulBackups: success,
-    failedBackups: failed,
-    totalSize: db.stats?.totalSize || 0,
-    lastBackup: last?.completedAt || null,
-    diskSpace: db.stats?.diskSpace || { totalBytes: 0, freeBytes: 0, usedBytes: 0, isQuota: false },
-    diskSpaces: db.stats?.diskSpaces || [],
-    cloudSpaces: db.stats?.cloudSpaces || [],
-  };
-};
-
-const getSettings = (db) => {
-  const current = db.settings || {};
-  const defaults = defaultData.settings;
-  return {
-    smtp: { ...defaults.smtp, ...(current.smtp || {}) },
-    retention: { ...defaults.retention, ...(current.retention || {}) },
-    notifications: { ...defaults.notifications, ...(current.notifications || {}) },
-    schedule: { ...defaults.schedule, ...(current.schedule || {}) },
-    security: { ...defaults.security, ...(current.security || {}) },
-    advanced: { ...defaults.advanced, ...(current.advanced || {}) },
-    network: { ...defaults.network, ...(current.network || {}) },
-  };
 };
 
 // ─── Authentication ─────────────────────────────────────────────────────────
@@ -670,7 +637,7 @@ const executeBackup = async (jobId) => {
       let result;
       const backupType = job.backupType || job.type;
 
-      if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
+      if (['mysql', 'postgres', 'oracle', 'mongodb'].includes(backupType)) {
         const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(job.config?.connectionId);
         const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
         result = await dbService.backup({
@@ -811,7 +778,7 @@ app.post('/api/restore', authorize('restore'), async (req, res) => {
       let result;
       const backupType = job.backupType || job.type;
 
-      if (['mysql', 'postgres', 'oracle'].includes(backupType)) {
+      if (['mysql', 'postgres', 'oracle', 'mongodb'].includes(backupType)) {
         const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(config?.connectionId);
         const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : null;
         let restoreFile = job.resultFile || config?.file;
@@ -1128,6 +1095,7 @@ app.get('/api/tools', async (req, res) => {
     mysql: dbService.checkTools('mysql'),
     postgres: dbService.checkTools('postgres'),
     oracle: dbService.checkTools('oracle'),
+    mongodb: dbService.checkTools('mongodb'),
     vmware: vmService.checkTools('vmware'),
     hyperv: vmService.checkTools('hyperv'),
     aws: cloudService.checkTools('aws'),

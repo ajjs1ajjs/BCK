@@ -64,6 +64,44 @@ const ENGINES = {
     check: () => checkTool('expdp', 'expdp', ['help=y']),
     list: async () => [],
   },
+  mongodb: {
+    dump: (conn) => {
+      const args = ['--host', conn.host, '--port', String(conn.port || 27017)];
+      if (conn.user) args.push('--username', conn.user);
+      if (conn.password) args.push('--password', conn.password);
+      if (conn.database) args.push('--db', conn.database);
+      args.push('--archive'); // Output to stdout
+      return { cmd: 'mongodump', args, env: process.env };
+    },
+    restore: (conn) => {
+      const args = ['--host', conn.host, '--port', String(conn.port || 27017)];
+      if (conn.user) args.push('--username', conn.user);
+      if (conn.password) args.push('--password', conn.password);
+      args.push('--archive'); // Read from stdin
+      return { cmd: 'mongorestore', args, env: process.env };
+    },
+    check: async () => {
+      const dump = await checkTool('mongodump', 'mongodump', ['--version']);
+      const shell = await checkTool('mongosh', 'mongosh', ['--version']);
+      const oldShell = !shell.available ? await checkTool('mongo', 'mongo', ['--version']) : { available: false };
+      return { 
+        available: dump.available && (shell.available || oldShell.available),
+        details: `mongodump: ${dump.available ? 'OK' : 'MISSING'}, shell: ${shell.available ? 'mongosh' : oldShell.available ? 'mongo' : 'MISSING'}`
+      };
+    },
+    list: async (conn) => {
+      let shell = 'mongosh';
+      const check = await checkTool('mongosh', 'mongosh', ['--version']);
+      if (!check.available) shell = 'mongo';
+      
+      const args = ['--host', conn.host, '--port', String(conn.port || 27017), '--eval', 'db.adminCommand("listDatabases").databases.map(d => d.name).join("\\n")', '--quiet'];
+      if (conn.user) args.push('--username', conn.user);
+      if (conn.password) args.push('--password', conn.password);
+      const r = await runAsync(shell, args);
+      if (!r.success) return [];
+      return r.stdout.split('\n').map(d => d.trim()).filter(Boolean);
+    },
+  },
 };
 
 function getEngine(type) {

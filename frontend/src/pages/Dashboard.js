@@ -16,12 +16,15 @@ import {
 } from 'recharts';
 import { useTranslation } from '../context/LangContext';
 import { C, GLASS, StatCard, PlatformSVG, CustomTooltip } from '../components/DashboardWidgets';
+import ActivityFeed from '../components/ActivityFeed';
+import { useSocket } from '../context/SocketContext';
 
 import { API } from '../utils/config';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { t, lang } = useTranslation();
+  const { queueStats } = useSocket();
   const [backups, setBackups] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -458,27 +461,17 @@ export default function Dashboard() {
           {/* Recent Activity */}
           <Card sx={{ ...GLASS, display:'flex', flexDirection:'column' }}>
             <CardContent sx={{ p:3, display: 'flex', flexDirection: 'column', flex:1 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight:700, mb:2.5, color:'#fff' }}>{t('recentActivity')}</Typography>
-              {recentLogs.length === 0 ? (
-                <Box sx={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', py:4 }}>
-                  <InfoIcon sx={{ color:alpha('#fff',0.06), fontSize:40, mb:1.5 }} />
-                  <Typography variant="body2" sx={{ color:alpha('#fff',0.3), fontSize:13 }}>{t('noRecentActivity')}</Typography>
-                </Box>
-              ) : (
-                <Stack spacing={1} sx={{ flex:1 }}>
-                  {recentLogs.map(log => (
-                    <Box key={log.id} sx={{ display:'flex', gap:1.5, py:1, px:1, borderRadius:1.5, '&:hover':{bgcolor:'rgba(255,255,255,0.02)'} }}>
-                      <Box sx={{ width:8, height:8, borderRadius:'50%', mt:0.7, flexShrink:0,
-                        bgcolor: log.status === 'error' ? C.error : log.status === 'warning' ? C.warning : log.status === 'success' ? C.success : C.secondary,
-                        boxShadow: `0 0 6px ${log.status === 'error' ? C.error : log.status === 'warning' ? C.warning : log.status === 'success' ? C.success : C.secondary}` }} />
-                      <Box sx={{ minWidth:0, flex:1 }}>
-                        <Typography variant="body2" noWrap sx={{ fontWeight:500, color:alpha('#fff',0.85), fontSize:13 }}>{log.message}</Typography>
-                        <Typography variant="caption" sx={{ color:alpha('#fff',0.25), fontSize:11 }}>{(log.timestamp || '').slice(0,19).replace('T', ' ')}</Typography>
-                      </Box>
-                    </Box>
-                  ))}
-                </Stack>
-              )}
+              <Box sx={{ display:'flex', justifyContent:'space-between', alignItems:'center', mb:2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight:700, color:'#fff' }}>{t('recentActivity')}</Typography>
+                {queueStats.active > 0 && (
+                  <Chip 
+                    label={`${queueStats.active} active`} 
+                    size="small" 
+                    sx={{ bgcolor: alpha(C.secondary, 0.15), color: C.secondary, fontWeight: 700, fontSize: 10, height: 18 }} 
+                  />
+                )}
+              </Box>
+              <ActivityFeed />
             </CardContent>
           </Card>
 
