@@ -68,6 +68,7 @@ router.get('/tools', async (req, res) => {
     postgres: dbService.checkTools('postgres'),
     oracle: dbService.checkTools('oracle'),
     mongodb: dbService.checkTools('mongodb'),
+    redis: dbService.checkTools('redis'),
     vmware: vmService.checkTools('vmware'),
     hyperv: vmService.checkTools('hyperv'),
     aws: cloudService.checkTools('aws'),

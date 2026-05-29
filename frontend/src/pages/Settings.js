@@ -347,6 +347,8 @@ export default function Settings({ toggleTheme, isDark }) {
                     { name: 'mysql', label: 'mysqldump', for: 'MySQL backups' },
                     { name: 'postgres', label: 'pg_dump', for: 'PostgreSQL backups' },
                     { name: 'oracle', label: 'expdp / impdp', for: 'Oracle backups' },
+                    { name: 'mongodb', label: 'mongodump', for: 'MongoDB backups' },
+                    { name: 'redis', label: 'redis-cli', for: 'Redis backups' },
                     { name: 'vmware', label: 'govc', for: 'VMware vSphere' },
                     { name: 'hyperv', label: 'PowerShell', for: 'Hyper-V backups' },
                     { name: 'aws', label: 'AWS CLI', for: 'Amazon S3' },

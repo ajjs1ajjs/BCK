@@ -510,5 +510,23 @@ router.post('/restore', authorize('restore'), async (req, res) => {
   })();
 });
 
+// GET /api/backups/:id/download
+router.get('/backups/:id/download', authorize('restore'), async (req, res) => {
+  try {
+    const b = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+    if (!b) return res.status(404).json({ error: 'Backup job not found' });
+    if (b.status !== 'completed' || !b.resultFile) {
+      return res.status(400).json({ error: 'Backup is not completed or has no output file' });
+    }
+    const filePath = path.resolve(b.resultFile);
+    if (!fsSync.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Backup file does not exist on disk' });
+    }
+    res.download(filePath, path.basename(filePath));
+  } catch (err) {
+    res.status(500).json({ error: 'Download failed: ' + err.message });
+  }
+});
+
 module.exports = router;
 module.exports.executeBackup = executeBackup; // Export to be used in scheduler

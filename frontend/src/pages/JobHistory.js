@@ -7,6 +7,7 @@ import {
 import {
   Refresh as RefreshIcon, Search as SearchIcon, FilterList as FilterIcon,
   Delete as DeleteIcon, CheckCircle as SuccessIcon, Error as ErrorIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../context/LangContext';
@@ -42,6 +43,28 @@ export default function JobHistory() {
       setSnack({ open: true, msg: t('deleted'), severity: 'success' });
     } catch {
       setSnack({ open: true, msg: t('deleteFailed'), severity: 'error' });
+    }
+  };
+
+  const downloadBackupFile = async (b) => {
+    try {
+      const r = await fetch(`${API}/api/backups/${b.id}/download`);
+      if (!r.ok) {
+        const err = await r.json();
+        throw new Error(err.error || 'Download failed');
+      }
+      const blob = await r.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      let filename = b.resultFile ? b.resultFile.split(/[/\\]/).pop() : `backup_${b.id}.zip`;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      setSnack({ open: true, msg: `Failed to download: ${e.message}`, severity: 'error' });
     }
   };
 
@@ -94,7 +117,7 @@ export default function JobHistory() {
                   <TableCell sx={{ fontWeight: 600 }}>{t('duration')}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{t('size')}</TableCell>
                   <TableCell sx={{ fontWeight: 600 }}>{t('result')}</TableCell>
-                  {can('delete') && <TableCell sx={{ fontWeight: 600 }} align="right">{t('actions')}</TableCell>}
+                  {(can('delete') || can('restore')) && <TableCell sx={{ fontWeight: 600 }} align="right">{t('actions')}</TableCell>}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -130,9 +153,18 @@ export default function JobHistory() {
                         <Chip label="OK" size="small" color="success" variant="outlined" />
                       ) : '—'}
                     </TableCell>
-                    {can('delete') && (
+                    {(can('delete') || can('restore')) && (
                       <TableCell align="right">
-                        <Tooltip title={t('delete')}><IconButton size="small" onClick={() => deleteBackup(b.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                        {can('restore') && b.status === 'completed' && b.resultFile && (
+                          <Tooltip title={t('download')}>
+                            <IconButton size="small" onClick={() => downloadBackupFile(b)}>
+                              <DownloadIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
+                        {can('delete') && (
+                          <Tooltip title={t('delete')}><IconButton size="small" onClick={() => deleteBackup(b.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                        )}
                       </TableCell>
                     )}
                   </TableRow>
