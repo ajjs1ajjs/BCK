@@ -14,18 +14,12 @@ const rateLimit = require('express-rate-limit');
 
 require('dotenv').config();
 
-// Ensure ENCRYPTION_KEY is present in .env
+// Ensure ENCRYPTION_KEY is present in environment
 if (!process.env.ENCRYPTION_KEY) {
-  const secureKey = require('crypto').randomBytes(32).toString('hex');
-  process.env.ENCRYPTION_KEY = secureKey;
-  try {
-    const envPath = path.join(__dirname, '.env');
-    if (fsSync.existsSync(envPath)) {
-      fsSync.appendFileSync(envPath, `\nENCRYPTION_KEY=${secureKey}\n`, 'utf8');
-    }
-  } catch (err) {
-    console.error('Failed to append ENCRYPTION_KEY to .env:', err.message);
-  }
+  console.error('FATAL ERROR: ENCRYPTION_KEY is not set in environment variables.');
+  console.error('For security reasons, this application will not start without a defined encryption key.');
+  console.error('Please add ENCRYPTION_KEY=your-secure-random-secret to your .env file.');
+  process.exit(1);
 }
 
 const { db, migrate } = require('./services/db');

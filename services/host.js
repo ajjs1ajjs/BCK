@@ -35,36 +35,40 @@ async function backup(backupConfig) {
   const source = path.resolve(sourcePath || '/');
   const destination = path.resolve(backupPath || '.');
 
-  const tool = checkTool('tar', 'tar --version');
+  const tool = checkTool('tar', 'tar', ['--version']);
   if (!tool.available) {
     return { success: false, error: 'tar not found. Install tar to create host backups.' };
   }
 
-  await fs.access(source);
-  await fs.mkdir(destination, { recursive: true });
+  try {
+    await fs.access(source);
+    await fs.mkdir(destination, { recursive: true });
 
-  const safeName = String(name || 'host').replace(/[^a-zA-Z0-9._-]+/g, '_');
-  const outFile = path.join(destination, `${safeName}_${Date.now()}.tar.gz`);
-  const args = [
-    '-czpf',
-    outFile,
-    '--one-file-system',
-    ...buildTarExcludes(source, destination, excludes),
-    '-C',
-    source,
-    '.',
-  ];
+    const safeName = String(name || 'host').replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const outFile = path.join(destination, `${safeName}_${Date.now()}.tar.gz`);
+    const args = [
+      '-czpf',
+      outFile,
+      '--one-file-system',
+      ...buildTarExcludes(source, destination, excludes),
+      '-C',
+      source,
+      '.',
+    ];
 
-  const result = await runAsync('tar', args, { timeout: 24 * 60 * 60 * 1000 });
-  let size = 0;
-  if (result.success) {
-    try {
-      const stat = await fs.stat(outFile);
-      size = stat.size;
-    } catch {}
+    const result = await runAsync('tar', args, { timeout: 24 * 60 * 60 * 1000 });
+    let size = 0;
+    if (result.success) {
+      try {
+        const stat = await fs.stat(outFile);
+        size = stat.size;
+      } catch {}
+    }
+
+    return { success: result.success, file: outFile, size, error: result.stderr };
+  } catch (err) {
+    return { success: false, error: err.message };
   }
-
-  return { success: result.success, file: outFile, size, error: result.stderr };
 }
 
 async function restore(restoreConfig) {
@@ -72,20 +76,24 @@ async function restore(restoreConfig) {
   const archive = path.resolve(file || '');
   const target = path.resolve(targetPath || '/');
 
-  const tool = checkTool('tar', 'tar --version');
+  const tool = checkTool('tar', 'tar', ['--version']);
   if (!tool.available) {
     return { success: false, error: 'tar not found. Install tar to restore host backups.' };
   }
 
-  await fs.access(archive);
-  await fs.mkdir(target, { recursive: true });
+  try {
+    await fs.access(archive);
+    await fs.mkdir(target, { recursive: true });
 
-  const result = await runAsync('tar', ['-xzpf', archive, '-C', target], { timeout: 24 * 60 * 60 * 1000 });
-  return { success: result.success, error: result.stderr };
+    const result = await runAsync('tar', ['-xzpf', archive, '-C', target], { timeout: 24 * 60 * 60 * 1000 });
+    return { success: result.success, error: result.stderr };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 }
 
 function checkTools() {
-  return checkTool('tar', 'tar --version');
+  return checkTool('tar', 'tar', ['--version']);
 }
 
 module.exports = { backup, restore, checkTools };

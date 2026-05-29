@@ -1,10 +1,9 @@
-const { runAsync, checkTool } = require('./exec');
+const { run, runAsync, checkTool } = require('./exec');
 const spawn = require('child_process').spawn;
 const fs = require('fs');
 const zlib = require('zlib');
 const os = require('os');
 const path = require('path');
-const { execSync } = require('child_process');
 
 const ENGINES = {
   mysql: {
@@ -18,7 +17,7 @@ const ENGINES = {
       args: ['-h', conn.host, '-P', String(conn.port || 3306), '-u', conn.user, conn.database],
       env: conn.password ? { ...process.env, MYSQL_PWD: conn.password } : process.env,
     }),
-    check: () => checkTool('mysqldump', 'mysqldump --version'),
+    check: () => checkTool('mysqldump', 'mysqldump', ['--version']),
     list: async (conn) => {
       const env = conn.password ? { ...process.env, MYSQL_PWD: conn.password } : process.env;
       const r = await runAsync('mysql', ['-h', conn.host, '-P', String(conn.port || 3306), '-u', conn.user, '-e', 'SHOW DATABASES', '--batch', '--skip-column-names'], { env });
@@ -37,7 +36,7 @@ const ENGINES = {
       args: ['-h', conn.host, '-p', String(conn.port || 5432), '-U', conn.user, '-d', conn.database, '-c'],
       env: conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env,
     }),
-    check: () => checkTool('pg_dump', 'pg_dump --version'),
+    check: () => checkTool('pg_dump', 'pg_dump', ['--version']),
     list: async (conn) => {
       const env = conn.password ? { ...process.env, PGPASSWORD: conn.password } : process.env;
       const r = await runAsync('psql', ['-h', conn.host, '-p', String(conn.port || 5432), '-U', conn.user, '-l', '-t', '-A'], { env });
@@ -56,7 +55,7 @@ const ENGINES = {
       args: [`${conn.user}@//${conn.host}:${conn.port || 1521}/${conn.service}`, 'directory=DATA_PUMP_DIR', `dumpfile=${inFile}`],
       env: conn.password ? { ...process.env, ORACLE_HOME: conn.oracleHome || '', ORACLE_PWD: conn.password } : { ...process.env, ORACLE_HOME: conn.oracleHome || '' },
     }),
-    check: () => checkTool('expdp', 'expdp version=2 2>&1 || echo "not found"'),
+    check: () => checkTool('expdp', 'expdp', ['help=y']),
     list: async () => [],
   },
 };
@@ -65,23 +64,27 @@ function getDiskSpace(dirPath) {
   const absolutePath = path.resolve(dirPath);
   try {
     if (os.platform() === 'win32') {
-      const drive = absolutePath.substring(0, 3);
-      const output = execSync(`powershell -Command "Get-Volume -DriveLetter ${drive[0]} | Select-Object SizeRemaining, Size"`, { encoding: 'utf8' });
-      const lines = output.trim().split('\n').map(l => l.trim()).filter(Boolean);
-      if (lines.length >= 2) {
-        const parts = lines[1].split(/\s+/);
-        const free = parseInt(parts[0], 10);
-        const total = parseInt(parts[1], 10);
-        return { free, total };
+      const drive = absolutePath.substring(0, 1);
+      const r = run('powershell', ['-NoProfile', '-Command', `Get-Volume -DriveLetter ${drive} | Select-Object SizeRemaining, Size`]);
+      if (r.success) {
+        const lines = r.stdout.split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length >= 2) {
+          const parts = lines[1].split(/\s+/);
+          const free = parseInt(parts[0], 10);
+          const total = parseInt(parts[1], 10);
+          return { free, total };
+        }
       }
     } else {
-      const output = execSync(`df -B1 "${absolutePath}"`, { encoding: 'utf8' });
-      const lines = output.trim().split('\n');
-      if (lines.length >= 2) {
-        const parts = lines[1].split(/\s+/);
-        const total = parseInt(parts[1], 10);
-        const free = parseInt(parts[3], 10);
-        return { free, total };
+      const r = run('df', ['-B1', absolutePath]);
+      if (r.success) {
+        const lines = r.stdout.split('\n');
+        if (lines.length >= 2) {
+          const parts = lines[1].split(/\s+/);
+          const total = parseInt(parts[1], 10);
+          const free = parseInt(parts[3], 10);
+          return { free, total };
+        }
       }
     }
   } catch (err) {
@@ -173,7 +176,7 @@ async function backup(backupConfig) {
     return { success: false, error: `Insufficient disk space: only ${(disk.free / 1024 / 1024).toFixed(2)}MB free` };
   }
 
-  const outFile = `${backupPath}/${name}_${Date.now()}.${type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : 'sql')}`;
+  const outFile = path.join(backupPath, `${name}_${Date.now()}.${type === 'postgres' ? 'dump' : (type === 'mysql' ? 'sql.gz' : 'sql')}`);
   const dumpConf = engine.dump(connection, outFile);
 
   let result;

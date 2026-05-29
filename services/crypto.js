@@ -1,34 +1,57 @@
 const crypto = require('crypto');
 
+// Use a fixed salt for key derivation. In a more advanced setup, 
+// this could be stored in the DB or a separate config.
+const SALT = process.env.ENCRYPTION_SALT || 'bck-default-salt-do-not-change';
+
+/**
+ * Derives a 32-byte key from the environment variable using scrypt.
+ */
 function getEncryptionKey() {
-  const key = process.env.ENCRYPTION_KEY;
-  if (!key) return null;
-  if (key.length === 64) {
+  const secret = process.env.ENCRYPTION_KEY;
+  if (!secret) return null;
+  
+  // If the secret is already a 64-char hex (32 bytes), use it directly
+  if (secret.length === 64 && /^[0-9a-fA-F]+$/.test(secret)) {
     try {
-      return Buffer.from(key, 'hex');
-    } catch {
-      // Fallback if not valid hex
+      return Buffer.from(secret, 'hex');
+    } catch (e) {
+      // Fallback
     }
   }
-  return crypto.createHash('sha256').update(key).digest();
+  
+  // Otherwise, derive the key using scrypt
+  return crypto.scryptSync(secret, SALT, 32);
 }
 
+/**
+ * Encrypts text using AES-256-GCM.
+ * Format: iv:encryptedData:authTag
+ */
 function encrypt(text) {
   if (!text) return '';
   const key = getEncryptionKey();
   if (!key) return text;
   
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-  
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  
-  const authTag = cipher.getAuthTag().toString('hex');
-  
-  return `${iv.toString('hex')}:${encrypted}:${authTag}`;
+  try {
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    
+    let encrypted = cipher.update(text, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    
+    const authTag = cipher.getAuthTag().toString('hex');
+    
+    return `${iv.toString('hex')}:${encrypted}:${authTag}`;
+  } catch (err) {
+    console.error('Encryption failed:', err.message);
+    return text;
+  }
 }
 
+/**
+ * Decrypts text using AES-256-GCM.
+ */
 function decrypt(text) {
   if (!text) return '';
   const parts = text.split(':');
@@ -50,7 +73,23 @@ function decrypt(text) {
     
     return decrypted;
   } catch (err) {
-    return text;
+    // If decryption fails, it might be using the old SHA-256 derivation
+    // Fallback to old method to avoid data loss during transition
+    try {
+      const oldKey = crypto.createHash('sha256').update(process.env.ENCRYPTION_KEY).digest();
+      const iv = Buffer.from(parts[0], 'hex');
+      const encrypted = parts[1];
+      const authTag = Buffer.from(parts[2], 'hex');
+      
+      const decipher = crypto.createDecipheriv('aes-256-gcm', oldKey, iv);
+      decipher.setAuthTag(authTag);
+      
+      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      return decrypted;
+    } catch (e) {
+      return text;
+    }
   }
 }
 

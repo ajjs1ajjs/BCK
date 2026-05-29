@@ -1,18 +1,34 @@
-const { execSync, spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
-function run(cmd, opts = {}) {
+/**
+ * Synchronously runs a command with arguments as an array.
+ * This is safer than execSync with a string.
+ */
+function run(cmd, args = [], opts = {}) {
   try {
-    const out = execSync(cmd, {
+    const result = spawnSync(cmd, args, {
       timeout: opts.timeout || 300000,
-      stdio: 'pipe',
+      encoding: 'utf8',
       ...opts,
     });
-    return { success: true, stdout: out.toString().trim() };
+    
+    if (result.error) {
+      return { success: false, stderr: result.error.message };
+    }
+    
+    return {
+      success: result.status === 0,
+      stdout: result.stdout?.trim() || '',
+      stderr: result.stderr?.trim() || ''
+    };
   } catch (e) {
-    return { success: false, stderr: e.stderr?.toString() || e.message };
+    return { success: false, stderr: e.message };
   }
 }
 
+/**
+ * Asynchronously runs a command with arguments as an array.
+ */
 function runAsync(cmd, args = [], opts = {}) {
   return new Promise((resolve) => {
     let stdout = '';
@@ -37,7 +53,7 @@ function runAsync(cmd, args = [], opts = {}) {
       }
 
       p.on('error', (err) => {
-        resolve({ success: false, stderr: err.message, stdout });
+        resolve({ success: false, stderr: err.message, stdout: stdout.trim() });
       });
 
       p.on('close', (code) => {
@@ -53,8 +69,19 @@ function runAsync(cmd, args = [], opts = {}) {
   });
 }
 
-function checkTool(name, checkCmd) {
-  const r = run(checkCmd);
+/**
+ * Checks if a CLI tool is available by running a version check command.
+ */
+function checkTool(name, checkCmd, checkArgs = ['--version']) {
+  // If checkCmd is a string with spaces, it might be legacy code. 
+  // Let's try to handle it or encourage array-based args.
+  if (typeof checkCmd === 'string' && checkCmd.includes(' ')) {
+    const parts = checkCmd.split(' ');
+    const r = run(parts[0], parts.slice(1));
+    return r.success ? { available: true, version: r.stdout } : { available: false };
+  }
+  
+  const r = run(name, checkArgs);
   return r.success ? { available: true, version: r.stdout } : { available: false };
 }
 

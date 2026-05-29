@@ -5,7 +5,7 @@ async function backup(backupConfig) {
 
   switch (type) {
     case 'vmware': {
-      const tool = checkTool('govc', 'govc version');
+      const tool = checkTool('govc', 'govc', ['version']);
       if (!tool.available) {
         return { success: false, error: 'govc CLI not found. Install VMware vSphere CLI.' };
       }
@@ -22,7 +22,7 @@ async function backup(backupConfig) {
     }
 
     case 'hyperv': {
-      const tool = checkTool('powershell', 'powershell -Command "Get-Command"');
+      const tool = checkTool('powershell', 'powershell', ['-Command', 'Get-Command']);
       if (!tool.available) {
         return { success: false, error: 'PowerShell not available for Hyper-V backup.' };
       }
@@ -76,8 +76,8 @@ async function restore(restoreConfig) {
 }
 
 function checkTools(type) {
-  if (type === 'vmware') return checkTool('govc', 'govc version');
-  if (type === 'hyperv') return checkTool('powershell', 'powershell -Command "Get-Command"');
+  if (type === 'vmware') return checkTool('govc', 'govc', ['version']);
+  if (type === 'hyperv') return checkTool('powershell', 'powershell', ['-Command', 'Get-Command']);
   return { available: false };
 }
 
