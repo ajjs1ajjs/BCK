@@ -53,6 +53,9 @@ DB_PATH=./db.json
 NODE_ENV=production
 HOST=0.0.0.0
 APP_URL=http://your-ip:9000
+ENCRYPTION_KEY=<generate-a-random-32-byte-hex-key>
+DEFAULT_ADMIN_PASSWORD=<custom-admin-password>
+TRUST_PROXY=true
 # Optional: HTTPS
 # SSL_CERT_PATH=./cert.pem
 # SSL_KEY_PATH=./key.pem
