@@ -8,3 +8,5 @@ frontend/build/
 db.json
 data/bck.db
 data/ssh_keys/
+logs/
+*.bak

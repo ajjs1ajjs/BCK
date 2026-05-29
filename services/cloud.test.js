@@ -92,7 +92,7 @@ describe('Cloud Service Tests', () => {
       '/path/to/destination'
     );
 
-    expect(result).toEqual({ success: false, error: 'Unsupported provider' });
+    expect(result).toEqual({ success: false, error: 'Unsupported cloud provider: unsupported' });
   });
 
   test('should handle AWS provider correctly in restore', async () => {
@@ -166,7 +166,7 @@ describe('Cloud Service Tests', () => {
       '/path/to/destination'
     );
 
-    expect(result).toEqual({ success: false, error: 'Unsupported provider' });
+    expect(result).toEqual({ success: false, error: 'Unsupported cloud provider: unsupported' });
   });
 
   test('should check tools for AWS correctly', () => {

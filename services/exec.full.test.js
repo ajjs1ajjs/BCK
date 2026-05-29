@@ -8,7 +8,7 @@ describe('Exec Service Tests', () => {
   });
 
   test('run should execute command successfully', () => {
-    const result = run('node --version');
+    const result = run('node', ['--version']);
     expect(result.success).toBe(true);
     expect(result.stdout).toBeTruthy();
   });

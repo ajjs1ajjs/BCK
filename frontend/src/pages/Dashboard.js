@@ -7,7 +7,7 @@ import {
   ArrowForward as ArrowIcon, Schedule as ScheduleIcon, Backup as BackupIcon,
   CloudQueue as CloudIcon, Computer as ComputerIcon,
   Storage as DatabaseIcon, Speed as SpeedIcon, Timeline as TimelineIcon,
-  Info as InfoIcon, Refresh as RefreshIcon, Download as DownloadIcon,
+  Refresh as RefreshIcon, Download as DownloadIcon,
   Restore as RestoreIcon,
 } from '@mui/icons-material';
 import {
@@ -27,7 +27,6 @@ export default function Dashboard() {
   const { queueStats } = useSocket();
   const [backups, setBackups] = useState([]);
   const [schedules, setSchedules] = useState([]);
-  const [logs, setLogs] = useState([]);
   const [dbConnections, setDbConnections] = useState([]);
   const [cloudCreds, setCloudCreds] = useState([]);
   const [vmBackups, setVmBackups] = useState([]);
@@ -37,7 +36,6 @@ export default function Dashboard() {
     const handleErr = (name) => (e) => console.error(`Failed to load ${name}:`, e);
     fetch(`${API}/api/backups`).then(r=>r.json()).then(setBackups).catch(handleErr('backups'));
     fetch(`${API}/api/schedules`).then(r=>r.json()).then(setSchedules).catch(handleErr('schedules'));
-    fetch(`${API}/api/logs`).then(r=>r.json()).then(setLogs).catch(handleErr('logs'));
     fetch(`${API}/api/db-connections`).then(r=>r.json()).then(setDbConnections).catch(handleErr('db-connections'));
     fetch(`${API}/api/cloud-credentials`).then(r=>r.json()).then(setCloudCreds).catch(handleErr('cloud-credentials'));
     fetch(`${API}/api/vm-backups`).then(r=>r.json()).then(setVmBackups).catch(handleErr('vm-backups'));
@@ -91,7 +89,6 @@ export default function Dashboard() {
     return { ...c, usedGB };
   });
 
-  const recentLogs = logs.slice(0, 5);
   const totalConnections = dbConnections.length + cloudCreds.length + vmBackups.length;
   const avgSpeed = useMemo(() => {
     const withSpeed = backups.filter(b => b.speed);

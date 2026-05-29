@@ -180,103 +180,14 @@ function checkTools(provider) {
 
 // Backup function for cloud storage
 async function backup(providerConfig, sourcePath, destinationPath) {
-  const { provider, credentials } = providerConfig;
-  
-  // For simplicity in this basic implementation, we'll just use the upload function
-  // In a real implementation this would likely be more complex
-  switch (provider) {
-    case 'aws': {
-      const env = {
-        ...process.env,
-        AWS_ACCESS_KEY_ID: credentials.accessKeyId,
-        AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
-        AWS_DEFAULT_REGION: credentials.region,
-      };
-      const args = ['s3', 'cp', sourcePath, `s3://${credentials.bucket}/${destinationPath}`];
-      if (credentials.endpoint) {
-        args.push('--endpoint-url', credentials.endpoint);
-      }
-      const r = await runAsync('aws', args, { env });
-      return { success: r.success, error: r.stderr };
-    }
-    
-    case 'azure': {
-      // Azure Blob Storage upload
-      const dest = `https://${credentials.storageAccount}.blob.core.windows.net/${credentials.container}/${destinationPath}`;
-      const args = [
-        'storage', 'blob', 'upload',
-        '--account-name', credentials.storageAccount,
-        '--account-key', credentials.accessKey,
-        '--container-name', credentials.container,
-        '--file', sourcePath,
-        '--dest', destinationPath,
-      ];
-      const r = await runAsync('az', args);
-      return { success: r.success, error: r.stderr };
-    }
-    
-    case 'gcp': {
-      // Google Cloud Storage upload
-      const credFile = path.join(os.tmpdir(), `bck_gcp_creds_${Date.now()}.json`);
-      fs.writeFileSync(credFile, JSON.stringify(credentials.credentials));
-      const env = { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile };
-      const r = await runAsync('gsutil', [`cp`, sourcePath, `gs://${credentials.bucket}/${destinationPath}`], { env });
-      try { fs.unlinkSync(credFile); } catch {}
-      return { success: r.success, error: r.stderr };
-    }
-    
-    default:
-      return { success: false, error: 'Unsupported provider' };
-  }
+  const uploadRes = await upload(providerConfig, sourcePath, destinationPath);
+  return { success: uploadRes.success, error: uploadRes.error };
 }
 
 // Restore function for cloud storage
 async function restore(providerConfig, sourcePath, destinationPath) {
-  const { provider, credentials } = providerConfig;
-  
-  switch (provider) {
-    case 'aws': {
-      const env = {
-        ...process.env,
-        AWS_ACCESS_KEY_ID: credentials.accessKeyId,
-        AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
-        AWS_DEFAULT_REGION: credentials.region,
-      };
-      const args = ['s3', 'cp', `s3://${credentials.bucket}/${sourcePath}`, destinationPath];
-      if (credentials.endpoint) {
-        args.push('--endpoint-url', credentials.endpoint);
-      }
-      const r = await runAsync('aws', args, { env });
-      return { success: r.success, error: r.stderr };
-    }
-    
-    case 'azure': {
-      // Azure Blob Storage download
-      const args = [
-        'storage', 'blob', 'download',
-        '--account-name', credentials.storageAccount,
-        '--account-key', credentials.accessKey,
-        '--container-name', credentials.container,
-        '--file', destinationPath,
-        '--blob', sourcePath,
-      ];
-      const r = await runAsync('az', args);
-      return { success: r.success, error: r.stderr };
-    }
-    
-    case 'gcp': {
-      // Google Cloud Storage download
-      const credFile = path.join(os.tmpdir(), `bck_gcp_creds_${Date.now()}.json`);
-      fs.writeFileSync(credFile, JSON.stringify(credentials.credentials));
-      const env = { ...process.env, GOOGLE_APPLICATION_CREDENTIALS: credFile };
-      const r = await runAsync('gsutil', [`cp`, `gs://${credentials.bucket}/${sourcePath}`, destinationPath], { env });
-      try { fs.unlinkSync(credFile); } catch {}
-      return { success: r.success, error: r.stderr };
-    }
-    
-    default:
-      return { success: false, error: 'Unsupported provider' };
-  }
+  const downloadRes = await download(providerConfig, sourcePath, destinationPath);
+  return { success: downloadRes.success, error: downloadRes.error };
 }
 
 module.exports = { upload, download, list, checkTools, PROVIDERS, backup, restore };

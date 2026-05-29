@@ -3,10 +3,11 @@ const { runAsync, checkTool } = require('./exec');
 const { spawn } = require('child_process');
 const { Readable, Writable } = require('stream');
 
-// Mock the runAsync and checkTool functions
+// Mock the runAsync, checkTool and getDiskStats functions
 jest.mock('./exec', () => ({
   runAsync: jest.fn(),
-  checkTool: jest.fn()
+  checkTool: jest.fn(),
+  getDiskStats: jest.fn().mockReturnValue({ free: 1024 * 1024 * 1024, total: 10 * 1024 * 1024 * 1024 })
 }));
 
 // Mock child_process spawn

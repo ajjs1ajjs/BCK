@@ -31,9 +31,7 @@ async function backup(backupConfig) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Param($vmName, $path) $vm = Get-VM -Name $vmName; Export-VM -Name $vmName -Path $path -ErrorAction Stop',
-        vmName,
-        backupPath
+        `& { param($vmName, $path) $vm = Get-VM -Name $vmName; Export-VM -Name $vmName -Path $path -ErrorAction Stop } '${vmName.replace(/'/g, "''")}' '${backupPath.replace(/'/g, "''")}'`
       ]);
       return { success: r.success, error: r.stderr };
     }
@@ -64,8 +62,7 @@ async function restore(restoreConfig) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Param($filePath) Import-VM -Path $filePath -Copy -GenerateNewId -ErrorAction Stop',
-        file
+        `& { param($filePath) Import-VM -Path $filePath -Copy -GenerateNewId -ErrorAction Stop } '${file.replace(/'/g, "''")}'`
       ]);
       return { success: r.success, error: r.stderr };
     }
