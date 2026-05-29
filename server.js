@@ -37,6 +37,9 @@ const schedulesRouter = require('./routes/schedules');
 const usersRouter = require('./routes/users');
 const rolesRouter = require('./routes/roles');
 const systemRouter = require('./routes/system');
+const tokensRouter = require('./routes/tokens');
+const organizationsRouter = require('./routes/organizations');
+const { register: metricsRegister, metricsMiddleware, refreshMetrics } = require('./services/metrics');
 
 const app = express();
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));
@@ -60,6 +63,20 @@ app.use(cookieParser());
 // Rate Limiter
 app.use('/api/', apiLimiter);
 
+// Prometheus HTTP metrics
+app.use(metricsMiddleware);
+
+// Public Prometheus metrics endpoint
+app.get('/metrics', async (req, res) => {
+  const metricsToken = process.env.METRICS_TOKEN;
+  if (metricsToken) {
+    const provided = req.headers['x-metrics-token'] || req.query.token;
+    if (provided !== metricsToken) return res.status(401).json({ error: 'Unauthorized' });
+  }
+  res.setHeader('Content-Type', metricsRegister.contentType);
+  res.send(await metricsRegister.metrics());
+});
+
 // ─── Public API Routes ───────────────────────────────────────────────────────
 
 app.use('/api', authRouter);
@@ -78,6 +95,8 @@ app.use('/api', schedulesRouter);
 app.use('/api', usersRouter);
 app.use('/api', rolesRouter);
 app.use('/api', systemRouter);
+app.use('/api', tokensRouter);
+app.use('/api', organizationsRouter);
 
 // ─── Frontend Static Files ───────────────────────────────────────────────────
 

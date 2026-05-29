@@ -25,6 +25,8 @@ import Repos from './pages/Repos';
 import Settings from './pages/Settings';
 import Users from './pages/Users';
 import Roles from './pages/Roles';
+import ApiTokens from './pages/ApiTokens';
+import Organizations from './pages/Organizations';
 
 function ProtectedLayout({ isDark, toggleTheme }) {
   const { loggedIn } = useAuth();
@@ -68,6 +70,8 @@ function ProtectedLayout({ isDark, toggleTheme }) {
               <Route path="/settings" element={<Settings toggleTheme={toggleTheme} isDark={isDark} />} />
               <Route path="/users" element={<Users />} />
               <Route path="/roles" element={<Roles />} />
+              <Route path="/tokens" element={<ApiTokens />} />
+              <Route path="/organizations" element={<Organizations />} />
             </Routes>
           </ErrorBoundary>
         </Box>

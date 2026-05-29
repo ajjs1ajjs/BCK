@@ -112,6 +112,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
   CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(status);
   CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+
+  CREATE TABLE IF NOT EXISTS organizations (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    createdAt TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS api_tokens (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    tokenHash TEXT NOT NULL UNIQUE,
+    userId TEXT NOT NULL,
+    orgId TEXT DEFAULT 'default',
+    permissions TEXT DEFAULT '{}',
+    lastUsedAt TEXT,
+    expiresAt TEXT,
+    createdAt TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(tokenHash);
 `);
 
 // Ensure schema is up to date (add columns if they don't exist)
@@ -128,6 +149,30 @@ try {
   if (!schedCols.includes('lastRunAt')) db.exec('ALTER TABLE schedules ADD COLUMN lastRunAt TEXT');
 } catch (e) {
   console.error('Failed to update schedules table schema:', e.message);
+}
+
+// Add orgId to multi-tenant tables (non-breaking migration)
+const orgTables = ['users', 'backups', 'schedules', 'db_connections', 'ssh_connections', 'cloud_credentials'];
+for (const table of orgTables) {
+  try {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+    if (!cols.includes('orgId')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN orgId TEXT DEFAULT 'default'`);
+    }
+  } catch (e) {
+    console.error(`Failed to add orgId to ${table}:`, e.message);
+  }
+}
+
+// Seed default organization if not exists
+try {
+  const existing = db.prepare("SELECT id FROM organizations WHERE id = 'default'").get();
+  if (!existing) {
+    db.prepare('INSERT INTO organizations (id, name, slug, createdAt) VALUES (?, ?, ?, ?)')
+      .run('default', 'Default Organization', 'default', new Date().toISOString());
+  }
+} catch (e) {
+  console.error('Failed to seed default organization:', e.message);
 }
 
 // Migration from db.json

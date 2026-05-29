@@ -1,15 +1,21 @@
 # BCK Backup System
 
-Enterprise-grade web-based backup management system with scheduling, monitoring, multi-source support, role-based access control, and real-time analytics.
+Enterprise-grade web-based backup management system with scheduling, monitoring, multi-source support, role-based access control, real-time analytics, multi-tenancy, and PWA support.
 
 ## Features
 
 - **Backup Management** — Create, run, and monitor database, VM, cloud, SSH, and host backups
 - **Scheduling** — Cron-based automated backup schedules with `lastRunAt` tracking
 - **Restore** — One-click restore from any backup point
-- **Multi-Source** — MySQL, PostgreSQL, Oracle, MSSQL, MongoDB, Redis; VMware, Hyper-V; AWS S3, GCS, Azure Blob; SSH remote; Linux/Windows host directories
+- **Multi-Source** — MySQL, PostgreSQL, Oracle, MSSQL, MongoDB, Redis; VMware, Hyper-V; AWS S3, GCS, Azure Blob; MinIO (S3-compatible); SSH remote; Linux/Windows host directories
 - **Dashboard Analytics** — Real-time charts (area, pie), storage gauges, activity timeline, backup engine and status distribution
 - **Repositories** — Browse all backup files, disk usage meter, download/delete, export CSV/JSON
+- **Multi-Tenant Organizations** — Manage multiple organizations with isolated data, default org always protected
+- **API Tokens** — Generate `bck_` prefixed tokens for CI/CD pipelines; scoped permissions, expiry, one-time reveal
+- **Prometheus Metrics** — `/metrics` endpoint with HTTP counters, backup stats, disk gauges, Node.js internals (optional `METRICS_TOKEN` protection)
+- **Grafana Integration** — Pre-built auto-provisioned dashboard; full Prometheus + Grafana stack via `docker-compose.full.yml`
+- **MinIO S3 Storage** — S3-compatible object storage included in the full stack; plug-in as cloud destination
+- **PWA (Progressive Web App)** — Installable on mobile/desktop; offline shell; app shortcuts; Apple/Android meta tags
 - **User Management** — Role-based access control with custom per-permission granularity, 2FA (TOTP)
 - **Activity Log** — Full audit trail (login, logout, user actions) with IP tracking; pagination & CSV/JSON export
 - **Retention Policies** — Automated cleanup by days AND by number of copies

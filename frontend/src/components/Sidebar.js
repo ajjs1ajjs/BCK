@@ -9,7 +9,7 @@ import {
   Cloud as CloudIcon, Dns as HostIcon, Policy as PolicyIcon, History as HistoryIcon,
   ExpandMore as ExpandIcon, ExpandLess as CollapseIcon,
   People as PeopleIcon, Security as SecurityIcon,
-  VpnKey as SshIcon,
+  VpnKey as SshIcon, Key as TokenIcon, Business as OrgIcon, Storage as RepoIcon,
 } from '@mui/icons-material';
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
@@ -155,6 +155,26 @@ export default function Sidebar() {
             <ListItemIcon sx={{ minWidth: 38, color: isActive('/history') ? 'primary.main' : 'text.secondary' }}><HistoryIcon /></ListItemIcon>
             <ListItemText primary={t('history')} primaryTypographyProps={{ fontSize: 14, fontWeight: isActive('/history') ? 600 : 400, color: isActive('/history') ? 'primary.main' : 'text.secondary' }} />
           </ListItemButton>
+
+          <ListItemButton onClick={() => navigate('/repos')} selected={isActive('/repos')}
+            sx={{ borderRadius: 2, mb: 0.5, px: 1.5, py: 1.2, '&.Mui-selected': { bgcolor: 'rgba(99,102,241,0.12)' } }}>
+            <ListItemIcon sx={{ minWidth: 38, color: isActive('/repos') ? 'primary.main' : 'text.secondary' }}><RepoIcon /></ListItemIcon>
+            <ListItemText primary="Repositories" primaryTypographyProps={{ fontSize: 14, fontWeight: isActive('/repos') ? 600 : 400, color: isActive('/repos') ? 'primary.main' : 'text.secondary' }} />
+          </ListItemButton>
+
+          <ListItemButton onClick={() => navigate('/tokens')} selected={isActive('/tokens')}
+            sx={{ borderRadius: 2, mb: 0.5, px: 1.5, py: 1.2, '&.Mui-selected': { bgcolor: 'rgba(99,102,241,0.12)' } }}>
+            <ListItemIcon sx={{ minWidth: 38, color: isActive('/tokens') ? 'primary.main' : 'text.secondary' }}><TokenIcon /></ListItemIcon>
+            <ListItemText primary="API Tokens" primaryTypographyProps={{ fontSize: 14, fontWeight: isActive('/tokens') ? 600 : 400, color: isActive('/tokens') ? 'primary.main' : 'text.secondary' }} />
+          </ListItemButton>
+
+          {can('manageUsers') && (
+            <ListItemButton onClick={() => navigate('/organizations')} selected={isActive('/organizations')}
+              sx={{ borderRadius: 2, mb: 0.5, px: 1.5, py: 1.2, '&.Mui-selected': { bgcolor: 'rgba(99,102,241,0.12)' } }}>
+              <ListItemIcon sx={{ minWidth: 38, color: isActive('/organizations') ? 'primary.main' : 'text.secondary' }}><OrgIcon /></ListItemIcon>
+              <ListItemText primary="Organizations" primaryTypographyProps={{ fontSize: 14, fontWeight: isActive('/organizations') ? 600 : 400, color: isActive('/organizations') ? 'primary.main' : 'text.secondary' }} />
+            </ListItemButton>
+          )}
 
           <ListItemButton onClick={() => navigate('/logs')} selected={isActive('/logs')}
             sx={{ borderRadius: 2, mb: 0.5, px: 1.5, py: 1.2, '&.Mui-selected': { bgcolor: 'rgba(99,102,241,0.12)' } }}>
