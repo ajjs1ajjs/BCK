@@ -1,4 +1,4 @@
-const { encrypt, decrypt } = require('./crypto');
+const { encrypt, decrypt, encryptFile, decryptFile } = require('./crypto');
 
 describe('Crypto Utility Tests', () => {
   const originalEnv = process.env.ENCRYPTION_KEY;
@@ -45,5 +45,29 @@ describe('Crypto Utility Tests', () => {
     const text = 'my-secret';
     const encrypted = encrypt(text);
     expect(decrypt(encrypted)).toBe(text);
+  });
+
+  test('should encrypt and decrypt a file correctly', async () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = path.join(__dirname, 'temp_crypto_test_src.txt');
+    const enc = path.join(__dirname, 'temp_crypto_test_enc.enc');
+    const dec = path.join(__dirname, 'temp_crypto_test_dec.txt');
+    
+    const content = 'Hello, this is a secret file content to be encrypted!';
+    fs.writeFileSync(src, content, 'utf8');
+    
+    await encryptFile(src, enc, 'my-file-pass');
+    expect(fs.existsSync(enc)).toBe(true);
+    expect(fs.readFileSync(enc, 'utf8')).not.toBe(content);
+    
+    await decryptFile(enc, dec, 'my-file-pass');
+    expect(fs.existsSync(dec)).toBe(true);
+    expect(fs.readFileSync(dec, 'utf8')).toBe(content);
+    
+    // Cleanup
+    try { fs.unlinkSync(src); } catch {}
+    try { fs.unlinkSync(enc); } catch {}
+    try { fs.unlinkSync(dec); } catch {}
   });
 });

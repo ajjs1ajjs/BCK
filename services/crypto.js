@@ -93,4 +93,48 @@ function decrypt(text) {
   }
 }
 
-module.exports = { encrypt, decrypt };
+const fs = require('fs');
+const fsPromises = require('fs').promises;
+
+async function encryptFile(srcPath, destPath, password) {
+  const key = crypto.scryptSync(password || process.env.ENCRYPTION_KEY || 'bck-fallback-pass', SALT, 32);
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  
+  const input = fs.createReadStream(srcPath);
+  const output = fs.createWriteStream(destPath);
+  
+  await new Promise((resolve, reject) => {
+    output.write(iv, (err) => {
+      if (err) return reject(err);
+      input.pipe(cipher).pipe(output);
+    });
+    output.on('finish', resolve);
+    output.on('error', reject);
+    input.on('error', reject);
+  });
+}
+
+async function decryptFile(srcPath, destPath, password) {
+  const key = crypto.scryptSync(password || process.env.ENCRYPTION_KEY || 'bck-fallback-pass', SALT, 32);
+  
+  const fd = await fsPromises.open(srcPath, 'r');
+  const buffer = Buffer.alloc(16);
+  await fd.read(buffer, 0, 16, 0);
+  await fd.close();
+  
+  const iv = buffer;
+  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+  
+  const input = fs.createReadStream(srcPath, { start: 16 });
+  const output = fs.createWriteStream(destPath);
+  
+  await new Promise((resolve, reject) => {
+    input.pipe(decipher).pipe(output);
+    output.on('finish', resolve);
+    output.on('error', reject);
+    input.on('error', reject);
+  });
+}
+
+module.exports = { encrypt, decrypt, encryptFile, decryptFile };

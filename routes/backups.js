@@ -102,35 +102,12 @@ const executeBackup = async (jobId) => {
       let result;
       const backupType = job.backupType || job.type;
 
-      if (['mysql', 'postgres', 'oracle', 'mongodb'].includes(backupType)) {
+      if (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'].includes(backupType)) {
         const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(job.config?.connectionId);
         const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : job.config;
         result = await dbService.backup({
           type: backupType, connection: conn, backupPath: job.destination, name: job.name,
         });
-        if (result.success && job.config?.cloudCredentialId) {
-          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
-          if (credRaw) {
-            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
-            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
-              if (cred.credentials[k] && cred.credentials[k] !== '***') {
-                 try {
-                   const dec = cryptoHelper.decrypt(cred.credentials[k]);
-                   if (k === 'credentials') {
-                     try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
-                   } else {
-                     cred.credentials[k] = dec;
-                   }
-                 } catch (e) {}
-              }
-            });
-            const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
-            if (!uploadRes.success) {
-              result.success = false;
-              result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
-            }
-          }
-        }
       } else if (['vmware', 'hyperv'].includes(backupType)) {
         result = await vmService.backup({
           type: backupType, vmName: job.config?.vmName || job.name,
@@ -180,6 +157,48 @@ const executeBackup = async (jobId) => {
         }
       } else {
         result = { success: true, file: job.destination, error: null };
+      }
+
+      if (result.success && backupType !== 'cloud') {
+        // 1. Encryption
+        if (job.config?.encryption) {
+          const encFile = result.file + '.enc';
+          try {
+            await cryptoHelper.encryptFile(result.file, encFile, job.config.encryptionPassword);
+            try { await fs.unlink(result.file); } catch (e) {}
+            result.file = encFile;
+            const stat = await fs.stat(encFile);
+            result.size = stat.size;
+          } catch (e) {
+            result.success = false;
+            result.error = `Backup succeeded but file encryption failed: ${e.message}`;
+          }
+        }
+
+        // 2. Cloud Upload
+        if (result.success && job.config?.cloudCredentialId) {
+          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
+          if (credRaw) {
+            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+              if (cred.credentials[k] && cred.credentials[k] !== '***') {
+                 try {
+                   const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                   if (k === 'credentials') {
+                     try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                   } else {
+                     cred.credentials[k] = dec;
+                   }
+                 } catch (e) {}
+              }
+            });
+            const uploadRes = await cloudService.upload(cred, result.file, path.basename(result.file));
+            if (!uploadRes.success) {
+              result.success = false;
+              result.error = `Backup succeeded but cloud upload failed: ${uploadRes.error}`;
+            }
+          }
+        }
       }
 
       const status = result.success ? 'completed' : 'failed';
@@ -352,11 +371,13 @@ router.post('/restore', authorize('restore'), async (req, res) => {
   res.json({ message: `Restore of ${job.name} initiated` });
 
   (async () => {
+    let tempDownloadedFile = null;
+    let tempDecryptedFile = null;
     try {
       let result;
       const backupType = job.backupType || job.type;
 
-      if (['mysql', 'postgres', 'oracle', 'mongodb'].includes(backupType)) {
+      if (['mysql', 'postgres', 'oracle', 'mongodb', 'mssql'].includes(backupType)) {
         const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(config?.connectionId);
         const conn = connRaw ? { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) } : null;
         let restoreFile = job.resultFile || config?.file;
@@ -381,9 +402,21 @@ router.post('/restore', authorize('restore'), async (req, res) => {
             const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
             if (downloadRes.success) {
               restoreFile = tempFile;
+              tempDownloadedFile = tempFile;
             } else {
               throw new Error(`Failed to download backup file from cloud: ${downloadRes.error}`);
             }
+          }
+        }
+
+        // Decrypt if needed
+        if (restoreFile && (restoreFile.endsWith('.enc') || job.config?.encryption)) {
+          tempDecryptedFile = path.join(os.tmpdir(), path.basename(restoreFile).replace(/\.enc$/, ''));
+          try {
+            await cryptoHelper.decryptFile(restoreFile, tempDecryptedFile, job.config?.encryptionPassword);
+            restoreFile = tempDecryptedFile;
+          } catch (e) {
+            throw new Error(`Failed to decrypt backup file: ${e.message}`);
           }
         }
 
@@ -391,32 +424,79 @@ router.post('/restore', authorize('restore'), async (req, res) => {
           type: backupType, connection: conn || config, file: restoreFile,
         });
 
-        if (job.config?.cloudCredentialId && restoreFile && restoreFile.startsWith(os.tmpdir())) {
-          try { await fs.unlink(restoreFile); } catch (e) {}
-        }
-      } else if (['vmware', 'hyperv'].includes(backupType)) {
-        result = await vmService.restore({
-          type: backupType, vmName: config?.vmName || job.name + '-restored',
-          host: config?.host, user: config?.user, password: config?.password,
-          file: job.resultFile,
-        });
-      } else if (backupType === 'host') {
-        result = await hostService.restore({
-          file: job.resultFile,
-          targetPath: targetType === 'original' ? (job.config?.sourcePath || job.source || '/') : (config?.targetPath || job.source || '/'),
-        });
-      } else if (backupType === 'cloud') {
-        const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config?.cloudCredentialId);
-        if (!credRaw) {
-          result = { success: false, error: 'Cloud credentials not found' };
-        } else {
-          const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
-          const localDest = targetType === 'original' ? job.destination : (config?.localPath || job.destination);
-          const downloadRes = await cloudService.download(cred, job.destination, localDest);
-          result = { success: downloadRes.success, error: downloadRes.error };
-        }
       } else {
-        result = { success: true };
+        let restoreFile = job.resultFile || config?.file;
+
+        // If stored in cloud (for hosts / VMs if they were uploaded)
+        if (job.config?.cloudCredentialId && restoreFile) {
+          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config.cloudCredentialId);
+          if (credRaw) {
+            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+            ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
+              if (cred.credentials[k] && cred.credentials[k] !== '***') {
+                try {
+                  const dec = cryptoHelper.decrypt(cred.credentials[k]);
+                  if (k === 'credentials') {
+                    try { cred.credentials[k] = JSON.parse(dec); } catch { cred.credentials[k] = dec; }
+                  } else {
+                    cred.credentials[k] = dec;
+                  }
+                } catch (e) {}
+              }
+            });
+            const tempFile = path.join(os.tmpdir(), path.basename(restoreFile));
+            const downloadRes = await cloudService.download(cred, path.basename(restoreFile), tempFile);
+            if (downloadRes.success) {
+              restoreFile = tempFile;
+              tempDownloadedFile = tempFile;
+            } else {
+              throw new Error(`Failed to download backup file from cloud: ${downloadRes.error}`);
+            }
+          }
+        }
+
+        // Decrypt if needed
+        if (restoreFile && (restoreFile.endsWith('.enc') || job.config?.encryption)) {
+          tempDecryptedFile = path.join(os.tmpdir(), path.basename(restoreFile).replace(/\.enc$/, ''));
+          try {
+            await cryptoHelper.decryptFile(restoreFile, tempDecryptedFile, job.config?.encryptionPassword);
+            restoreFile = tempDecryptedFile;
+          } catch (e) {
+            throw new Error(`Failed to decrypt backup file: ${e.message}`);
+          }
+        }
+
+        if (['vmware', 'hyperv'].includes(backupType)) {
+          result = await vmService.restore({
+            type: backupType, vmName: config?.vmName || job.name + '-restored',
+            host: config?.host, user: config?.user, password: config?.password,
+            file: restoreFile,
+          });
+        } else if (backupType === 'host') {
+          result = await hostService.restore({
+            file: restoreFile,
+            targetPath: targetType === 'original' ? (job.config?.sourcePath || job.source || '/') : (config?.targetPath || job.source || '/'),
+          });
+        } else if (backupType === 'cloud') {
+          const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(job.config?.cloudCredentialId);
+          if (!credRaw) {
+            result = { success: false, error: 'Cloud credentials not found' };
+          } else {
+            const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
+            const localDest = targetType === 'original' ? job.destination : (config?.localPath || job.destination);
+            const downloadRes = await cloudService.download(cred, job.destination, localDest);
+            result = { success: downloadRes.success, error: downloadRes.error };
+          }
+        } else {
+          result = { success: true };
+        }
+      }
+
+      if (tempDownloadedFile) {
+        try { await fs.unlink(tempDownloadedFile); } catch (e) {}
+      }
+      if (tempDecryptedFile) {
+        try { await fs.unlink(tempDecryptedFile); } catch (e) {}
       }
 
       const restoreMsg = result.success ? `Restore completed: ${job.name}` : `Restore failed: ${job.name} - ${result.error}`;

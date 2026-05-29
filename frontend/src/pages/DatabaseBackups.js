@@ -3,7 +3,7 @@ import {
   Box, Typography, Card, CardContent, Button, TextField, Dialog, DialogTitle,
   DialogContent, DialogActions, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Chip, IconButton, Tooltip, MenuItem, Snackbar, Alert,
-  Tabs, Tab,
+  Tabs, Tab, Switch, FormControlLabel,
 } from '@mui/material';
 import {
   Add as AddIcon, Delete as DeleteIcon, Edit as EditIcon,
@@ -73,7 +73,7 @@ export default function DatabaseBackups() {
   // Backup dialog
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: '', source: '', destination: '', type: 'mysql', config: { connectionId: '', database: '' } });
+    setForm({ name: '', source: '', destination: '', type: 'mysql', config: { connectionId: '', database: '', encryption: false, encryptionPassword: '' } });
     setDialogOpen(true);
   };
 
@@ -88,6 +88,8 @@ export default function DatabaseBackups() {
         connectionId: b.config?.connectionId || '',
         database: b.config?.database || '',
         cloudCredentialId: b.config?.cloudCredentialId || '',
+        encryption: b.config?.encryption || false,
+        encryptionPassword: b.config?.encryptionPassword || '',
       },
     });
     setDialogOpen(true);
@@ -298,6 +300,21 @@ export default function DatabaseBackups() {
               <MenuItem value="">None — local only</MenuItem>
               {cloudCreds.map(c => <MenuItem key={c.id} value={c.id}>{c.name} ({c.provider})</MenuItem>)}
             </TextField>
+            <FormControlLabel
+              control={<Switch checked={form.config.encryption || false} onChange={(e) => setForm({...form, config: {...form.config, encryption: e.target.checked}})} />}
+              label="Encrypt Backup File (AES-256)"
+            />
+            {form.config.encryption && (
+              <TextField
+                label="Encryption Password"
+                type="password"
+                fullWidth
+                required
+                value={form.config.encryptionPassword || ''}
+                onChange={(e) => setForm({...form, config: {...form.config, encryptionPassword: e.target.value}})}
+                placeholder="Enter password to encrypt/decrypt backup"
+              />
+            )}
           </Box>
         </DialogContent>
         <DialogActions>
