@@ -1,79 +1,96 @@
+const { db } = require('./db');
 const logger = require('./logger');
+const { executeBackup } = require('./backupExecutor'); // Warning: potential circular dependency if backupExecutor requires queue
 
-class TaskQueue {
+class DBTaskQueue {
   constructor(concurrency = 2, maxRetries = 3) {
     this.concurrency = concurrency;
     this.maxRetries = maxRetries;
     this.running = 0;
-    this.queue = [];
+    this.timer = null;
+    this.isProcessing = false;
   }
 
-  /**
-   * Adds a task to the queue.
-   * @param {string} id Unique identifier for the task
-   * @param {Function} task Async function to execute
-   * @param {Object} metadata Additional info
-   * @param {number} retry Attempt number (starts at 0)
-   */
-  push(id, task, metadata = {}, retry = 0) {
-    return new Promise((resolve, reject) => {
-      this.queue.push({ id, task, metadata, retry, resolve, reject });
-      this.next();
-    });
+  start() {
+    if (this.timer) return;
+    this.timer = setInterval(() => this.processQueue(), 5000);
+    logger.info('DB-backed TaskQueue started.');
   }
 
-  async next() {
-    if (this.running >= this.concurrency || this.queue.length === 0) {
-      return;
+  stop() {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
     }
+  }
 
-    const item = this.queue.shift();
-    const { id, task, metadata, retry, resolve, reject } = item;
-    this.running++;
-
-    const attemptLabel = retry > 0 ? ` (Attempt ${retry + 1})` : '';
-    logger.info(`Starting task ${id}${attemptLabel}. Queue size: ${this.queue.length}`);
-
+  // Instead of passing arbitrary function, we just record the intent in DB.
+  // Actually, for backups, the record is already created in the 'backups' table with status 'pending' by the API route.
+  // The executeBackup logic can be called directly by processQueue.
+  // We just need a way to 'push' immediately to wake up the queue.
+  async push(jobId) {
+    logger.info(`Job ${jobId} pushed to queue.`);
     if (global.io) {
-      global.io.emit('taskStarted', { id, name: metadata.name, retry });
+      global.io.emit('jobQueued', { id: jobId });
       global.io.emit('queueStats', this.getStats());
     }
+    this.processQueue(); // trigger immediately
+  }
+
+  async processQueue() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
 
     try {
-      const result = await task();
-      resolve(result);
-    } catch (err) {
-      if (retry < this.maxRetries) {
-        logger.warn(`Task ${id} failed, retrying in 30s... (${retry + 1}/${this.maxRetries})`);
-        setTimeout(() => {
-          this.push(id, task, metadata, retry + 1)
-            .then(resolve)
-            .catch(reject);
-        }, 30000);
-      } else {
-        logger.error(`Task ${id} failed after ${this.maxRetries} retries: ${err.message}`);
-        reject(err);
+      while (this.running < this.concurrency) {
+        // Find next pending backup
+        // Note: Using a transaction/lock is best for multi-worker, but for single instance this is fine.
+        const pendingJob = await db.get(`
+          SELECT * FROM backups 
+          WHERE status = 'pending' 
+          ORDER BY createdAt ASC 
+          LIMIT 1
+        `);
+
+        if (!pendingJob) break; // no more jobs
+
+        this.running++;
+        
+        // Let it run in background
+        this.runJob(pendingJob).catch(err => {
+          logger.error(`Unhandled error in job ${pendingJob.id}: ${err.message}`);
+        }).finally(() => {
+          this.running--;
+          if (global.io) global.io.emit('queueStats', this.getStats());
+          this.processQueue(); // trigger next
+        });
       }
+    } catch (e) {
+      logger.error('Error in processQueue: ' + e.message);
     } finally {
-      this.running--;
-      if (global.io) {
-        global.io.emit('queueStats', this.getStats());
-      }
-      this.next();
+      this.isProcessing = false;
+    }
+  }
+
+  async runJob(job) {
+    const backupExecutor = require('./backupExecutor');
+    try {
+      await backupExecutor.executeBackupInternal(job.id);
+    } catch (e) {
+      // executor already sets it to failed
     }
   }
 
   getStats() {
     return {
       running: this.running,
-      pending: this.queue.length,
+      pending: -1, // Cannot easily know without a DB count query, we can omit or send an estimate
       concurrency: this.concurrency
     };
   }
 }
 
-// Create a singleton instance
-const backupQueue = new TaskQueue(
+const backupQueue = new DBTaskQueue(
   parseInt(process.env.MAX_CONCURRENT_BACKUPS) || 2,
   parseInt(process.env.MAX_BACKUP_RETRIES) || 3
 );

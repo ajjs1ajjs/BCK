@@ -13,7 +13,7 @@ function hashToken(raw) {
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   const cookieToken = req.cookies?.token;
 
@@ -25,7 +25,7 @@ const authenticate = (req, res, next) => {
   if (rawToken) {
     const db = getDb();
     const hashed = hashToken(rawToken);
-    const apiToken = db.prepare('SELECT * FROM api_tokens WHERE tokenHash = ?').get(hashed);
+    const apiToken = await db.get('SELECT * FROM api_tokens WHERE tokenHash = ?', hashed);
 
     if (!apiToken) return res.status(401).json({ error: 'Invalid API token' });
 
@@ -35,11 +35,11 @@ const authenticate = (req, res, next) => {
     }
 
     // Lookup associated user
-    const user = db.prepare('SELECT id, username, role, email FROM users WHERE id = ? AND active = 1').get(apiToken.userId);
+    const user = await db.get('SELECT id, username, role, email FROM users WHERE id = ? AND active = 1', apiToken.userId);
     if (!user) return res.status(401).json({ error: 'Token user not found or inactive' });
 
     // Fetch role permissions
-    const role = db.prepare('SELECT permissions FROM roles WHERE id = ?').get(user.role);
+    const role = await db.get('SELECT permissions FROM roles WHERE id = ?', user.role);
     const rolePermissions = role ? JSON.parse(role.permissions) : {};
     const tokenPermissions = JSON.parse(apiToken.permissions || '{}');
 
@@ -50,9 +50,9 @@ const authenticate = (req, res, next) => {
       : rolePermissions;
 
     // Update lastUsedAt asynchronously (don't block request)
-    setImmediate(() => {
+    setImmediate(async () => {
       try {
-        db.prepare('UPDATE api_tokens SET lastUsedAt = ? WHERE id = ?').run(new Date().toISOString(), apiToken.id);
+        await db.run('UPDATE api_tokens SET lastUsedAt = ? WHERE id = ?', new Date().toISOString(), apiToken.id);
       } catch (e) {}
     });
 

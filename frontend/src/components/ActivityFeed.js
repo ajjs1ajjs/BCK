@@ -1,13 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Typography, Stack, alpha } from '@mui/material';
-import { 
-  PlayArrow as RunIcon, 
-  CheckCircle as SuccessIcon, 
-  Error as ErrorIcon,
-  HourglassEmpty as PendingIcon
-} from '@mui/icons-material';
+import { Play, CheckCircle2, AlertCircle, Hourglass } from 'lucide-react';
 import { useSocket } from '../context/SocketContext';
-import { C } from './DashboardWidgets';
 
 export default function ActivityFeed() {
   const { lastEvent } = useSocket();
@@ -21,54 +14,50 @@ export default function ActivityFeed() {
 
   if (events.length === 0) {
     return (
-      <Box sx={{ py: 4, textAlign: 'center', opacity: 0.5 }}>
-        <Typography variant="body2">No real-time activity yet</Typography>
-      </Box>
+      <div className="py-8 text-center opacity-50">
+        <p className="text-sm text-slate-500 dark:text-slate-400">No real-time activity yet</p>
+      </div>
     );
   }
 
+  const getEventColors = (type) => {
+    switch (type) {
+      case 'completed': return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400';
+      case 'failed': return 'bg-red-500/15 text-red-600 dark:text-red-400';
+      case 'started': return 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400';
+      default: return 'bg-amber-500/15 text-amber-600 dark:text-amber-400'; // queued
+    }
+  };
+
+  const getEventIcon = (type) => {
+    switch (type) {
+      case 'completed': return <CheckCircle2 size={16} />;
+      case 'failed': return <AlertCircle size={16} />;
+      case 'started': return <Play size={16} />;
+      default: return <Hourglass size={16} />;
+    }
+  };
+
   return (
-    <Stack spacing={1.5}>
+    <div className="space-y-3">
       {events.map((ev, i) => (
-        <Box key={i} sx={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: 2, 
-          p: 1.5, 
-          borderRadius: 2, 
-          bgcolor: 'rgba(255,255,255,0.02)',
-          border: '1px solid rgba(255,255,255,0.04)',
-          animation: i === 0 ? 'slideIn 0.3s ease-out' : 'none',
-          '@keyframes slideIn': {
-            from: { transform: 'translateX(-10px)', opacity: 0 },
-            to: { transform: 'translateX(0)', opacity: 1 }
-          }
-        }}>
-          <Box sx={{ 
-            width: 32, 
-            height: 32, 
-            borderRadius: '50%', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            bgcolor: alpha(ev.type === 'completed' ? C.success : ev.type === 'failed' ? C.error : ev.type === 'started' ? C.secondary : C.warning, 0.15),
-            color: ev.type === 'completed' ? C.success : ev.type === 'failed' ? C.error : ev.type === 'started' ? C.secondary : C.warning
-          }}>
-            {ev.type === 'completed' && <SuccessIcon sx={{ fontSize: 18 }} />}
-            {ev.type === 'failed' && <ErrorIcon sx={{ fontSize: 18 }} />}
-            {ev.type === 'started' && <RunIcon sx={{ fontSize: 18 }} />}
-            {ev.type === 'queued' && <PendingIcon sx={{ fontSize: 18 }} />}
-          </Box>
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography variant="body2" noWrap sx={{ fontWeight: 600, color: '#fff' }}>
+        <div 
+          key={i} 
+          className={`flex items-center gap-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50 ${i === 0 ? 'animate-slide-in' : ''}`}
+        >
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${getEventColors(ev.type)}`}>
+            {getEventIcon(ev.type)}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
               {ev.name}
-            </Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block' }}>
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 block truncate">
               {ev.type.toUpperCase()} • {ev.timestamp.toLocaleTimeString()}
-            </Typography>
-          </Box>
-        </Box>
+            </p>
+          </div>
+        </div>
       ))}
-    </Stack>
+    </div>
   );
 }

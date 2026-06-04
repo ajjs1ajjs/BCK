@@ -1,15 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Box, Card, CardContent, Typography, Button, TextField, Dialog, DialogTitle,
-  DialogContent, DialogActions, Switch, List, ListItem, ListItemText,
-  Chip, IconButton, Tooltip, Snackbar, Alert, MenuItem,
-} from '@mui/material';
-import {
-  Add as AddIcon, Delete as DeleteIcon, Edit as EditIcon,
-  Refresh as RefreshIcon, Schedule as ScheduleIcon,
-} from '@mui/icons-material';
+import { 
+  CalendarClock, Plus, Trash2, Edit2, RefreshCw, 
+  AlertCircle, CheckCircle2, X, Clock, PlayCircle
+} from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
-
 import { API } from '../utils/config';
 
 export default function Schedules() {
@@ -18,7 +12,7 @@ export default function Schedules() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', cronExpression: '0 0 * * *', backupId: '', enabled: true, notifyOn: 'failure', description: '' });
-  const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
+  const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t, lang } = useTranslation();
 
   // Builder states
@@ -28,6 +22,11 @@ export default function Schedules() {
   const [builderTime, setBuilderTime] = useState('00:00');
   const [builderDay, setBuilderDay] = useState('0');
   const [builderDate, setBuilderDate] = useState('1');
+
+  const showSnack = (msg, type = 'success') => {
+    setSnack({ open: true, msg, type });
+    setTimeout(() => setSnack({ open: false, msg: '', type: 'success' }), 4000);
+  };
 
   const explainCron = (cron) => {
     if (!cron) return '';
@@ -97,9 +96,9 @@ export default function Schedules() {
 
   const updateCronFromBuilder = (type, hourly, minOffset, time, day, date) => {
     let expr = '0 0 * * *';
-    const [h, m] = time.split(':');
-    const hr = parseInt(h);
-    const mn = parseInt(m);
+    const [h, m] = (time || '00:00').split(':');
+    const hr = parseInt(h) || 0;
+    const mn = parseInt(m) || 0;
 
     if (type === 'hourly') {
       if (hourly === '1') {
@@ -165,9 +164,10 @@ export default function Schedules() {
     setDialogOpen(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (e) => {
+    e.preventDefault();
     if (!form.name || !form.cronExpression || !form.backupId) {
-      setSnack({ open: true, msg: t('allFieldsRequired'), severity: 'warning' });
+      showSnack(t('allFieldsRequired'), 'warning');
       return;
     }
     const method = editing ? 'PUT' : 'POST';
@@ -175,21 +175,22 @@ export default function Schedules() {
     try {
       const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (!r.ok) throw new Error();
-      setSnack({ open: true, msg: editing ? t('scheduleUpdated') : t('scheduleCreated'), severity: 'success' });
+      showSnack(editing ? t('scheduleUpdated') : t('scheduleCreated'), 'success');
       setDialogOpen(false);
       load();
     } catch {
-      setSnack({ open: true, msg: t('failedToSave'), severity: 'error' });
+      showSnack(t('failedToSave'), 'error');
     }
   };
 
   const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this schedule?")) return;
     try {
       await fetch(`${API}/api/schedules/${id}`, { method: 'DELETE' });
-      setSnack({ open: true, msg: t('scheduleDeleted'), severity: 'success' });
+      showSnack(t('scheduleDeleted'), 'success');
       load();
     } catch {
-      setSnack({ open: true, msg: t('failedToDelete'), severity: 'error' });
+      showSnack(t('failedToDelete'), 'error');
     }
   };
 
@@ -206,220 +207,389 @@ export default function Schedules() {
   };
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="h4">{t('schedules')}</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
-          {t('newSchedule')}
-        </Button>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t('automatedSchedulesCount', { total: schedules.length })}
-      </Typography>
+    <div className="max-w-7xl mx-auto pb-12">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+            {t('schedules')}
+          </h1>
+          <p className="text-sm font-medium text-slate-500">
+            {t('automatedSchedulesCount', { total: schedules.length }).replace('{{total}}', schedules.length)}
+          </p>
+        </div>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={load} className="btn-secondary py-2.5 px-4 flex-1 sm:flex-none">
+            <RefreshCw size={18} />
+          </button>
+          <button onClick={openCreate} className="btn-primary py-2.5 px-4 flex-1 sm:flex-none">
+            <Plus size={18} />
+            {t('newSchedule')}
+          </button>
+        </div>
+      </div>
 
-      <Card>
-        <CardContent>
-          <Box sx={{ display: 'flex', gap: 1.5, mb: 2 }}>
-            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
-          </Box>
+      <div className="glass-card mb-6">
+        {schedules.length === 0 ? (
+          <div className="p-12 text-center text-slate-500">
+            <CalendarClock size={48} className="mx-auto mb-4 opacity-20" />
+            <p className="text-sm font-medium">{t('noSchedulesYet')}</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+            {schedules.map((s) => (
+              <div key={s.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  
+                  {/* Left Side: Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white truncate">
+                        {s.name}
+                      </h3>
+                      {s.enabled !== false ? (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-600 border-emerald-500/20 uppercase tracking-wider whitespace-nowrap">
+                          {t('activeScheduleLabel') || 'Active'}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-100 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700 uppercase tracking-wider whitespace-nowrap">
+                          {t('disabledScheduleLabel') || 'Disabled'}
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+                      <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded border border-blue-100 dark:border-blue-800/30">
+                        <Clock size={14} />
+                        {explainCron(s.cronExpression || s.cron)}
+                      </div>
+                      
+                      <div className="text-slate-500 font-mono text-xs">
+                        {s.cronExpression || s.cron}
+                      </div>
 
-          {schedules.length === 0 ? (
-            <Box sx={{ py: 6, textAlign: 'center' }}>
-              <Typography color="text.secondary">{t('noSchedulesYet')}</Typography>
-            </Box>
-          ) : (
-            <List disablePadding>
-              {schedules.map((s) => (
-                <ListItem
-                  key={s.id}
-                  sx={{
-                    px: 2, py: 1.5, borderRadius: 1, mb: 0.5,
-                    bgcolor: 'action.hover', border: '1px solid', borderColor: 'divider',
-                  }}
-                >
-                  <ListItemText
-                    primary={
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                        <Typography sx={{ fontWeight: 600 }}>{s.name}</Typography>
-                        <Chip label={s.enabled !== false ? t('activeScheduleLabel') : t('disabledScheduleLabel')} size="small" color={s.enabled !== false ? 'success' : 'default'} />
-                      </Box>
-                    }
-                    secondary={
-                      <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: 13, fontWeight: 500 }}>
-                          {explainCron(s.cronExpression || s.cron)} ({s.cronExpression || s.cron})
-                        </Typography>
-                        {s.backupId && (
-                          <Chip label={`Backup: ${backups.find(b => b.id === s.backupId)?.name || s.backupId}`} size="small" variant="outlined" />
-                        )}
-                        <Typography variant="caption">
-                          {t('createdAt')}: {(s.createdAt || '').slice(0, 10)}
-                        </Typography>
-                      </Box>
-                    }
+                      {s.backupId && (
+                        <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-600"></span>
+                          <span className="truncate max-w-[200px]">
+                            Backup: {backups.find(b => b.id === s.backupId)?.name || s.backupId}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Side: Actions */}
+                  <div className="flex items-center gap-3 pl-2 border-l border-slate-200 dark:border-slate-700">
+                    <label className="relative inline-flex items-center cursor-pointer mr-2">
+                      <input 
+                        type="checkbox" 
+                        className="sr-only peer"
+                        checked={s.enabled !== false}
+                        onChange={() => toggleEnabled(s)}
+                      />
+                      <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-blue-600"></div>
+                    </label>
+                    <button onClick={() => openEdit(s)} className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 rounded transition-colors" title={t('edit')}>
+                      <Edit2 size={18} />
+                    </button>
+                    <button onClick={() => handleDelete(s.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded transition-colors" title={t('delete')}>
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Form Dialog */}
+      {dialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-fade-in overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 my-8" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-5 sm:p-6 border-b border-slate-100 dark:border-slate-800 sticky top-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur z-10 rounded-t-2xl">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                {editing ? t('editSchedule') : t('newSchedule')}
+              </h2>
+              <button onClick={() => setDialogOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleSave} className="p-5 sm:p-6 space-y-6">
+              
+              {/* Basic Info */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    {t('scheduleName')} <span className="text-red-500">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    required 
+                    value={form.name} 
+                    onChange={e => setForm({...form, name: e.target.value})} 
+                    placeholder="e.g. Nightly DB Backup" 
+                    className="input-field" 
                   />
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 2 }}>
-                    <Switch
-                      checked={s.enabled !== false}
-                      onChange={() => toggleEnabled(s)}
-                      size="small"
-                    />
-                    <Tooltip title={t('edit')}><IconButton size="small" onClick={() => openEdit(s)}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                    <Tooltip title={t('delete')}><IconButton size="small" onClick={() => handleDelete(s.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
-                  </Box>
-                </ListItem>
-              ))}
-            </List>
-          )}
-        </CardContent>
-      </Card>
+                </div>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth scroll="paper">
-        <DialogTitle>{editing ? t('editSchedule') : t('newSchedule')}</DialogTitle>
-        <DialogContent dividers>
-          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2.5, py: 0.5 }}>
-            <TextField label={t('scheduleName')} fullWidth required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} placeholder="e.g. Nightly DB Backup" />
-
-            <TextField
-              select label={t('cronFrequencyType')} fullWidth value={builderType}
-              onChange={(e) => {
-                const newType = e.target.value;
-                setBuilderType(newType);
-                updateCronFromBuilder(newType, builderHourly, builderMin, builderTime, builderDay, builderDate);
-              }}
-            >
-              <MenuItem value="hourly">{t('cronHourly')}</MenuItem>
-              <MenuItem value="daily">{t('cronDaily')}</MenuItem>
-              <MenuItem value="weekly">{t('cronWeekly')}</MenuItem>
-              <MenuItem value="monthly">{t('cronMonthly')}</MenuItem>
-              <MenuItem value="advanced">{t('cronAdvanced')}</MenuItem>
-            </TextField>
-
-            {builderType === 'hourly' && (
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <TextField
-                  select label={t('everyXHours')} fullWidth value={builderHourly}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setBuilderHourly(v);
-                    updateCronFromBuilder(builderType, v, builderMin, builderTime, builderDay, builderDate);
-                  }}
-                >
-                  {['1', '2', '3', '4', '6', '8', '12'].map(h => <MenuItem key={h} value={h}>{h}</MenuItem>)}
-                </TextField>
-                <TextField
-                  select label={t('atMinute')} fullWidth value={builderMin}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setBuilderMin(v);
-                    updateCronFromBuilder(builderType, builderHourly, v, builderTime, builderDay, builderDate);
-                  }}
-                >
-                  {['0', '5', '10', '15', '20', '30', '45'].map(m => <MenuItem key={m} value={m}>{m}</MenuItem>)}
-                </TextField>
-              </Box>
-            )}
-
-            {(builderType === 'daily' || builderType === 'weekly' || builderType === 'monthly') && (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {builderType === 'weekly' && (
-                  <TextField
-                    select label={t('dayOfWeek')} fullWidth value={builderDay}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setBuilderDay(v);
-                      updateCronFromBuilder(builderType, builderHourly, builderMin, builderTime, v, builderDate);
-                    }}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    {t('backupJob')} <span className="text-red-500">*</span>
+                  </label>
+                  <select 
+                    required
+                    value={form.backupId} 
+                    onChange={e => setForm({...form, backupId: e.target.value})}
+                    className="input-field"
                   >
-                    {[
-                      { label: lang === 'uk' ? 'Неділя' : 'Sunday', value: '0' },
-                      { label: lang === 'uk' ? 'Понеділок' : 'Monday', value: '1' },
-                      { label: lang === 'uk' ? 'Вівторок' : 'Tuesday', value: '2' },
-                      { label: lang === 'uk' ? 'Середа' : 'Wednesday', value: '3' },
-                      { label: lang === 'uk' ? 'Четвер' : 'Thursday', value: '4' },
-                      { label: lang === 'uk' ? 'П\'ятниця' : 'Friday', value: '5' },
-                      { label: lang === 'uk' ? 'Субота' : 'Saturday', value: '6' },
-                    ].map(d => <MenuItem key={d.value} value={d.value}>{d.label}</MenuItem>)}
-                  </TextField>
-                )}
-                {builderType === 'monthly' && (
-                  <TextField
-                    select label={t('dayOfMonth')} fullWidth value={builderDate}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setBuilderDate(v);
-                      updateCronFromBuilder(builderType, builderHourly, builderMin, builderTime, builderDay, v);
-                    }}
-                  >
-                    {Array.from({ length: 28 }, (_, i) => String(i + 1)).map(d => (
-                      <MenuItem key={d} value={d}>{d}</MenuItem>
+                    <option value="" disabled>Select a backup job...</option>
+                    {backups.map(b => (
+                      <option key={b.id} value={b.id}>{b.name} ({b.type || b.backupType})</option>
                     ))}
-                  </TextField>
+                  </select>
+                  {backups.length === 0 && (
+                    <p className="text-xs text-amber-600 mt-1 flex items-center gap-1">
+                      <AlertCircle size={12} /> No backup jobs available — create one first
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <hr className="border-slate-100 dark:border-slate-800" />
+
+              {/* Schedule Builder */}
+              <div className="space-y-4 bg-slate-50/50 dark:bg-slate-800/30 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <CalendarClock size={16} className="text-blue-500" />
+                  Schedule Timing
+                </h3>
+                
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">
+                    {t('cronFrequencyType')}
+                  </label>
+                  <select 
+                    value={builderType}
+                    onChange={(e) => {
+                      const newType = e.target.value;
+                      setBuilderType(newType);
+                      updateCronFromBuilder(newType, builderHourly, builderMin, builderTime, builderDay, builderDate);
+                    }}
+                    className="input-field py-2"
+                  >
+                    <option value="hourly">{t('cronHourly') || 'Hourly'}</option>
+                    <option value="daily">{t('cronDaily') || 'Daily'}</option>
+                    <option value="weekly">{t('cronWeekly') || 'Weekly'}</option>
+                    <option value="monthly">{t('cronMonthly') || 'Monthly'}</option>
+                    <option value="advanced">{t('cronAdvanced') || 'Advanced (Cron)'}</option>
+                  </select>
+                </div>
+
+                {builderType === 'hourly' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('everyXHours') || 'Every X Hours'}</label>
+                      <select 
+                        value={builderHourly}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBuilderHourly(v);
+                          updateCronFromBuilder(builderType, v, builderMin, builderTime, builderDay, builderDate);
+                        }}
+                        className="input-field py-2"
+                      >
+                        {['1', '2', '3', '4', '6', '8', '12'].map(h => <option key={h} value={h}>{h}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('atMinute') || 'At Minute'}</label>
+                      <select 
+                        value={builderMin}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBuilderMin(v);
+                          updateCronFromBuilder(builderType, builderHourly, v, builderTime, builderDay, builderDate);
+                        }}
+                        className="input-field py-2"
+                      >
+                        {['0', '5', '10', '15', '20', '30', '45'].map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                  </div>
                 )}
-                <TextField
-                  label={t('runTime')} type="time" fullWidth value={builderTime}
-                  InputLabelProps={{ shrink: true }}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    setBuilderTime(v);
-                    updateCronFromBuilder(builderType, builderHourly, builderMin, v, builderDay, builderDate);
-                  }}
-                />
-              </Box>
-            )}
 
-            {builderType === 'advanced' && (
-              <TextField
-                label={t('cronExpressionCustom')} fullWidth value={form.cronExpression}
-                onChange={(e) => setForm({ ...form, cronExpression: e.target.value })}
-                placeholder="0 */6 * * *" helperText={t('cronHelper')}
-              />
-            )}
-
-            <TextField select label={t('backupJob')} fullWidth required value={form.backupId} onChange={(e) => setForm({...form, backupId: e.target.value})}>
-              {backups.map((b) => (
-                <MenuItem key={b.id} value={b.id}>{b.name} ({b.type || b.backupType})</MenuItem>
-              ))}
-              {backups.length === 0 && <MenuItem disabled value="">No backup jobs — create one first</MenuItem>}
-            </TextField>
-
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Typography variant="body2">{t('enabledCol')}</Typography>
-              <Switch checked={form.enabled !== false} onChange={(e) => setForm({...form, enabled: e.target.checked})} />
-            </Box>
-
-            <TextField select label={t('notifyOn')} fullWidth value={form.notifyOn || 'failure'} onChange={(e) => setForm({...form, notifyOn: e.target.value})}>
-              <MenuItem value="never">Never</MenuItem>
-              <MenuItem value="failure">Failure only</MenuItem>
-              <MenuItem value="all">All results</MenuItem>
-            </TextField>
-
-            <TextField label={t('descriptionOptional')} fullWidth multiline rows={2} value={form.description || ''} onChange={(e) => setForm({...form, description: e.target.value})} placeholder="What this schedule does" />
-
-            <Box sx={{ display: 'flex', gap: 1, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
-              <ScheduleIcon fontSize="small" sx={{ color: 'text.secondary', mt: 0.3 }} />
-              <Box>
-                <Typography variant="caption" color="text.secondary" display="block">
-                  {t('currentSchedule')}: <strong>{form.cronExpression || '—'}</strong>
-                </Typography>
-                {form.cronExpression && (
-                  <Typography variant="caption" color="text.secondary">
-                    {explainCron(form.cronExpression)}
-                  </Typography>
+                {(builderType === 'daily' || builderType === 'weekly' || builderType === 'monthly') && (
+                  <div className="space-y-3">
+                    {builderType === 'weekly' && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('dayOfWeek') || 'Day of Week'}</label>
+                        <select 
+                          value={builderDay}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBuilderDay(v);
+                            updateCronFromBuilder(builderType, builderHourly, builderMin, builderTime, v, builderDate);
+                          }}
+                          className="input-field py-2"
+                        >
+                          {[
+                            { label: lang === 'uk' ? 'Неділя' : 'Sunday', value: '0' },
+                            { label: lang === 'uk' ? 'Понеділок' : 'Monday', value: '1' },
+                            { label: lang === 'uk' ? 'Вівторок' : 'Tuesday', value: '2' },
+                            { label: lang === 'uk' ? 'Середа' : 'Wednesday', value: '3' },
+                            { label: lang === 'uk' ? 'Четвер' : 'Thursday', value: '4' },
+                            { label: lang === 'uk' ? 'П\'ятниця' : 'Friday', value: '5' },
+                            { label: lang === 'uk' ? 'Субота' : 'Saturday', value: '6' },
+                          ].map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                        </select>
+                      </div>
+                    )}
+                    {builderType === 'monthly' && (
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('dayOfMonth') || 'Day of Month'}</label>
+                        <select 
+                          value={builderDate}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setBuilderDate(v);
+                            updateCronFromBuilder(builderType, builderHourly, builderMin, builderTime, builderDay, v);
+                          }}
+                          className="input-field py-2"
+                        >
+                          {Array.from({ length: 28 }, (_, i) => String(i + 1)).map(d => (
+                            <option key={d} value={d}>{d}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('runTime') || 'Run Time'}</label>
+                      <input 
+                        type="time" 
+                        value={builderTime}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setBuilderTime(v);
+                          updateCronFromBuilder(builderType, builderHourly, builderMin, v, builderDay, builderDate);
+                        }}
+                        className="input-field py-2"
+                      />
+                    </div>
+                  </div>
                 )}
-              </Box>
-            </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>{t('cancel')}</Button>
-          <Button variant="contained" onClick={handleSave}>{editing ? t('save') : t('create')}</Button>
-        </DialogActions>
-      </Dialog>
 
-      <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack({...snack, open: false})} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-        <Alert severity={snack.severity} variant="filled" sx={{ borderRadius: 2 }}>{snack.msg}</Alert>
-      </Snackbar>
-    </Box>
+                {builderType === 'advanced' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5">{t('cronExpressionCustom') || 'Cron Expression'}</label>
+                    <input 
+                      type="text" 
+                      value={form.cronExpression}
+                      onChange={(e) => setForm({ ...form, cronExpression: e.target.value })}
+                      placeholder="0 */6 * * *"
+                      className="input-field py-2 font-mono"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">{t('cronHelper') || 'Standard 5-part cron syntax (minute, hour, day of month, month, day of week)'}</p>
+                  </div>
+                )}
+
+                {/* Preview Box */}
+                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-800/30 rounded-lg flex gap-3 items-start">
+                  <PlayCircle className="text-blue-500 mt-0.5 flex-shrink-0" size={16} />
+                  <div>
+                    <p className="text-xs text-blue-900 dark:text-blue-300 font-medium">
+                      {t('currentSchedule') || 'Will run:'}
+                    </p>
+                    <p className="text-sm font-bold text-blue-700 dark:text-blue-400 mt-0.5 leading-snug">
+                      {explainCron(form.cronExpression)}
+                    </p>
+                    <p className="text-[10px] font-mono text-blue-500 dark:text-blue-500/70 mt-1">
+                      {form.cronExpression || '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Extra Settings */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-700/50 rounded-xl">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white">{t('enabledCol') || 'Enabled'}</p>
+                    <p className="text-xs text-slate-500">Run this schedule automatically</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer"
+                      checked={form.enabled !== false}
+                      onChange={e => setForm({...form, enabled: e.target.checked})}
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500/50 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-blue-600"></div>
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    {t('notifyOn') || 'Notifications'}
+                  </label>
+                  <select 
+                    value={form.notifyOn || 'failure'} 
+                    onChange={e => setForm({...form, notifyOn: e.target.value})}
+                    className="input-field py-2"
+                  >
+                    <option value="never">Never</option>
+                    <option value="failure">Failure only</option>
+                    <option value="all">All results (Success & Failure)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                    {t('descriptionOptional') || 'Description (Optional)'}
+                  </label>
+                  <textarea 
+                    value={form.description || ''} 
+                    onChange={e => setForm({...form, description: e.target.value})}
+                    placeholder="Notes about this schedule"
+                    rows="2"
+                    className="input-field resize-none"
+                  ></textarea>
+                </div>
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800 sticky bottom-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur pb-2 -mx-5 px-5 sm:-mx-6 sm:px-6">
+                <button type="button" onClick={() => setDialogOpen(false)} className="btn-secondary px-5 py-2">
+                  {t('cancel') || 'Cancel'}
+                </button>
+                <button type="submit" className="btn-primary px-6 py-2">
+                  {editing ? (t('save') || 'Save Changes') : (t('create') || 'Create Schedule')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Snackbar */}
+      {snack.open && (
+        <div className="fixed bottom-6 right-6 z-50 animate-slide-up">
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${
+            snack.type === 'error' ? 'bg-red-500 text-white border-red-600 shadow-red-500/20' : 
+            snack.type === 'warning' ? 'bg-amber-500 text-white border-amber-600 shadow-amber-500/20' : 
+            snack.type === 'info' ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' :
+            'bg-slate-900 text-white border-slate-800 shadow-slate-900/20'
+          }`}>
+            {snack.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+            <span className="text-sm font-semibold">{snack.msg}</span>
+            <button onClick={() => setSnack({...snack, open: false})} className="ml-2 text-white/70 hover:text-white transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

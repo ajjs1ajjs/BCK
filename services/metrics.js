@@ -82,9 +82,9 @@ function metricsMiddleware(req, res, next) {
 
 // ─── Update Gauges from DB ───────────────────────────────────────────────────
 
-function refreshMetrics(db, getDiskStats, backupDir) {
+async function refreshMetrics(db, getDiskStats, backupDir) {
   try {
-    const sched = db.prepare('SELECT COUNT(*) as cnt FROM schedules WHERE enabled = 1').get();
+    const sched = await db.get('SELECT COUNT(*) as cnt FROM schedules WHERE enabled = 1');
     activeSchedules.set(sched.cnt || 0);
   } catch (e) {}
 

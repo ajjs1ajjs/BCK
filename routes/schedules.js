@@ -12,13 +12,13 @@ const { executeBackup } = require('./backups');
 
 const cronTasks = {};
 
-function refreshScheduler() {
+async function refreshScheduler() {
   for (const id of Object.keys(cronTasks)) {
     cronTasks[id].stop();
     delete cronTasks[id];
   }
 
-  const schedules = db.prepare('SELECT * FROM schedules WHERE enabled = 1').all();
+  const schedules = await db.all('SELECT * FROM schedules WHERE enabled = 1');
   for (const s of schedules) {
     if (!s.cronExpression) continue;
     if (!cron.validate(s.cronExpression)) {
@@ -27,7 +27,7 @@ function refreshScheduler() {
     }
     const task = cron.schedule(s.cronExpression, async () => {
       logger.info(`Triggering scheduled backup: ${s.name} (Job: ${s.backupId})`);
-      db.prepare('UPDATE schedules SET lastRunAt = ? WHERE id = ?').run(new Date().toISOString(), s.id);
+      await db.run('UPDATE schedules SET lastRunAt = ? WHERE id = ?', new Date().toISOString(), s.id);
       executeBackup(s.backupId).catch(() => {});
     });
     cronTasks[s.id] = task;
@@ -36,7 +36,7 @@ function refreshScheduler() {
 
 // GET /api/schedules
 router.get('/schedules', async (req, res) => {
-  const items = db.prepare('SELECT * FROM schedules').all();
+  const items = await db.all('SELECT * FROM schedules');
   res.json(items);
 });
 
@@ -49,7 +49,7 @@ router.post('/schedules', authorize('manageSchedules'), async (req, res) => {
   const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   
   try {
-    db.prepare('INSERT INTO schedules (id, name, cronExpression, backupId, enabled, createdAt, updatedAt) VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)')
+    await db.prepare('INSERT INTO schedules (id, name, cronExpression, backupId, enabled, createdAt, updatedAt) VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)')
       .run(schedule);
     refreshScheduler();
     await addLog(`Schedule created: ${name}`, 'success');
@@ -61,14 +61,14 @@ router.post('/schedules', authorize('manageSchedules'), async (req, res) => {
 
 // PUT /api/schedules/:id
 router.put('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
-  const s = db.prepare('SELECT * FROM schedules WHERE id = ?').get(req.params.id);
+  const s = await db.get('SELECT * FROM schedules WHERE id = ?', req.params.id);
   if (!s) return res.status(404).json({ error: 'Not found' });
   
   const update = { ...s, ...req.body, updatedAt: new Date().toISOString() };
   update.enabled = update.enabled ? 1 : 0;
   
   try {
-    db.prepare('UPDATE schedules SET name = @name, cronExpression = @cronExpression, backupId = @backupId, enabled = @enabled, updatedAt = @updatedAt WHERE id = @id')
+    await db.prepare('UPDATE schedules SET name = @name, cronExpression = @cronExpression, backupId = @backupId, enabled = @enabled, updatedAt = @updatedAt WHERE id = @id')
       .run(update);
     refreshScheduler();
     res.json(update);
@@ -80,7 +80,7 @@ router.put('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
 // DELETE /api/schedules/:id
 router.delete('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   try {
-    db.prepare('DELETE FROM schedules WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM schedules WHERE id = ?', req.params.id);
     refreshScheduler();
     res.json({ message: 'Deleted' });
   } catch (err) {

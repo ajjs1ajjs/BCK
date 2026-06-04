@@ -34,7 +34,7 @@ function deleteSshKey(keyPath) {
 // ─── Database Connections ───────────────────────────────────────────────────
 
 router.get('/db-connections', async (req, res) => {
-  const items = db.prepare('SELECT * FROM db_connections').all();
+  const items = await db.all('SELECT * FROM db_connections');
   res.json(items.map(c => ({ ...c, password: c.password ? '***' : '' })));
 });
 
@@ -47,7 +47,7 @@ router.post('/db-connections', authorize('manageBackups'), async (req, res) => {
   const conn = { id: uuidv4(), name, type, host, port: finalPort, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
   
   try {
-    db.prepare('INSERT INTO db_connections (id, name, type, host, port, user, password, database) VALUES (@id, @name, @type, @host, @port, @user, @password, @database)')
+    await db.prepare('INSERT INTO db_connections (id, name, type, host, port, user, password, database) VALUES (@id, @name, @type, @host, @port, @user, @password, @database)')
       .run(conn);
     res.status(201).json({ ...conn, password: '***' });
   } catch (err) {
@@ -56,7 +56,7 @@ router.post('/db-connections', authorize('manageBackups'), async (req, res) => {
 });
 
 router.put('/db-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const conn = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(req.params.id);
+  const conn = await db.get('SELECT * FROM db_connections WHERE id = ?', req.params.id);
   if (!conn) return res.status(404).json({ error: 'Not found' });
   
   const update = { ...conn, ...req.body };
@@ -70,7 +70,7 @@ router.put('/db-connections/:id', authorize('manageBackups'), async (req, res) =
   update.port = portInput || defaultPorts[finalType] || 3306;
   
   try {
-    db.prepare('UPDATE db_connections SET name = @name, type = @type, host = @host, port = @port, user = @user, password = @password, database = @database WHERE id = @id')
+    await db.prepare('UPDATE db_connections SET name = @name, type = @type, host = @host, port = @port, user = @user, password = @password, database = @database WHERE id = @id')
       .run(update);
     res.json({ ...update, password: '***' });
   } catch (err) {
@@ -80,7 +80,7 @@ router.put('/db-connections/:id', authorize('manageBackups'), async (req, res) =
 
 router.delete('/db-connections/:id', authorize('manageBackups'), async (req, res) => {
   try {
-    db.prepare('DELETE FROM db_connections WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM db_connections WHERE id = ?', req.params.id);
     res.json({ message: 'Deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete: ' + err.message });
@@ -88,7 +88,7 @@ router.delete('/db-connections/:id', authorize('manageBackups'), async (req, res
 });
 
 router.post('/db-connections/:id/test', authorize('manageBackups'), async (req, res) => {
-  const connRaw = db.prepare('SELECT * FROM db_connections WHERE id = ?').get(req.params.id);
+  const connRaw = await db.get('SELECT * FROM db_connections WHERE id = ?', req.params.id);
   if (!connRaw) return res.status(404).json({ error: 'Not found' });
   const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
@@ -102,7 +102,7 @@ router.post('/db-connections/:id/test', authorize('manageBackups'), async (req, 
 // ─── SSH Connections ────────────────────────────────────────────────────
 
 router.get('/ssh-connections', async (req, res) => {
-  const items = db.prepare('SELECT * FROM ssh_connections').all();
+  const items = await db.all('SELECT * FROM ssh_connections');
   res.json(items.map(c => ({ ...c, password: c.password ? '***' : '', key: c.key ? '***' : '' })));
 });
 
@@ -115,7 +115,7 @@ router.post('/ssh-connections', authorize('manageBackups'), async (req, res) => 
   const conn = { id, name, host, port: port || 22, user, password: cryptoHelper.encrypt(password || ''), key: keyPath || '', createdAt: new Date().toISOString() };
   
   try {
-    db.prepare('INSERT INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)')
+    await db.prepare('INSERT INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)')
       .run(conn);
     await addLog(`SSH connection added: ${name}`, 'success');
     res.status(201).json({ ...conn, password: '***', key: '***' });
@@ -125,7 +125,7 @@ router.post('/ssh-connections', authorize('manageBackups'), async (req, res) => 
 });
 
 router.put('/ssh-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const conn = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(req.params.id);
+  const conn = await db.get('SELECT * FROM ssh_connections WHERE id = ?', req.params.id);
   if (!conn) return res.status(404).json({ error: 'Not found' });
   
   const update = { ...conn, ...req.body };
@@ -138,7 +138,7 @@ router.put('/ssh-connections/:id', authorize('manageBackups'), async (req, res) 
   }
   
   try {
-    db.prepare('UPDATE ssh_connections SET name = @name, host = @host, port = @port, user = @user, password = @password, key = @key WHERE id = @id')
+    await db.prepare('UPDATE ssh_connections SET name = @name, host = @host, port = @port, user = @user, password = @password, key = @key WHERE id = @id')
       .run(update);
     await addLog(`SSH connection updated: ${update.name}`, 'info');
     res.json({ ...update, password: '***', key: '***' });
@@ -148,11 +148,11 @@ router.put('/ssh-connections/:id', authorize('manageBackups'), async (req, res) 
 });
 
 router.delete('/ssh-connections/:id', authorize('manageBackups'), async (req, res) => {
-  const conn = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(req.params.id);
+  const conn = await db.get('SELECT * FROM ssh_connections WHERE id = ?', req.params.id);
   if (!conn) return res.status(404).json({ error: 'Not found' });
   deleteSshKey(conn.key);
   try {
-    db.prepare('DELETE FROM ssh_connections WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM ssh_connections WHERE id = ?', req.params.id);
     res.json({ message: 'Deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete: ' + err.message });
@@ -160,7 +160,7 @@ router.delete('/ssh-connections/:id', authorize('manageBackups'), async (req, re
 });
 
 router.post('/ssh-connections/:id/test', authorize('manageBackups'), async (req, res) => {
-  const connRaw = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(req.params.id);
+  const connRaw = await db.get('SELECT * FROM ssh_connections WHERE id = ?', req.params.id);
   if (!connRaw) return res.status(404).json({ error: 'Not found' });
   const conn = { ...connRaw, password: cryptoHelper.decrypt(connRaw.password) };
   try {
@@ -202,7 +202,7 @@ async function diagnoseCloud(provider, encryptedCreds) {
 }
 
 router.get('/cloud-credentials', async (req, res) => {
-  const items = db.prepare('SELECT * FROM cloud_credentials').all();
+  const items = await db.all('SELECT * FROM cloud_credentials');
   res.json(items.map(c => ({ ...c, credentials: { ...JSON.parse(c.credentials), secretAccessKey: '***', accessKey: '***', password: '***' } })));
 });
 
@@ -233,7 +233,7 @@ router.post('/cloud-credentials', authorize('manageBackups'), async (req, res) =
   }
 
   try {
-    db.prepare('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)')
+    await db.prepare('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)')
       .run(id, name, provider, JSON.stringify(encryptedCredentials), now);
     await addLog(`Cloud credentials added: ${name} [${provider}]`, 'success');
     res.status(201).json({ id, name, provider, credentials: { ...credentials, secretAccessKey: '***', accessKey: '***', password: '***' } });
@@ -243,7 +243,7 @@ router.post('/cloud-credentials', authorize('manageBackups'), async (req, res) =
 });
 
 router.put('/cloud-credentials/:id', authorize('manageBackups'), async (req, res) => {
-  const curr = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(req.params.id);
+  const curr = await db.get('SELECT * FROM cloud_credentials WHERE id = ?', req.params.id);
   if (!curr) return res.status(404).json({ error: 'Not found' });
   
   const { credentials, name } = req.body;
@@ -270,7 +270,7 @@ router.put('/cloud-credentials/:id', authorize('manageBackups'), async (req, res
   }
 
   try {
-    db.prepare('UPDATE cloud_credentials SET name = ?, credentials = ? WHERE id = ?')
+    await db.prepare('UPDATE cloud_credentials SET name = ?, credentials = ? WHERE id = ?')
       .run(name || curr.name, JSON.stringify(finalCreds), req.params.id);
     res.json({ id: curr.id, name: name || curr.name, provider: curr.provider, credentials: { ...finalCreds, secretAccessKey: '***', accessKey: '***', password: '***' } });
   } catch (err) {
@@ -280,7 +280,7 @@ router.put('/cloud-credentials/:id', authorize('manageBackups'), async (req, res
 
 router.delete('/cloud-credentials/:id', authorize('manageBackups'), async (req, res) => {
   try {
-    db.prepare('DELETE FROM cloud_credentials WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM cloud_credentials WHERE id = ?', req.params.id);
     res.json({ message: 'Deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete: ' + err.message });
@@ -288,7 +288,7 @@ router.delete('/cloud-credentials/:id', authorize('manageBackups'), async (req, 
 });
 
 router.post('/cloud-credentials/:id/test', authorize('manageBackups'), async (req, res) => {
-  const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(req.params.id);
+  const credRaw = await db.get('SELECT * FROM cloud_credentials WHERE id = ?', req.params.id);
   if (!credRaw) return res.status(404).json({ error: 'Not found' });
 
   const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };

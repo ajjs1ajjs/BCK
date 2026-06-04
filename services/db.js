@@ -1,297 +1,260 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { Pool } = require('pg');
 const fs = require('fs');
+const path = require('path');
 
-const dbPath = path.resolve(__dirname, '../data/bck.db');
-const dbDir = path.dirname(dbPath);
+const pool = new Pool({
+  host: process.env.DB_HOST || '127.0.0.1',
+  port: process.env.DB_PORT || 5432,
+  user: process.env.DB_USER || 'bckuser',
+  password: process.env.DB_PASSWORD || 'bckdbpass',
+  database: process.env.DB_NAME || 'bckdb',
+});
 
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+function parseArgs(sql, args) {
+  let query = sql;
+  let params = [];
+  
+  if (!args || args.length === 0) return { query, params };
+  
+  if (args.length === 1 && typeof args[0] === 'object' && args[0] !== null && !Array.isArray(args[0])) {
+    let i = 1;
+    const obj = args[0];
+    query = query.replace(/@([a-zA-Z0-9_]+)/g, (match, p1) => {
+      params.push(obj[p1]);
+      return '$' + (i++);
+    });
+  } else {
+    let i = 1;
+    query = query.replace(/\?/g, () => {
+      return '$' + (i++);
+    });
+    if (args.length === 1 && Array.isArray(args[0])) {
+      params = args[0];
+    } else {
+      params = args;
+    }
+  }
+  
+  return { query, params };
 }
 
-const db = new Database(dbPath);
+const db = {
+  get: async (sql, ...args) => {
+    const { query, params } = parseArgs(sql, args);
+    const res = await pool.query(query, params);
+    return res.rows[0];
+  },
+  all: async (sql, ...args) => {
+    const { query, params } = parseArgs(sql, args);
+    const res = await pool.query(query, params);
+    return res.rows;
+  },
+  run: async (sql, ...args) => {
+    const { query, params } = parseArgs(sql, args);
+    const res = await pool.query(query, params);
+    return { changes: res.rowCount, lastInsertRowid: null };
+  },
+  transaction: (fn) => {
+    return async (...args) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await fn(...args);
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    }
+  },
+  exec: async (sql) => {
+    return pool.query(sql);
+  }
+};
 
-// Initialize schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  );
+async function initSchema() {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS logs (
-    id TEXT PRIMARY KEY,
-    timestamp TEXT,
-    message TEXT,
-    status TEXT
-  );
+    CREATE TABLE IF NOT EXISTS logs (
+      id TEXT PRIMARY KEY,
+      timestamp TEXT,
+      message TEXT,
+      status TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE,
-    password TEXT,
-    role TEXT,
-    email TEXT,
-    active INTEGER DEFAULT 1,
-    twoFactorSecret TEXT,
-    twoFactorEnabled INTEGER DEFAULT 0,
-    createdAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT UNIQUE,
+      password TEXT,
+      role TEXT,
+      email TEXT,
+      active INTEGER DEFAULT 1,
+      "twoFactorSecret" TEXT,
+      "twoFactorEnabled" INTEGER DEFAULT 0,
+      "createdAt" TEXT,
+      "ldapDn" TEXT,
+      "authProvider" TEXT DEFAULT 'local',
+      "orgId" TEXT DEFAULT 'default'
+    );
 
-  CREATE TABLE IF NOT EXISTS roles (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    level INTEGER,
-    description TEXT,
-    permissions TEXT
-  );
+    CREATE TABLE IF NOT EXISTS roles (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      level INTEGER,
+      description TEXT,
+      permissions TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS db_connections (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    type TEXT,
-    host TEXT,
-    port INTEGER,
-    user TEXT,
-    password TEXT,
-    database TEXT
-  );
+    CREATE TABLE IF NOT EXISTS db_connections (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      type TEXT,
+      host TEXT,
+      port INTEGER,
+      "user" TEXT,
+      password TEXT,
+      database TEXT,
+      "orgId" TEXT DEFAULT 'default'
+    );
 
-  CREATE TABLE IF NOT EXISTS ssh_connections (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    host TEXT,
-    port INTEGER,
-    user TEXT,
-    password TEXT,
-    key TEXT,
-    createdAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS ssh_connections (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      host TEXT,
+      port INTEGER,
+      "user" TEXT,
+      password TEXT,
+      key TEXT,
+      "createdAt" TEXT,
+      "orgId" TEXT DEFAULT 'default'
+    );
 
-  CREATE TABLE IF NOT EXISTS cloud_credentials (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    provider TEXT,
-    credentials TEXT,
-    createdAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS cloud_credentials (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      provider TEXT,
+      credentials TEXT,
+      "createdAt" TEXT,
+      "orgId" TEXT DEFAULT 'default'
+    );
 
-  CREATE TABLE IF NOT EXISTS backups (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    source TEXT,
-    destination TEXT,
-    type TEXT,
-    backupType TEXT,
-    config TEXT,
-    status TEXT,
-    createdAt TEXT,
-    updatedAt TEXT,
-    startedAt TEXT,
-    completedAt TEXT,
-    resultFile TEXT,
-    error TEXT,
-    size INTEGER DEFAULT 0
-  );
+    CREATE TABLE IF NOT EXISTS backups (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      source TEXT,
+      destination TEXT,
+      type TEXT,
+      "backupType" TEXT,
+      config TEXT,
+      status TEXT,
+      "createdAt" TEXT,
+      "updatedAt" TEXT,
+      "startedAt" TEXT,
+      "completedAt" TEXT,
+      "resultFile" TEXT,
+      error TEXT,
+      size BIGINT DEFAULT 0,
+      "orgId" TEXT DEFAULT 'default',
+      "lastValidatedAt" TEXT,
+      "validationStatus" TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS schedules (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    cronExpression TEXT,
-    backupId TEXT,
-    enabled INTEGER DEFAULT 1,
-    notifyOn TEXT,
-    description TEXT,
-    createdAt TEXT,
-    updatedAt TEXT,
-    lastRunAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      "cronExpression" TEXT,
+      "backupId" TEXT,
+      enabled INTEGER DEFAULT 1,
+      "notifyOn" TEXT,
+      description TEXT,
+      "createdAt" TEXT,
+      "updatedAt" TEXT,
+      "lastRunAt" TEXT,
+      "orgId" TEXT DEFAULT 'default'
+    );
 
-  CREATE INDEX IF NOT EXISTS idx_backups_status ON backups(status);
-  CREATE INDEX IF NOT EXISTS idx_backups_createdAt ON backups(createdAt);
-  CREATE INDEX IF NOT EXISTS idx_backups_type ON backups(type);
-  CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
-  CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(status);
-  CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+    CREATE INDEX IF NOT EXISTS idx_backups_status ON backups(status);
+    CREATE INDEX IF NOT EXISTS idx_backups_createdAt ON backups("createdAt");
+    CREATE INDEX IF NOT EXISTS idx_backups_type ON backups(type);
+    CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_logs_status ON logs(status);
+    CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
 
-  CREATE TABLE IF NOT EXISTS organizations (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    slug TEXT UNIQUE NOT NULL,
-    createdAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      "createdAt" TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS api_tokens (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    tokenHash TEXT NOT NULL UNIQUE,
-    userId TEXT NOT NULL,
-    orgId TEXT DEFAULT 'default',
-    permissions TEXT DEFAULT '{}',
-    lastUsedAt TEXT,
-    expiresAt TEXT,
-    createdAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      "tokenHash" TEXT NOT NULL UNIQUE,
+      "userId" TEXT NOT NULL,
+      "orgId" TEXT DEFAULT 'default',
+      permissions TEXT DEFAULT '{}',
+      "lastUsedAt" TEXT,
+      "expiresAt" TEXT,
+      "createdAt" TEXT
+    );
 
-  CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(tokenHash);
+    CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens("tokenHash");
 
-  CREATE TABLE IF NOT EXISTS webhook_endpoints (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    url TEXT NOT NULL,
-    secret TEXT,
-    events TEXT DEFAULT '[]',
-    retries INTEGER DEFAULT 3,
-    active INTEGER DEFAULT 1,
-    orgId TEXT DEFAULT 'default',
-    createdAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS webhook_endpoints (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      url TEXT NOT NULL,
+      secret TEXT,
+      events TEXT DEFAULT '[]',
+      retries INTEGER DEFAULT 3,
+      active INTEGER DEFAULT 1,
+      "orgId" TEXT DEFAULT 'default',
+      "createdAt" TEXT
+    );
 
-  CREATE TABLE IF NOT EXISTS webhook_deliveries (
-    id TEXT PRIMARY KEY,
-    endpointId TEXT NOT NULL,
-    event TEXT NOT NULL,
-    status TEXT NOT NULL,
-    statusCode INTEGER,
-    attempt INTEGER DEFAULT 1,
-    error TEXT,
-    deliveredAt TEXT
-  );
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id TEXT PRIMARY KEY,
+      "endpointId" TEXT NOT NULL,
+      event TEXT NOT NULL,
+      status TEXT NOT NULL,
+      "statusCode" INTEGER,
+      attempt INTEGER DEFAULT 1,
+      error TEXT,
+      "deliveredAt" TEXT
+    );
 
-  CREATE INDEX IF NOT EXISTS idx_wh_deliveries_endpoint ON webhook_deliveries(endpointId);
-`);
+    CREATE INDEX IF NOT EXISTS idx_wh_deliveries_endpoint ON webhook_deliveries("endpointId");
+  `);
 
-// Ensure schema is up to date (add columns if they don't exist)
-try {
-  const userCols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
-  if (!userCols.includes('twoFactorSecret')) db.exec('ALTER TABLE users ADD COLUMN twoFactorSecret TEXT');
-  if (!userCols.includes('twoFactorEnabled')) db.exec('ALTER TABLE users ADD COLUMN twoFactorEnabled INTEGER DEFAULT 0');
-  if (!userCols.includes('ldapDn')) db.exec('ALTER TABLE users ADD COLUMN ldapDn TEXT');
-  if (!userCols.includes('authProvider')) db.exec("ALTER TABLE users ADD COLUMN authProvider TEXT DEFAULT 'local'");
-} catch (e) {
-  console.error('Failed to update users table schema:', e.message);
-}
-
-try {
-  const schedCols = db.prepare('PRAGMA table_info(schedules)').all().map(c => c.name);
-  if (!schedCols.includes('lastRunAt')) db.exec('ALTER TABLE schedules ADD COLUMN lastRunAt TEXT');
-} catch (e) {
-  console.error('Failed to update schedules table schema:', e.message);
-}
-
-// Add orgId to multi-tenant tables (non-breaking migration)
-const orgTables = ['users', 'backups', 'schedules', 'db_connections', 'ssh_connections', 'cloud_credentials'];
-for (const table of orgTables) {
   try {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
-    if (!cols.includes('orgId')) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN orgId TEXT DEFAULT 'default'`);
+    const existing = await db.get("SELECT id FROM organizations WHERE id = 'default'");
+    if (!existing) {
+      await db.run('INSERT INTO organizations (id, name, slug, "createdAt") VALUES (?, ?, ?, ?)', 
+        ['default', 'Default Organization', 'default', new Date().toISOString()]);
     }
   } catch (e) {
-    console.error(`Failed to add orgId to ${table}:`, e.message);
+    console.error('Failed to seed default organization:', e.message);
+  }
+
+  try {
+    await db.exec('ALTER TABLE backups ADD COLUMN "lastValidatedAt" TEXT;');
+    await db.exec('ALTER TABLE backups ADD COLUMN "validationStatus" TEXT;');
+  } catch(e) {
+    // Columns probably exist already
   }
 }
 
-// Seed default organization if not exists
-try {
-  const existing = db.prepare("SELECT id FROM organizations WHERE id = 'default'").get();
-  if (!existing) {
-    db.prepare('INSERT INTO organizations (id, name, slug, createdAt) VALUES (?, ?, ?, ?)')
-      .run('default', 'Default Organization', 'default', new Date().toISOString());
-  }
-} catch (e) {
-  console.error('Failed to seed default organization:', e.message);
-}
-
-// Migration from db.json
-function migrate(jsonPath) {
+async function migrate(jsonPath) {
   if (!fs.existsSync(jsonPath)) return;
   
-  console.log(`Migrating data from ${jsonPath}...`);
-  try {
-    const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-    
-    db.transaction(() => {
-      // Migrate settings
-      if (data.settings) {
-        for (const [key, val] of Object.entries(data.settings)) {
-           db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, JSON.stringify(val));
-        }
-      }
-
-      // Migrate roles
-      if (data.roles) {
-        const insert = db.prepare('INSERT OR REPLACE INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)');
-        for (const r of data.roles) {
-          insert.run(r.id, r.name, r.level || 0, r.description || '', JSON.stringify(r.permissions));
-        }
-      }
-
-      // Migrate users
-      if (data.users) {
-        const insert = db.prepare('INSERT OR REPLACE INTO users (id, username, password, role, email, active, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
-        for (const u of data.users) {
-          insert.run(u.id, u.username, u.password || '', u.role, u.email || '', u.active ? 1 : 0, u.createdAt || new Date().toISOString());
-        }
-      }
-
-      // Migrate logs
-      if (data.logs) {
-        const insert = db.prepare('INSERT OR REPLACE INTO logs (id, timestamp, message, status) VALUES (?, ?, ?, ?)');
-        for (const l of data.logs) {
-          insert.run(l.id, l.timestamp, l.message, l.status);
-        }
-      }
-
-      // Migrate dbConnections
-      if (data.dbConnections) {
-        const insert = db.prepare('INSERT OR REPLACE INTO db_connections (id, name, type, host, port, user, password, database) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-        for (const c of data.dbConnections) {
-          insert.run(c.id, c.name, c.type, c.host, c.port || 0, c.user, c.password || '', c.database || '');
-        }
-      }
-
-      // Migrate sshConnections
-      if (data.sshConnections) {
-        const insert = db.prepare('INSERT OR REPLACE INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-        for (const c of data.sshConnections) {
-          insert.run(c.id, c.name, c.host, c.port || 22, c.user, c.password || '', c.key || '', c.createdAt || new Date().toISOString());
-        }
-      }
-
-      // Migrate cloudCredentials
-      if (data.cloudCredentials) {
-        const insert = db.prepare('INSERT OR REPLACE INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)');
-        for (const c of data.cloudCredentials) {
-          insert.run(c.id, c.name, c.provider, JSON.stringify(c.credentials), c.createdAt || new Date().toISOString());
-        }
-      }
-
-      // Migrate backups
-      if (data.backups) {
-        const insert = db.prepare(`
-          INSERT OR REPLACE INTO backups 
-          (id, name, source, destination, type, backupType, config, status, createdAt, updatedAt, startedAt, completedAt, resultFile, error, size) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const b of data.backups) {
-          insert.run(b.id, b.name, b.source || '', b.destination || '', b.type || 'full', b.backupType || 'files', JSON.stringify(b.config || {}), b.status || 'pending', b.createdAt || new Date().toISOString(), b.updatedAt || new Date().toISOString(), b.startedAt || null, b.completedAt || null, b.resultFile || null, b.error || null, b.size || 0);
-        }
-      }
-
-      // Migrate schedules
-      if (data.schedules) {
-        const insert = db.prepare('INSERT OR REPLACE INTO schedules (id, name, cronExpression, backupId, enabled, notifyOn, description, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-        for (const s of data.schedules) {
-          insert.run(s.id, s.name, s.cronExpression || s.cron || '', s.backupId, s.enabled ? 1 : 0, s.notifyOn || 'failure', s.description || '', s.createdAt || new Date().toISOString(), s.updatedAt || new Date().toISOString());
-        }
-      }
-    })();
-
-    console.log('Migration successful.');
-    fs.renameSync(jsonPath, jsonPath + '.bak');
-  } catch (err) {
-    console.error('Migration failed:', err.message);
-  }
+  console.log('JSON migration is skipped in Postgres mode. Please manually import data.');
 }
 
-module.exports = { db, migrate };
+module.exports = { db, initSchema, migrate };

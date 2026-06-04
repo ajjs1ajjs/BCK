@@ -3,8 +3,8 @@ const nodemailer = require('nodemailer');
 const { db } = require('./db');
 const logger = require('./logger');
 
-const getSettings = () => {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
+const getSettings = async () => {
+  const rows = await db.all('SELECT key, value FROM settings');
   const settings = {};
   rows.forEach(row => {
     settings[row.key] = JSON.parse(row.value);
@@ -12,19 +12,19 @@ const getSettings = () => {
   return settings;
 };
 
-const updateSetting = (key, value) => {
-  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
+const updateSetting = async (key, value) => {
+  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
     .run(key, JSON.stringify(value));
 };
 
 const addLog = async (message, status = 'info') => {
   try {
-    db.prepare('INSERT INTO logs (id, timestamp, message, status) VALUES (?, ?, ?, ?)')
+    await db.prepare('INSERT INTO logs (id, timestamp, message, status) VALUES (?, ?, ?, ?)')
       .run(uuidv4(), new Date().toISOString(), message, status);
     
-    const count = db.prepare('SELECT COUNT(*) as count FROM logs').get().count;
+    const count = (await db.get('SELECT COUNT(*) as count FROM logs')).count;
     if (count > 500) {
-      db.prepare('DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT ?)')
+      await db.prepare('DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT ?)')
         .run(count - 500);
     }
   } catch (err) {
@@ -123,7 +123,7 @@ const pruneLogs = async () => {
     thresholdDate.setDate(thresholdDate.getDate() - retentionDays);
     const thresholdStr = thresholdDate.toISOString();
     
-    const result = db.prepare('DELETE FROM logs WHERE timestamp < ?').run(thresholdStr);
+    const result = await db.run('DELETE FROM logs WHERE timestamp < ?', thresholdStr);
     logger.info(`Pruned system logs older than ${retentionDays} days. Deleted ${result.changes} logs.`);
   } catch (err) {
     logger.error('Failed to prune system logs: ' + err.message);

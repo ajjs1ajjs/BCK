@@ -41,11 +41,11 @@ router.get('/logs', authorize('viewLogs'), async (req, res) => {
   if (level) { conditions.push('status = ?'); params.push(level); }
 
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
-  const total = db.prepare(`SELECT COUNT(*) as cnt FROM logs${where}`).get(...params).cnt;
+  const total = (await db.get(`SELECT COUNT(*) as cnt FROM logs${where}`, ...params)).cnt;
 
   // Export mode: return all matching rows as CSV or JSON file
   if (exportFmt === 'csv' || exportFmt === 'json') {
-    const all = db.prepare(`SELECT * FROM logs${where} ORDER BY timestamp DESC`).all(...params);
+    const all = await db.all(`SELECT * FROM logs${where} ORDER BY timestamp DESC`, ...params);
     if (exportFmt === 'json') {
       res.setHeader('Content-Disposition', 'attachment; filename="logs.json"');
       res.setHeader('Content-Type', 'application/json');
@@ -58,7 +58,7 @@ router.get('/logs', authorize('viewLogs'), async (req, res) => {
     return res.send(header + rows);
   }
 
-  const items = db.prepare(`SELECT * FROM logs${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset);
+  const items = await db.all(`SELECT * FROM logs${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`, ...params, pageSize, offset);
   res.json({ data: items, total, page: pageNum, pageSize, totalPages: Math.ceil(total / pageSize) });
 });
 
@@ -102,7 +102,7 @@ router.get('/health', async (req, res) => {
 
 // GET /api/stats
 router.get('/stats', async (req, res) => {
-  const backups = db.prepare('SELECT status, completedAt FROM backups').all();
+  const backups = await db.all('SELECT status, completedAt FROM backups');
   const total = backups.length;
   const success = backups.filter(b => b.status === 'completed').length;
   const failed = backups.filter(b => b.status === 'failed').length;
@@ -168,9 +168,9 @@ router.put('/settings', authorize('configure'), async (req, res) => {
   }
 
   try {
-    db.transaction(() => {
+    await db.transaction(async () => {
       for (const [key, value] of Object.entries(merged)) {
-        updateSetting(key, value);
+        await updateSetting(key, value);
       }
     })();
     await addLog('Settings updated', 'info');
@@ -181,7 +181,7 @@ router.put('/settings', authorize('configure'), async (req, res) => {
 });
 
 // GET /api/stats/queue
-router.get('/stats/queue', (req, res) => {
+router.get('/stats/queue', async (req, res) => {
   res.json(backupQueue.getStats());
 });
 

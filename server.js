@@ -19,7 +19,7 @@ if (!process.env.ENCRYPTION_KEY) {
 }
 
 const { PORT, HOST, SALT_ROUNDS } = require('./services/config');
-const { db, migrate } = require('./services/db');
+const { db, migrate, initSchema } = require('./services/db');
 const logger = require('./services/logger');
 const backupQueue = require('./services/queue');
 
@@ -118,44 +118,61 @@ fs.access(buildPath).then(() => {
 
 const initDB = async () => {
   migrate(DB_PATH);
+  await initSchema();
 
-  const admin = db.prepare('SELECT * FROM users WHERE username = ?').get('admin');
+  const admin = await db.get('SELECT * FROM users WHERE username = ?', ['admin']);
   if (!admin) {
     console.log('Creating default users and roles...');
     
-    // Secure fix: Load admin password from environment or use standard default with a warning
-    const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || '291263';
-    if (!process.env.DEFAULT_ADMIN_PASSWORD) {
-      console.warn('WARNING: DEFAULT_ADMIN_PASSWORD not set in environment. Using default password "291263". Please change this immediately.');
+    let adminPassword = process.env.DEFAULT_ADMIN_PASSWORD;
+    if (!adminPassword) {
+      adminPassword = require('crypto').randomBytes(6).toString('hex');
+      console.log('\n===================================================================');
+      console.log('🔥 INITIAL SETUP: DEFAULT ADMIN CREDENTIALS GENERATED 🔥');
+      console.log('   Username: admin');
+      console.log(`   Password: ${adminPassword}`);
+      console.log('   Please log in and change this password immediately in Settings!');
+      console.log('===================================================================\n');
     }
     
-    const hashedAdmin = await bcrypt.hash(defaultAdminPassword, SALT_ROUNDS);
+    const hashedAdmin = await bcrypt.hash(adminPassword, SALT_ROUNDS);
     const hashedOperator = await bcrypt.hash('operator', SALT_ROUNDS);
     const hashedViewer = await bcrypt.hash('viewer', SALT_ROUNDS);
 
-    db.transaction(() => {
-      const insertRole = db.prepare('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)');
-      insertRole.run('admin', 'Admin', 100, 'Full system access', JSON.stringify({ manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true }));
-      insertRole.run('operator', 'Operator', 50, 'Manage backups and schedules', JSON.stringify({ manageUsers: false, manageBackups: true, manageSchedules: true, restore: true, delete: false, configure: false, viewLogs: true, manageRoles: false }));
-      insertRole.run('viewer', 'Viewer', 10, 'Read-only access', JSON.stringify({ manageUsers: false, manageBackups: false, manageSchedules: false, restore: false, delete: false, configure: false, viewLogs: true, manageRoles: false }));
+    await db.transaction(async () => {
+      await db.run('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)',
+        ['admin', 'Admin', 100, 'Full system access', JSON.stringify({ manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true })]);
+      await db.run('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)',
+        ['operator', 'Operator', 50, 'Manage backups and schedules', JSON.stringify({ manageUsers: false, manageBackups: true, manageSchedules: true, restore: true, delete: false, configure: false, viewLogs: true, manageRoles: false })]);
+      await db.run('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)',
+        ['viewer', 'Viewer', 10, 'Read-only access', JSON.stringify({ manageUsers: false, manageBackups: false, manageSchedules: false, restore: false, delete: false, configure: false, viewLogs: true, manageRoles: false })]);
 
-      const insertUser = db.prepare('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      insertUser.run('admin', 'admin', hashedAdmin, 'admin', 'admin@bck.local', 1, new Date().toISOString());
-      insertUser.run('operator', 'operator', hashedOperator, 'operator', 'operator@bck.local', 1, new Date().toISOString());
-      insertUser.run('viewer', 'viewer', hashedViewer, 'viewer', 'viewer@bck.local', 1, new Date().toISOString());
+      await db.run('INSERT INTO users (id, username, password, role, email, active, "createdAt") VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ['admin', 'admin', hashedAdmin, 'admin', 'admin@bck.local', 1, new Date().toISOString()]);
+      await db.run('INSERT INTO users (id, username, password, role, email, active, "createdAt") VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ['operator', 'operator', hashedOperator, 'operator', 'operator@bck.local', 1, new Date().toISOString()]);
+      await db.run('INSERT INTO users (id, username, password, role, email, active, "createdAt") VALUES (?, ?, ?, ?, ?, ?, ?)',
+        ['viewer', 'viewer', hashedViewer, 'viewer', 'viewer@bck.local', 1, new Date().toISOString()]);
 
-      const insertSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)');
-      insertSetting.run('smtp', JSON.stringify({ host: '', port: 587, user: '', password: '', from: '', encryption: 'tls' }));
-      insertSetting.run('retention', JSON.stringify({ enabled: true, days: 30, copies: 10, customLimitEnabled: false, customLimitGB: 50 }));
-      insertSetting.run('notifications', JSON.stringify({ email: false, emailOnSuccess: false, slack: '', discord: '', telegram: '', telegramBotToken: '', webhook: '' }));
-      insertSetting.run('schedule', JSON.stringify({ timezone: 'UTC' }));
-      insertSetting.run('security', JSON.stringify({ sessionTimeout: 60, preventConcurrent: false, minPasswordLength: 6 }));
-      insertSetting.run('advanced', JSON.stringify({ tempPath: '', bandwidthLimit: 0, compressionLevel: 'medium' }));
-      insertSetting.run('ldap', JSON.stringify({ enabled: false, url: 'ldap://localhost:389', baseDn: 'dc=example,dc=org', bindDn: 'cn=admin,dc=example,dc=org', bindPassword: '', userFilter: '(sAMAccountName={{username}})', groupMapping: '{}' }));
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['smtp', JSON.stringify({ host: '', port: 587, user: '', password: '', from: '', encryption: 'tls' })]);
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['retention', JSON.stringify({ enabled: true, days: 30, copies: 10, customLimitEnabled: false, customLimitGB: 50 })]);
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['notifications', JSON.stringify({ email: false, emailOnSuccess: false, slack: '', discord: '', telegram: '', telegramBotToken: '', webhook: '' })]);
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['schedule', JSON.stringify({ timezone: 'UTC' })]);
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['security', JSON.stringify({ sessionTimeout: 60, preventConcurrent: false, minPasswordLength: 6 })]);
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['advanced', JSON.stringify({ tempPath: '', bandwidthLimit: 0, compressionLevel: 'medium' })]);
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['ldap', JSON.stringify({ enabled: false, url: 'ldap://localhost:389', baseDn: 'dc=example,dc=org', bindDn: 'cn=admin,dc=example,dc=org', bindPassword: '', userFilter: '(sAMAccountName={{username}})', groupMapping: '{}' })]);
       
       const appUrl = process.env.APP_URL || '';
       const defaultAppUrl = appUrl || `http://127.0.0.1:${PORT}`;
-      insertSetting.run('network', JSON.stringify({ appUrl: defaultAppUrl, bindHost: HOST }));
+      await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
+        ['network', JSON.stringify({ appUrl: defaultAppUrl, bindHost: HOST })]);
     })();
   }
 };
@@ -165,6 +182,24 @@ const initDB = async () => {
 const start = async () => {
   await initDB();
   refreshScheduler();
+
+  try {
+    // Reset any jobs that were running when the server crashed
+    const runningJobs = await db.all("SELECT id FROM backups WHERE status = 'running'");
+    for (const job of runningJobs) {
+      await db.run("UPDATE backups SET status = 'failed', error = 'Server restarted during backup' WHERE id = ?", job.id);
+    }
+  } catch (e) {
+    console.error('Failed to recover running jobs:', e.message);
+  }
+
+  // Start the background queue processor
+  backupQueue.start();
+  
+  // Start the daily cleanup cron
+  const cronManager = require('./services/cron');
+  cronManager.start();
+
   try {
     const { pruneLogs } = require('./services/helpers');
     pruneLogs();

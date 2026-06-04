@@ -1,7 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ThemeProvider, CssBaseline, Box } from '@mui/material';
-import { darkTheme, lightTheme } from './theme';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LangProvider } from './context/LangContext';
 import { SocketProvider } from './context/SocketContext';
@@ -33,25 +31,14 @@ function ProtectedLayout({ isDark, toggleTheme }) {
   if (!loggedIn) return <Navigate to="/login" replace />;
 
   return (
-    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+    <div className="flex h-screen overflow-hidden">
       <Sidebar />
-      <Box
-        component="main"
-        sx={{
-          flex: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-        }}
-      >
+      <div className="flex-1 flex flex-col min-w-0">
         <TopBar isDark={isDark} toggleTheme={toggleTheme} />
-        <Box sx={{
-          flex: 1,
-          overflow: 'auto',
-          p: { xs: 2, md: 3 },
-          bgcolor: 'background.default',
-          backgroundImage: 'radial-gradient(ellipse at 18% 44%, rgba(56,189,248,0.07) 0%, transparent 58%), radial-gradient(ellipse at 82% 18%, rgba(34,197,94,0.045) 0%, transparent 50%), radial-gradient(ellipse at 55% 90%, rgba(139,92,246,0.04) 0%, transparent 48%)',
-        }}>
+        <main className="flex-1 overflow-auto p-4 md:p-6 bg-slate-50 dark:bg-slate-900 animate-ambient" 
+              style={{ 
+                backgroundImage: 'radial-gradient(ellipse at 18% 44%, rgba(56,189,248,0.07) 0%, transparent 58%), radial-gradient(ellipse at 82% 18%, rgba(34,197,94,0.045) 0%, transparent 50%), radial-gradient(ellipse at 55% 90%, rgba(139,92,246,0.04) 0%, transparent 48%)' 
+              }}>
           <ErrorBoundary>
             <Routes>
               <Route path="/" element={<Dashboard />} />
@@ -74,9 +61,9 @@ function ProtectedLayout({ isDark, toggleTheme }) {
               <Route path="/organizations" element={<Organizations />} />
             </Routes>
           </ErrorBoundary>
-        </Box>
-      </Box>
-    </Box>
+        </main>
+      </div>
+    </div>
   );
 }
 
@@ -86,9 +73,13 @@ export default function App() {
     return saved ? saved === 'dark' : true;
   });
 
-  const theme = useMemo(() => {
+  useEffect(() => {
     localStorage.setItem('bck-theme', isDark ? 'dark' : 'light');
-    return isDark ? darkTheme : lightTheme;
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }, [isDark]);
 
   const toggleTheme = () => setIsDark((prev) => !prev);
@@ -96,17 +87,14 @@ export default function App() {
   return (
     <LangProvider>
       <SocketProvider>
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          <BrowserRouter>
-            <AuthProvider>
-              <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/*" element={<ProtectedLayout isDark={isDark} toggleTheme={toggleTheme} />} />
-              </Routes>
-            </AuthProvider>
-          </BrowserRouter>
-        </ThemeProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/*" element={<ProtectedLayout isDark={isDark} toggleTheme={toggleTheme} />} />
+            </Routes>
+          </AuthProvider>
+        </BrowserRouter>
       </SocketProvider>
     </LangProvider>
   );

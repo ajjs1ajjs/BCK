@@ -11,7 +11,7 @@ const { SALT_ROUNDS } = require('../services/config');
 
 // GET /api/users
 router.get('/users', authorize('manageUsers'), async (req, res) => {
-  const users = db.prepare('SELECT id, username, role, email, active, createdAt FROM users').all();
+  const users = await db.all('SELECT id, username, role, email, active, createdAt FROM users');
   res.json(users);
 });
 
@@ -21,7 +21,7 @@ router.post('/users', authorize('manageUsers'), async (req, res) => {
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { username, password, role, email } = v.data;
   
-  if (db.prepare('SELECT id FROM users WHERE username = ?').get(username)) {
+  if (await db.get('SELECT id FROM users WHERE username = ?', username)) {
     return res.status(400).json({ error: 'Username exists' });
   }
   
@@ -29,7 +29,7 @@ router.post('/users', authorize('manageUsers'), async (req, res) => {
   const user = { id: uuidv4(), username, password: hashed, role, email: email || '', active: 1, createdAt: new Date().toISOString() };
   
   try {
-    db.prepare('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (@id, @username, @password, @role, @email, @active, @createdAt)')
+    await db.prepare('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (@id, @username, @password, @role, @email, @active, @createdAt)')
       .run(user);
     await addLog(`User created: ${username}`, 'success');
     res.status(201).json({ ...user, password: '***' });
@@ -40,7 +40,7 @@ router.post('/users', authorize('manageUsers'), async (req, res) => {
 
 // PUT /api/users/:id
 router.put('/users/:id', authorize('manageUsers'), async (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const user = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!user) return res.status(404).json({ error: 'Not found' });
   
   const update = { ...user, ...req.body };
@@ -50,7 +50,7 @@ router.put('/users/:id', authorize('manageUsers'), async (req, res) => {
   update.active = update.active ? 1 : 0;
   
   try {
-    db.prepare('UPDATE users SET username = @username, password = @password, role = @role, email = @email, active = @active WHERE id = @id')
+    await db.prepare('UPDATE users SET username = @username, password = @password, role = @role, email = @email, active = @active WHERE id = @id')
       .run(update);
     await addLog(`User updated: ${update.username}`, 'info');
     res.json({ ...update, password: '***' });
@@ -61,11 +61,11 @@ router.put('/users/:id', authorize('manageUsers'), async (req, res) => {
 
 // DELETE /api/users/:id
 router.delete('/users/:id', authorize('manageUsers'), async (req, res) => {
-  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(req.params.id);
+  const user = await db.get('SELECT username FROM users WHERE id = ?', req.params.id);
   if (!user) return res.status(404).json({ error: 'Not found' });
   
   try {
-    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM users WHERE id = ?', req.params.id);
     await addLog(`User deleted: ${user.username}`, 'warning');
     res.json({ message: 'Deleted' });
   } catch (err) {

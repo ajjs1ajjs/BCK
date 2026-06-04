@@ -1,4 +1,14 @@
 services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: bckuser
+      POSTGRES_PASSWORD: bckdbpass
+      POSTGRES_DB: bckdb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
   bck:
     build: .
     ports:
@@ -6,10 +16,17 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=9000
-      - DB_PATH=/app/data/db.json
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=bckuser
+      - DB_PASSWORD=bckdbpass
+      - DB_NAME=bckdb
+    depends_on:
+      - postgres
     restart: unless-stopped
     volumes:
       - bck-data:/app/data
 
 volumes:
   bck-data:
+  postgres-data:

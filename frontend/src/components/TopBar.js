@@ -1,103 +1,133 @@
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Box, Typography, IconButton, Tooltip, Avatar, Menu, MenuItem, Divider, ListItemIcon,
-} from '@mui/material';
-import {
-  DarkMode as DarkModeIcon, LightMode as LightModeIcon,
-  Logout as LogoutIcon, Person as PersonIcon, Shield as ShieldIcon,
-} from '@mui/icons-material';
-import { useState } from 'react';
+import { 
+  Sun, Moon, Globe, LogOut, Shield, ChevronDown
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTranslation } from '../context/LangContext';
-import { Button } from '@mui/material';
 
-const ROLE_COLORS = { admin: '#f43f5e', operator: '#f59e0b', viewer: '#38bdf8' };
+const ROLE_COLORS = { 
+  admin: 'bg-rose-500 text-white', 
+  operator: 'bg-amber-500 text-white', 
+  viewer: 'bg-sky-500 text-white' 
+};
+
+const ROLE_TEXT = {
+  admin: 'text-rose-500 dark:text-rose-400',
+  operator: 'text-amber-500 dark:text-amber-400',
+  viewer: 'text-sky-500 dark:text-sky-400'
+};
 
 export default function TopBar({ isDark, toggleTheme }) {
   const { user, logout } = useAuth();
   const { lang, setLang, t } = useTranslation();
   const navigate = useNavigate();
-  const [anchor, setAnchor] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef(null);
 
   const toggleLang = () => setLang(lang === 'en' ? 'uk' : 'en');
 
+  // Close menu when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuRef]);
+
+  const userRole = user?.role || 'viewer';
+
   return (
-    <Box sx={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      px: { xs: 1.5, md: 3 }, py: 1.5, borderBottom: '1px solid', borderColor: 'divider',
-      bgcolor: 'background.paper', minHeight: 56,
-    }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Box sx={{
-          width: 8, height: 8, borderRadius: '50%', bgcolor: 'success.main',
-          boxShadow: '0 0 8px rgba(34,197,94,0.4)',
-        }} />
-        <Typography variant="body2" color="text.secondary" noWrap sx={{ fontSize: 13, display: { xs: 'none', sm: 'block' } }}>
-          {t('allSystemsOperational')}
-        </Typography>
-      </Box>
+    <div className="flex items-center justify-between px-4 md:px-6 py-3 bg-white/70 dark:bg-slate-900/70 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 shrink-0 h-16 z-20 sticky top-0">
+      
+      {/* Left side: Status */}
+      <div className="flex items-center gap-2.5">
+        <div className="relative flex h-2.5 w-2.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+        </div>
+        <span className="text-sm font-medium text-slate-600 dark:text-slate-300 hidden sm:block">
+          {t('allSystemsOperational') || 'All systems operational'}
+        </span>
+      </div>
 
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Tooltip title={lang === 'en' ? 'Українська мова' : 'English language'}>
-          <Button
-            onClick={toggleLang}
-            size="small"
-            sx={{
-              color: 'text.secondary',
-              fontWeight: 700,
-              minWidth: 40,
-              borderRadius: 2,
-              border: '1px solid',
-              borderColor: 'divider',
-              px: 1.2,
-              py: 0.5,
-              fontSize: 12
-            }}
+      {/* Right side: Actions */}
+      <div className="flex items-center gap-2">
+        
+        {/* Language Toggle */}
+        <button
+          onClick={toggleLang}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 transition-colors mr-1"
+          title={lang === 'en' ? 'Українська мова' : 'English language'}
+        >
+          <Globe size={14} />
+          <span className="text-xs font-bold">{lang === 'en' ? 'UA' : 'EN'}</span>
+        </button>
+
+        {/* Theme Toggle */}
+        <button
+          onClick={toggleTheme}
+          className="p-2 rounded-xl text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          title={isDark ? 'Light mode' : 'Dark mode'}
+        >
+          {isDark ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+
+        {/* User Menu */}
+        <div className="relative ml-2" ref={menuRef}>
+          <button
+            onClick={() => setMenuOpen(!menuOpen)}
+            className="flex items-center gap-2 p-1.5 pr-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
-            {lang === 'en' ? 'UA' : 'EN'}
-          </Button>
-        </Tooltip>
-
-        <Tooltip title={isDark ? 'Light mode' : 'Dark mode'}>
-          <IconButton size="small" onClick={toggleTheme} sx={{ color: 'text.secondary' }}>
-            {isDark ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-
-        <Tooltip title="User menu">
-          <Box
-            onClick={(e) => setAnchor(e.currentTarget)}
-            sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', px: 1, py: 0.5, borderRadius: 2, '&:hover': { bgcolor: 'action.hover' } }}
-          >
-            <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: ROLE_COLORS[user?.role] || '#38bdf8' }}>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shadow-sm ${ROLE_COLORS[userRole]}`}>
               {(user?.username || 'U')[0].toUpperCase()}
-            </Avatar>
-            <Box sx={{ lineHeight: 1.2, display: { xs: 'none', sm: 'block' } }}>
-              <Typography variant="body2" sx={{ fontWeight: 600, fontSize: 13 }}>{user?.username || 'User'}</Typography>
-              <Typography variant="caption" sx={{ color: ROLE_COLORS[user?.role] || '#38bdf8', fontSize: 11, textTransform: 'capitalize' }}>
-                {user?.role || 'viewer'}
-              </Typography>
-            </Box>
-          </Box>
-        </Tooltip>
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-sm font-bold text-slate-900 dark:text-white leading-tight">
+                {user?.username || 'User'}
+              </p>
+              <p className={`text-[10px] font-bold uppercase tracking-wider ${ROLE_TEXT[userRole]}`}>
+                {userRole}
+              </p>
+            </div>
+            <ChevronDown size={14} className="text-slate-400 ml-1 hidden sm:block" />
+          </button>
 
-        <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)} PaperProps={{ sx: { minWidth: 180, mt: 0.5 } }}>
-          <MenuItem disabled>
-            <ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>
-            <Box>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>{user?.username}</Typography>
-              <Typography variant="caption" color="text.secondary">{user?.role}</Typography>
-            </Box>
-          </MenuItem>
-          <Divider />
-          <MenuItem onClick={() => { setAnchor(null); navigate('/settings'); }}>
-            <ListItemIcon><ShieldIcon fontSize="small" /></ListItemIcon> {t('settings')}
-          </MenuItem>
-          <MenuItem onClick={() => { setAnchor(null); logout(); }}>
-            <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon> {t('logout')}
-          </MenuItem>
-        </Menu>
-      </Box>
-    </Box>
+          {/* Dropdown Menu */}
+          {menuOpen && (
+            <div className="absolute right-0 mt-2 w-48 rounded-xl bg-white dark:bg-slate-800 shadow-lg ring-1 ring-black/5 dark:ring-white/10 overflow-hidden glass z-50">
+              <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-700/50">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                  {user?.username}
+                </p>
+                <p className={`text-xs font-medium truncate ${ROLE_TEXT[userRole]}`}>
+                  {userRole}
+                </p>
+              </div>
+              <div className="p-1.5">
+                <button
+                  onClick={() => { setMenuOpen(false); navigate('/settings'); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50 rounded-lg transition-colors"
+                >
+                  <Shield size={16} />
+                  {t('settings') || 'Settings'}
+                </button>
+                <button
+                  onClick={() => { setMenuOpen(false); logout(); }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors mt-0.5"
+                >
+                  <LogOut size={16} />
+                  {t('logout') || 'Logout'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+      </div>
+    </div>
   );
 }

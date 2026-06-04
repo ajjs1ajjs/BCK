@@ -2,17 +2,17 @@ const { emit, EVENT_TYPES } = require('./webhooks');
 const { db } = require('./db');
 
 describe('Webhook Service Tests', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     try {
-      db.prepare('DELETE FROM webhook_endpoints').run();
-      db.prepare('DELETE FROM webhook_deliveries').run();
+      await db.run('DELETE FROM webhook_endpoints');
+      await db.run('DELETE FROM webhook_deliveries');
     } catch (e) {}
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
-      db.prepare('DELETE FROM webhook_endpoints').run();
-      db.prepare('DELETE FROM webhook_deliveries').run();
+      await db.run('DELETE FROM webhook_endpoints');
+      await db.run('DELETE FROM webhook_deliveries');
     } catch (e) {}
   });
 
@@ -29,14 +29,14 @@ describe('Webhook Service Tests', () => {
 
   test('should filter out mismatched webhook subscriptions', async () => {
     // Inject a disabled webhook
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO webhook_endpoints (id, name, url, secret, events, retries, active, orgId, createdAt)
       VALUES ('test-id', 'Test WH', 'http://localhost/ping', 'secret', '["backup.failed"]', 3, 1, 'default', '2026-05-29')
     `).run();
 
     // Emitting backup.completed should not match
     await emit('backup.completed', { id: 'abc' });
-    const count = db.prepare('SELECT COUNT(*) as count FROM webhook_deliveries').get().count;
+    const count = (await db.get('SELECT COUNT(*) as count FROM webhook_deliveries')).count;
     expect(count).toBe(0);
   });
 });

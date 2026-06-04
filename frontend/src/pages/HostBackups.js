@@ -1,15 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Box, Typography, Card, CardContent, Button, TextField, Dialog, DialogTitle,
-  DialogContent, DialogActions, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Chip, IconButton, Tooltip, Snackbar, Alert,
-} from '@mui/material';
-import {
-  Add as AddIcon, Delete as DeleteIcon, PlayArrow as RunIcon,
-  Refresh as RefreshIcon, Dns as HostIcon, Edit as EditIcon,
-} from '@mui/icons-material';
+import { 
+  Plus, Trash2, Edit2, RefreshCw, HardDrive, AlertCircle, 
+  CheckCircle2, PlayCircle, X 
+} from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
-
 import { API } from '../utils/config';
 
 const EMPTY_FORM = {
@@ -24,7 +18,7 @@ export default function HostBackups() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
-  const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
+  const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t, lang } = useTranslation();
   const isUk = lang === 'uk';
 
@@ -36,6 +30,11 @@ export default function HostBackups() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const showSnack = (msg, type = 'success') => {
+    setSnack({ open: true, msg, type });
+    setTimeout(() => setSnack({ open: false, msg: '', type: 'success' }), 4000);
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -54,9 +53,10 @@ export default function HostBackups() {
     setDialogOpen(true);
   };
 
-  const saveBackup = async () => {
+  const saveBackup = async (e) => {
+    e.preventDefault();
     if (!form.name || !form.sourcePath || !form.destination) {
-      setSnack({ open: true, msg: isUk ? 'Назва, шлях хоста і сховище обовʼязкові' : 'Name, host path, and destination are required', severity: 'warning' });
+      showSnack(isUk ? 'Назва, шлях хоста і сховище обовʼязкові' : 'Name, host path, and destination are required', 'warning');
       return;
     }
 
@@ -80,126 +80,207 @@ export default function HostBackups() {
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error();
-      setSnack({ open: true, msg: editing ? (isUk ? 'Копіювання хоста оновлено' : 'Host backup updated') : (isUk ? 'Копіювання хоста створено' : 'Host backup created'), severity: 'success' });
+      showSnack(editing ? (isUk ? 'Копіювання хоста оновлено' : 'Host backup updated') : (isUk ? 'Копіювання хоста створено' : 'Host backup created'), 'success');
       setDialogOpen(false);
       load();
     } catch {
-      setSnack({ open: true, msg: isUk ? 'Не вдалося зберегти backup хоста' : 'Failed to save host backup', severity: 'error' });
+      showSnack(isUk ? 'Не вдалося зберегти backup хоста' : 'Failed to save host backup', 'error');
     }
   };
 
   const runBackup = async (id) => {
     try {
       await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
-      setSnack({ open: true, msg: isUk ? 'Копіювання хоста запущено' : 'Host backup started', severity: 'info' });
+      showSnack(isUk ? 'Копіювання хоста запущено' : 'Host backup started', 'info');
       setTimeout(load, 2000);
     } catch {
-      setSnack({ open: true, msg: isUk ? 'Не вдалося запустити копіювання' : 'Failed to start backup', severity: 'error' });
+      showSnack(isUk ? 'Не вдалося запустити копіювання' : 'Failed to start backup', 'error');
     }
   };
 
   const deleteBackup = async (id) => {
+    if(!window.confirm(isUk ? 'Видалити?' : 'Delete?')) return;
     try {
       await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
+      showSnack('Deleted', 'success');
       load();
     } catch {
-      setSnack({ open: true, msg: isUk ? 'Не вдалося видалити' : 'Failed to delete', severity: 'error' });
+      showSnack(isUk ? 'Не вдалося видалити' : 'Failed to delete', 'error');
+    }
+  };
+
+  const getStatusStyle = (status) => {
+    switch(status) {
+      case 'completed': return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
+      case 'failed': return 'bg-red-500/10 text-red-600 border-red-500/20';
+      case 'running': return 'bg-blue-500/10 text-blue-600 border-blue-500/20 animate-pulse';
+      case 'pending': return 'bg-amber-500/10 text-amber-600 border-amber-500/20';
+      default: return 'bg-slate-500/10 text-slate-600 border-slate-500/20';
     }
   };
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="h4">{isUk ? 'Хости' : 'Hosts'}</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>
+    <div className="max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+            {isUk ? 'Хости' : 'Hosts'}
+          </h1>
+          <p className="text-sm font-medium text-slate-500">
+            {isUk ? 'Повне файлове копіювання хоста через tar-архів' : 'Full host file backup using tar archives'}
+          </p>
+        </div>
+        <button onClick={openCreate} className="btn-primary py-2.5 px-4 w-full sm:w-auto">
+          <Plus size={18} />
           {isUk ? 'Нове копіювання хоста' : 'New Host Backup'}
-        </Button>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {isUk ? 'Повне файлове копіювання хоста через tar-архів' : 'Full host file backup using tar archives'}
-      </Typography>
+        </button>
+      </div>
 
-      <Card>
-        <CardContent sx={{ pb: '8px !important' }}>
-          <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
-          </Box>
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('name')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{isUk ? 'Шлях хоста' : 'Host path'}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('destPath')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('status')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('createdAt')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="right">{t('actions')}</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {backups.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
-                      <HostIcon sx={{ fontSize: 48, color: 'text.secondary', opacity: 0.3, mb: 1, display: 'block', mx: 'auto' }} />
-                      <Typography color="text.secondary">{isUk ? 'Копіювання хостів ще не налаштоване' : 'No host backups configured'}</Typography>
-                    </TableCell>
-                  </TableRow>
-                ) : backups.map((backup) => (
-                  <TableRow key={backup.id}>
-                    <TableCell><Typography sx={{ fontWeight: 600, fontSize: 14 }}>{backup.name}</Typography></TableCell>
-                    <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>{backup.config?.sourcePath || backup.source}</Typography></TableCell>
-                    <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>{backup.destination}</Typography></TableCell>
-                    <TableCell>
-                      <Chip label={backup.status} size="small" color={backup.status === 'completed' ? 'success' : backup.status === 'failed' ? 'error' : backup.status === 'running' ? 'info' : 'default'} />
-                    </TableCell>
-                    <TableCell><Typography variant="body2" sx={{ fontSize: 12 }}>{(backup.createdAt || '').slice(0, 10)}</Typography></TableCell>
-                    <TableCell align="right">
-                      <Tooltip title={t('runNow')}><IconButton size="small" onClick={() => runBackup(backup.id)}><RunIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title={t('edit')}><IconButton size="small" onClick={() => openEdit(backup)}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title={t('delete')}><IconButton size="small" onClick={() => deleteBackup(backup.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </CardContent>
-      </Card>
+      <div className="glass-card">
+        {/* Toolbar */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+          <button onClick={load} className="btn-secondary px-3 py-1.5 text-sm" title={t('refresh')}>
+            <RefreshCw size={16} /> {t('refresh') || 'Refresh'}
+          </button>
+        </div>
+        
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
+                <th className="p-4 font-semibold">{t('name')}</th>
+                <th className="p-4 font-semibold">{isUk ? 'Шлях хоста' : 'Host path'}</th>
+                <th className="p-4 font-semibold">{t('destPath')}</th>
+                <th className="p-4 font-semibold">{t('status')}</th>
+                <th className="p-4 font-semibold">{t('createdAt')}</th>
+                <th className="p-4 font-semibold text-right">{t('actions')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              {backups.length === 0 ? (
+                <tr>
+                  <td colSpan="6" className="p-8 text-center text-slate-500">
+                    <HardDrive size={48} className="mx-auto mb-4 opacity-20" />
+                    <p className="text-sm font-medium">{isUk ? 'Копіювання хостів ще не налаштоване' : 'No host backups configured'}</p>
+                  </td>
+                </tr>
+              ) : (
+                backups.map(backup => (
+                  <tr key={backup.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                    <td className="p-4">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">{backup.name}</p>
+                    </td>
+                    <td className="p-4">
+                      <p className="text-xs font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded inline-block">
+                        {backup.config?.sourcePath || backup.source}
+                      </p>
+                    </td>
+                    <td className="p-4">
+                      <p className="text-xs font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded inline-block">
+                        {backup.destination}
+                      </p>
+                    </td>
+                    <td className="p-4">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider whitespace-nowrap ${getStatusStyle(backup.status)}`}>
+                        {backup.status || 'unknown'}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <p className="text-xs font-medium text-slate-500">
+                        {(backup.createdAt || '').slice(0, 10)}
+                      </p>
+                    </td>
+                    <td className="p-4 text-right whitespace-nowrap">
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => runBackup(backup.id)} className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded transition-colors" title={t('runNow')}>
+                          <PlayCircle size={18} />
+                        </button>
+                        <button onClick={() => openEdit(backup)} className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 rounded transition-colors" title={t('edit')}>
+                          <Edit2 size={18} />
+                        </button>
+                        <button onClick={() => deleteBackup(backup.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded transition-colors" title={t('delete')}>
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{editing ? (isUk ? 'Редагувати копіювання хоста' : 'Edit Host Backup') : (isUk ? 'Додати копіювання хоста' : 'Add Host Backup')}</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            <TextField label={t('name')} fullWidth value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-            <TextField
-              label={isUk ? 'Що копіювати на хості' : 'Host path to back up'}
-              fullWidth
-              value={form.sourcePath}
-              onChange={(e) => setForm({ ...form, sourcePath: e.target.value })}
-              placeholder="/"
-              helperText={isUk ? 'Для цілого хоста використовуйте /. Системні каталоги виключаються нижче.' : 'Use / for the whole host. System folders are excluded below.'}
-            />
-            <TextField label={t('destPath')} fullWidth value={form.destination} onChange={(e) => setForm({ ...form, destination: e.target.value })} placeholder="/backup/hosts" />
-            <TextField
-              label={isUk ? 'Виключити з копії' : 'Exclude from backup'}
-              fullWidth
-              multiline
-              rows={5}
-              value={form.excludes}
-              onChange={(e) => setForm({ ...form, excludes: e.target.value })}
-              helperText={isUk ? 'Один шлях на рядок. Наприклад: /proc, /sys, /tmp.' : 'One path per line. Example: /proc, /sys, /tmp.'}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>{t('cancel')}</Button>
-          <Button variant="contained" onClick={saveBackup}>{editing ? t('save') : t('create')}</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Backup Dialog */}
+      {dialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-6 border-b border-slate-100 dark:border-slate-800">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                {editing ? (isUk ? 'Редагувати копіювання хоста' : 'Edit Host Backup') : (isUk ? 'Додати копіювання хоста' : 'Add Host Backup')}
+              </h2>
+              <button onClick={() => setDialogOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={saveBackup}>
+              <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('name')}</label>
+                  <input type="text" required value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="input-field" />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{isUk ? 'Що копіювати на хості' : 'Host path to back up'}</label>
+                  <input type="text" required value={form.sourcePath} onChange={e => setForm({...form, sourcePath: e.target.value})} className="input-field font-mono text-sm" placeholder="/" />
+                  <p className="text-[11px] text-slate-500 mt-1">{isUk ? 'Для цілого хоста використовуйте /. Системні каталоги виключаються нижче.' : 'Use / for the whole host. System folders are excluded below.'}</p>
+                </div>
 
-      <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack({ ...snack, open: false })} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-        <Alert severity={snack.severity} variant="filled" sx={{ borderRadius: 2 }}>{snack.msg}</Alert>
-      </Snackbar>
-    </Box>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('destPath')}</label>
+                  <input type="text" required value={form.destination} onChange={e => setForm({...form, destination: e.target.value})} className="input-field font-mono text-sm" placeholder="/backup/hosts" />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{isUk ? 'Виключити з копії' : 'Exclude from backup'}</label>
+                  <textarea rows={5} value={form.excludes} onChange={e => setForm({...form, excludes: e.target.value})} className="input-field font-mono text-sm resize-none" />
+                  <p className="text-[11px] text-slate-500 mt-1">{isUk ? 'Один шлях на рядок. Наприклад: /proc, /sys, /tmp.' : 'One path per line. Example: /proc, /sys, /tmp.'}</p>
+                </div>
+              </div>
+              
+              <div className="flex justify-end gap-3 p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800">
+                <button type="button" onClick={() => setDialogOpen(false)} className="btn-secondary px-4 py-2">
+                  {t('cancel')}
+                </button>
+                <button type="submit" className="btn-primary px-6 py-2">
+                  {editing ? t('save') : t('create')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Snackbar */}
+      {snack.open && (
+        <div className="fixed bottom-6 right-6 z-50 animate-slide-up">
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${
+            snack.type === 'error' ? 'bg-red-500 text-white border-red-600 shadow-red-500/20' : 
+            snack.type === 'warning' ? 'bg-amber-500 text-white border-amber-600 shadow-amber-500/20' : 
+            snack.type === 'info' ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' :
+            'bg-slate-900 text-white border-slate-800 shadow-slate-900/20'
+          }`}>
+            {snack.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+            <span className="text-sm font-semibold">{snack.msg}</span>
+            <button onClick={() => setSnack({...snack, open: false})} className="ml-2 text-white/70 hover:text-white transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

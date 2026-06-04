@@ -1,16 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Box, Typography, Card, CardContent, Button, TextField, Dialog, DialogTitle,
-  DialogContent, DialogActions, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Chip, IconButton, Tooltip, MenuItem, Snackbar, Alert,
-} from '@mui/material';
-import {
-  Add as AddIcon, Delete as DeleteIcon, PlayArrow as RunIcon,
-  Refresh as RefreshIcon, Computer as ComputerIcon, Edit as EditIcon,
-} from '@mui/icons-material';
+import { 
+  Plus, Trash2, Edit2, RefreshCw, Monitor,
+  AlertCircle, CheckCircle2, PlayCircle, X 
+} from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
-
 import { API } from '../utils/config';
+
 export default function VMBackups() {
   const [backups, setBackups] = useState([]);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -19,17 +14,25 @@ export default function VMBackups() {
     name: '', destination: '', type: 'vmware',
     config: { vmName: '', host: '', user: '', password: '', datastore: '' },
   });
-  const [snack, setSnack] = useState({ open: false, msg: '', severity: 'success' });
+  const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t } = useTranslation();
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?limit=500&type=vm`).then(r => r.json()).then(data => {
-      const b = data?.data || (Array.isArray(data) ? data : []);
-      setBackups(b.filter(x => ['vmware', 'hyperv'].includes(x.backupType || x.type)));
-    }).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/backups?limit=500&type=vm`)
+      .then(r => r.json())
+      .then(data => {
+        const b = data?.data || (Array.isArray(data) ? data : []);
+        setBackups(b.filter(x => ['vmware', 'hyperv'].includes(x.backupType || x.type)));
+      })
+      .catch(e => console.error('Load error:', e));
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const showSnack = (msg, type = 'success') => {
+    setSnack({ open: true, msg, type });
+    setTimeout(() => setSnack({ open: false, msg: '', type: 'success' }), 4000);
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -54,9 +57,10 @@ export default function VMBackups() {
     setDialogOpen(true);
   };
 
-  const saveBackup = async () => {
+  const saveBackup = async (e) => {
+    e.preventDefault();
     if (!form.name || !form.config.vmName || !form.config.host) {
-      setSnack({ open: true, msg: 'Name, VM name, and host required', severity: 'warning' }); return;
+      showSnack('Name, VM name, and host required', 'warning'); return;
     }
     const method = editing ? 'PUT' : 'POST';
     const url = editing ? `${API}/api/backups/${editing.id}` : `${API}/api/backups`;
@@ -72,107 +76,224 @@ export default function VMBackups() {
         body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error();
-      setSnack({ open: true, msg: editing ? 'Backup updated' : 'Backup created', severity: 'success' });
-      setDialogOpen(false); load();
-    } catch { setSnack({ open: true, msg: 'Failed to save', severity: 'error' }); }
+      showSnack(editing ? 'Backup updated' : 'Backup created', 'success');
+      setDialogOpen(false); 
+      load();
+    } catch { showSnack('Failed to save', 'error'); }
   };
 
   const runBackup = async (id) => {
     try {
       await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
-      setSnack({ open: true, msg: 'VM backup started', severity: 'info' });
+      showSnack('VM backup started', 'info');
       setTimeout(load, 2000);
-    } catch { setSnack({ open: true, msg: 'Failed to start', severity: 'error' }); }
+    } catch { showSnack('Failed to start', 'error'); }
   };
 
   const deleteBackup = async (id) => {
+    if(!window.confirm("Are you sure?")) return;
     try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' }); load(); }
-    catch { setSnack({ open: true, msg: 'Failed to delete', severity: 'error' }); }
+    catch { showSnack('Failed to delete', 'error'); }
+  };
+
+  const getStatusStyle = (status) => {
+    switch(status) {
+      case 'completed': return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20';
+      case 'failed': return 'bg-red-500/10 text-red-600 border-red-500/20';
+      case 'running': return 'bg-blue-500/10 text-blue-600 border-blue-500/20 animate-pulse';
+      case 'pending': return 'bg-amber-500/10 text-amber-600 border-amber-500/20';
+      default: return 'bg-slate-500/10 text-slate-600 border-slate-500/20';
+    }
   };
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="h4">{t('vms')}</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>{t('newBackupBtn')}</Button>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        VMware vSphere &bull; Microsoft Hyper-V
-      </Typography>
+    <div className="max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+            {t('vms') || 'Virtual Machines'}
+          </h1>
+          <p className="text-sm font-medium text-slate-500">
+            VMware vSphere • Microsoft Hyper-V
+          </p>
+        </div>
+        <button onClick={openCreate} className="btn-primary py-2.5 px-4 w-full sm:w-auto">
+          <Plus size={18} />
+          {t('newBackupBtn') || 'New Backup'}
+        </button>
+      </div>
 
-      <Card>
-        <CardContent sx={{ pb: '8px !important' }}>
-          <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
-            <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
-          </Box>
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('name')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('provider')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('vmName')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('host')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('status')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }}>{t('createdAt')}</TableCell>
-                  <TableCell sx={{ fontWeight: 600 }} align="right">{t('actions')}</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {backups.length === 0 ? (
-                  <TableRow><TableCell colSpan={7} align="center" sx={{ py: 6 }}>
-                    <ComputerIcon sx={{ fontSize: 48, color: 'text.secondary', opacity: 0.3, mb: 1, display: 'block', mx: 'auto' }} />
-                    <Typography color="text.secondary">{t('noBackupsConfigured')}</Typography>
-                  </TableCell></TableRow>
-                ) : backups.map((b) => (
-                  <TableRow key={b.id}>
-                    <TableCell><Typography sx={{ fontWeight: 600, fontSize: 14 }}>{b.name}</Typography></TableCell>
-                    <TableCell><Chip label={b.backupType || b.type} size="small" color="primary" variant="outlined" /></TableCell>
-                    <TableCell>{b.config?.vmName || '—'}</TableCell>
-                    <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>{b.config?.host || '—'}</Typography></TableCell>
-                    <TableCell>
-                      <Chip label={b.status} size="small" color={b.status === 'completed' ? 'success' : b.status === 'failed' ? 'error' : b.status === 'running' ? 'info' : 'default'} />
-                    </TableCell>
-                    <TableCell><Typography variant="body2" sx={{ fontSize: 12 }}>{(b.createdAt || '').slice(0, 10)}</Typography></TableCell>
-                    <TableCell align="right">
-                      <Tooltip title={t('runNow')}><IconButton size="small" onClick={() => runBackup(b.id)}><RunIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title={t('edit')}><IconButton size="small" onClick={() => openEdit(b)}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title={t('delete')}><IconButton size="small" onClick={() => deleteBackup(b.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </CardContent>
-      </Card>
+      <div className="glass-card">
+        {/* Toolbar */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+          <button onClick={load} className="btn-secondary px-3 py-1.5 text-sm" title={t('refresh')}>
+            <RefreshCw size={16} /> {t('refresh') || 'Refresh'}
+          </button>
+        </div>
+        
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 text-xs uppercase tracking-wider border-b border-slate-200 dark:border-slate-700">
+                <th className="p-4 font-semibold">{t('name')}</th>
+                <th className="p-4 font-semibold">{t('provider')}</th>
+                <th className="p-4 font-semibold">{t('vmName')}</th>
+                <th className="p-4 font-semibold">{t('host')}</th>
+                <th className="p-4 font-semibold">{t('status')}</th>
+                <th className="p-4 font-semibold">{t('createdAt')}</th>
+                <th className="p-4 font-semibold text-right">{t('actions')}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              {backups.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="p-8 text-center text-slate-500">
+                    <Monitor size={48} className="mx-auto mb-4 opacity-20" />
+                    <p className="text-sm font-medium">{t('noBackupsConfigured')}</p>
+                  </td>
+                </tr>
+              ) : (
+                backups.map(b => (
+                  <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors group">
+                    <td className="p-4">
+                      <p className="text-sm font-bold text-slate-900 dark:text-white">{b.name}</p>
+                    </td>
+                    <td className="p-4">
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-amber-500/10 text-amber-600 border-amber-500/20 uppercase tracking-wider">
+                        {b.backupType || b.type}
+                      </span>
+                    </td>
+                    <td className="p-4 text-sm text-slate-600 dark:text-slate-300">
+                      {b.config?.vmName || '—'}
+                    </td>
+                    <td className="p-4">
+                      <p className="text-xs font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 px-2 py-1 rounded inline-block">
+                        {b.config?.host || '—'}
+                      </p>
+                    </td>
+                    <td className="p-4">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider whitespace-nowrap ${getStatusStyle(b.status)}`}>
+                        {b.status || 'unknown'}
+                      </span>
+                    </td>
+                    <td className="p-4">
+                      <p className="text-xs font-medium text-slate-500">
+                        {(b.createdAt || '').slice(0, 10)}
+                      </p>
+                    </td>
+                    <td className="p-4 text-right whitespace-nowrap">
+                      <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => runBackup(b.id)} className="p-1.5 text-slate-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10 rounded transition-colors" title={t('runNow')}>
+                          <PlayCircle size={18} />
+                        </button>
+                        <button onClick={() => openEdit(b)} className="p-1.5 text-slate-400 hover:text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 rounded transition-colors" title={t('edit')}>
+                          <Edit2 size={18} />
+                        </button>
+                        <button onClick={() => deleteBackup(b.id)} className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded transition-colors" title={t('delete')}>
+                          <Trash2 size={18} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>{editing ? t('editBackup') : t('addBackup')}</DialogTitle>
-        <DialogContent>
-          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            <TextField label={t('name')} fullWidth value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} />
-            <TextField select label={t('provider')} fullWidth value={form.type} onChange={(e) => setForm({...form, type: e.target.value})}>
-              <MenuItem value="vmware">VMware vSphere</MenuItem>
-              <MenuItem value="hyperv">Microsoft Hyper-V</MenuItem>
-            </TextField>
-            <TextField label={t('vmName')} fullWidth value={form.config.vmName} onChange={(e) => setForm({...form, config: {...form.config, vmName: e.target.value}})} placeholder="my-vm" />
-            <TextField label={t('host')} fullWidth value={form.config.host} onChange={(e) => setForm({...form, config: {...form.config, host: e.target.value}})} placeholder="vcenter.local or hyperv-server" />
-            <TextField label={t('username')} fullWidth value={form.config.user} onChange={(e) => setForm({...form, config: {...form.config, user: e.target.value}})} />
-            <TextField label={t('password')} type="password" fullWidth value={form.config.password} onChange={(e) => setForm({...form, config: {...form.config, password: e.target.value}})} />
-            <TextField label={t('datastore')} fullWidth value={form.config.datastore} onChange={(e) => setForm({...form, config: {...form.config, datastore: e.target.value}})} placeholder="datastore1 or D:\Hyper-V" />
-            <TextField label={t('destPath')} fullWidth value={form.destination} onChange={(e) => setForm({...form, destination: e.target.value})} placeholder="/backup/vm" />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>{t('cancel')}</Button>
-          <Button variant="contained" onClick={saveBackup}>{editing ? t('save') : t('create')}</Button>
-        </DialogActions>
-      </Dialog>
+      {/* Backup Dialog */}
+      {dialogOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 dark:border-slate-800" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-6 border-b border-slate-100 dark:border-slate-800">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                {editing ? t('editBackup') : t('addBackup')}
+              </h2>
+              <button onClick={() => setDialogOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <form onSubmit={saveBackup}>
+              <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('name')}</label>
+                  <input type="text" required value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="input-field" />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('provider')}</label>
+                  <select value={form.type} onChange={e => setForm({...form, type: e.target.value})} className="input-field">
+                    <option value="vmware">VMware vSphere</option>
+                    <option value="hyperv">Microsoft Hyper-V</option>
+                  </select>
+                </div>
 
-      <Snackbar open={snack.open} autoHideDuration={4000} onClose={() => setSnack({...snack, open: false})} anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}>
-        <Alert severity={snack.severity} variant="filled" sx={{ borderRadius: 2 }}>{snack.msg}</Alert>
-      </Snackbar>
-    </Box>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('vmName')}</label>
+                  <input type="text" required value={form.config.vmName} onChange={e => setForm({...form, config: {...form.config, vmName: e.target.value}})} className="input-field" placeholder="my-vm" />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('host')}</label>
+                  <input type="text" required value={form.config.host} onChange={e => setForm({...form, config: {...form.config, host: e.target.value}})} className="input-field" placeholder="vcenter.local or hyperv-server" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('username')}</label>
+                    <input type="text" required value={form.config.user} onChange={e => setForm({...form, config: {...form.config, user: e.target.value}})} className="input-field" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('password')}</label>
+                    <input type="password" value={form.config.password} onChange={e => setForm({...form, config: {...form.config, password: e.target.value}})} className="input-field" placeholder={editing ? 'Leave blank to keep' : ''} />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('datastore')} / Storage Path</label>
+                  <input type="text" required value={form.config.datastore} onChange={e => setForm({...form, config: {...form.config, datastore: e.target.value}})} className="input-field" placeholder="datastore1 or D:\Hyper-V" />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">{t('destPath')} (Local)</label>
+                  <input type="text" required value={form.destination} onChange={e => setForm({...form, destination: e.target.value})} className="input-field" placeholder="/backup/vm" />
+                </div>
+              </div>
+              
+              <div className="flex justify-end gap-3 p-6 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800">
+                <button type="button" onClick={() => setDialogOpen(false)} className="btn-secondary px-4 py-2">
+                  {t('cancel')}
+                </button>
+                <button type="submit" className="btn-primary px-6 py-2">
+                  {editing ? t('save') : t('create')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Snackbar */}
+      {snack.open && (
+        <div className="fixed bottom-6 right-6 z-50 animate-slide-up">
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border ${
+            snack.type === 'error' ? 'bg-red-500 text-white border-red-600 shadow-red-500/20' : 
+            snack.type === 'warning' ? 'bg-amber-500 text-white border-amber-600 shadow-amber-500/20' : 
+            snack.type === 'info' ? 'bg-blue-500 text-white border-blue-600 shadow-blue-500/20' :
+            'bg-slate-900 text-white border-slate-800 shadow-slate-900/20'
+          }`}>
+            {snack.type === 'error' ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
+            <span className="text-sm font-semibold">{snack.msg}</span>
+            <button onClick={() => setSnack({...snack, open: false})} className="ml-2 text-white/70 hover:text-white transition-colors">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

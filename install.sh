@@ -166,6 +166,29 @@ echo ""
 echo -e "  ${CYAN}Note:${NC} PowerShell for Hyper-V is available only on Windows hosts."
 echo -e "  ${CYAN}      Oracle expdp/impdp — install Oracle Instant Client manually.${NC}"
 echo ""
+
+# ─── Install and Configure PostgreSQL ───────────────
+echo -e "${YELLOW}[*] Installing and configuring PostgreSQL...${NC}"
+case "$PKG" in
+  apt) sudo apt-get install -y postgresql postgresql-contrib ;;
+  dnf) sudo dnf install -y postgresql-server postgresql-contrib && sudo postgresql-setup initdb ;;
+  yum) sudo yum install -y postgresql-server postgresql-contrib && sudo postgresql-setup initdb ;;
+  apk) sudo apk add postgresql postgresql-contrib && sudo /etc/init.d/postgresql setup ;;
+esac 2>/dev/null
+
+echo -e "${YELLOW}[*] Starting PostgreSQL service...${NC}"
+sudo systemctl enable postgresql || true
+sudo systemctl start postgresql || sudo /etc/init.d/postgresql start || true
+
+# Generate random DB password
+DB_PASS=$(node -e "console.log(require('crypto').randomBytes(8).toString('hex'))" 2>/dev/null || echo "bckdbpass")
+DB_USER="bckuser"
+DB_NAME="bckdb"
+
+echo -e "${YELLOW}[*] Setting up PostgreSQL database...${NC}"
+sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null || true
+sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null || true
+
 set -e
 
 # ─── Install dependencies ─────────────────────────
@@ -214,11 +237,15 @@ else
     cat > .env <<EOF
 PORT=9000
 JWT_SECRET=$JWT_SECRET
-DB_PATH=./db.json
 NODE_ENV=production
 HOST=0.0.0.0
 APP_URL=$APP_URL
 ENCRYPTION_KEY=$ENCRYPTION_KEY
+DB_HOST=127.0.0.1
+DB_PORT=5432
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASS
+DB_NAME=$DB_NAME
 EOF
 fi
 
@@ -260,4 +287,8 @@ echo -e "  ${BOLD}Commands:${NC}"
 echo -e "  sudo systemctl status bck    — check status"
 echo -e "  sudo systemctl restart bck   — restart"
 echo -e "  sudo journalctl -u bck -f    — live logs"
+echo ""
+echo -e "  ${YELLOW}PostgreSQL was installed and configured automatically.${NC}"
+echo -e "  DB User: ${DB_USER}"
+echo -e "  DB Name: ${DB_NAME}"
 echo ""

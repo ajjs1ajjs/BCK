@@ -1,8 +1,8 @@
 const { db } = require('../services/db');
 const logger = require('../services/logger');
 
-const getSettings = () => {
-  const rows = db.prepare('SELECT key, value FROM settings').all();
+const getSettings = async () => {
+  const rows = await db.all('SELECT key, value FROM settings');
   const settings = {};
   rows.forEach(row => {
     settings[row.key] = JSON.parse(row.value);

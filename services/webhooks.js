@@ -6,6 +6,7 @@
 const crypto = require('crypto');
 const { db } = require('./db');
 const logger = require('./logger');
+const cryptoHelper = require('./crypto');
 
 // All event types emitted by BCK
 const EVENT_TYPES = [
@@ -40,7 +41,12 @@ async function deliverToEndpoint(endpoint, payload) {
   };
 
   if (endpoint.secret) {
-    headers['X-BCK-Signature'] = sign(endpoint.secret, body);
+    try {
+      const decryptedSecret = cryptoHelper.decrypt(endpoint.secret);
+      headers['X-BCK-Signature'] = sign(decryptedSecret, body);
+    } catch (e) {
+      logger.error(`Failed to decrypt webhook secret for ${endpoint.url}: ${e.message}`);
+    }
   }
 
   const MAX_ATTEMPTS = endpoint.retries || 3;
@@ -62,7 +68,7 @@ async function deliverToEndpoint(endpoint, payload) {
       if (res.ok) {
         // Log successful delivery
         try {
-          db.prepare(`
+          await db.prepare(`
             INSERT INTO webhook_deliveries (id, endpointId, event, status, statusCode, attempt, deliveredAt)
             VALUES (?, ?, ?, 'success', ?, ?, ?)
           `).run(payload.deliveryId, endpoint.id, payload.event, res.status, attempt, new Date().toISOString());
@@ -83,7 +89,7 @@ async function deliverToEndpoint(endpoint, payload) {
 
   // Log failed delivery
   try {
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO webhook_deliveries (id, endpointId, event, status, statusCode, attempt, error, deliveredAt)
       VALUES (?, ?, ?, 'failed', NULL, ?, ?, ?)
     `).run(payload.deliveryId, endpoint.id, payload.event, MAX_ATTEMPTS, lastError, new Date().toISOString());
@@ -100,7 +106,7 @@ async function deliverToEndpoint(endpoint, payload) {
 async function emit(event, data = {}) {
   let endpoints;
   try {
-    endpoints = db.prepare("SELECT * FROM webhook_endpoints WHERE active = 1").all();
+    endpoints = await db.all("SELECT * FROM webhook_endpoints WHERE active = 1");
   } catch (e) {
     return;
   }

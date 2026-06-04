@@ -8,7 +8,7 @@ const { addLog } = require('../services/helpers');
 
 // GET /api/roles
 router.get('/roles', authorize('manageRoles'), async (req, res) => {
-  const roles = db.prepare('SELECT * FROM roles').all();
+  const roles = await db.all('SELECT * FROM roles');
   res.json(roles.map(r => ({ ...r, permissions: JSON.parse(r.permissions) })));
 });
 
@@ -19,7 +19,7 @@ router.post('/roles', authorize('manageRoles'), async (req, res) => {
   const role = { id: uuidv4(), name, description: description || '', level: 1, permissions: JSON.stringify(permissions) };
   
   try {
-    db.prepare('INSERT INTO roles (id, name, description, level, permissions) VALUES (@id, @name, @description, @level, @permissions)')
+    await db.prepare('INSERT INTO roles (id, name, description, level, permissions) VALUES (@id, @name, @description, @level, @permissions)')
       .run(role);
     await addLog(`Role created: ${name}`, 'success');
     res.status(201).json({ ...role, permissions });
@@ -30,14 +30,14 @@ router.post('/roles', authorize('manageRoles'), async (req, res) => {
 
 // PUT /api/roles/:id
 router.put('/roles/:id', authorize('manageRoles'), async (req, res) => {
-  const role = db.prepare('SELECT * FROM roles WHERE id = ?').get(req.params.id);
+  const role = await db.get('SELECT * FROM roles WHERE id = ?', req.params.id);
   if (!role) return res.status(404).json({ error: 'Not found' });
   
   const update = { ...role, ...req.body };
   if (req.body.permissions) update.permissions = JSON.stringify(req.body.permissions);
   
   try {
-    db.prepare('UPDATE roles SET name = @name, description = @description, level = @level, permissions = @permissions WHERE id = @id')
+    await db.prepare('UPDATE roles SET name = @name, description = @description, level = @level, permissions = @permissions WHERE id = @id')
       .run(update);
     await addLog(`Role updated: ${update.name}`, 'info');
     res.json({ ...update, permissions: JSON.parse(update.permissions) });
@@ -49,7 +49,7 @@ router.put('/roles/:id', authorize('manageRoles'), async (req, res) => {
 // DELETE /api/roles/:id
 router.delete('/roles/:id', authorize('manageRoles'), async (req, res) => {
   try {
-    db.prepare('DELETE FROM roles WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM roles WHERE id = ?', req.params.id);
     res.json({ message: 'Deleted' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete: ' + err.message });

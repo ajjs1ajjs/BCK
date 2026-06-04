@@ -61,14 +61,23 @@ for /f "usebackq delims=" %%I in (`node -e "console.log(require('crypto').random
 if "%JWT_SECRET%"=="" set JWT_SECRET=bck-super-secret-change-in-production-2024
 for /f "usebackq delims=" %%I in (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" 2^>nul`) do set ENCRYPTION_KEY=%%I
 if "%ENCRYPTION_KEY%"=="" set ENCRYPTION_KEY=7ebdf6589b8b2563d260ac810cca2531fc18f8b1509af8678ef50a12ae38d1d9
+for /f "usebackq delims=" %%I in (`node -e "console.log(require('crypto').randomBytes(8).toString('hex'))" 2^>nul`) do set DB_PASS=%%I
+if "%DB_PASS%"=="" set DB_PASS=bckdbpass
+set DB_USER=bckuser
+set DB_NAME=bckdb
+
 (
     echo PORT=9000
     echo JWT_SECRET=%JWT_SECRET%
-    echo DB_PATH=./db.json
     echo NODE_ENV=production
     echo HOST=0.0.0.0
     echo APP_URL=%APP_URL%
     echo ENCRYPTION_KEY=%ENCRYPTION_KEY%
+    echo DB_HOST=127.0.0.1
+    echo DB_PORT=5432
+    echo DB_USER=%DB_USER%
+    echo DB_PASSWORD=%DB_PASS%
+    echo DB_NAME=%DB_NAME%
 ) > .env
 
 REM ─── Done ────────────────────────────────────────
@@ -82,6 +91,17 @@ echo   Login:    admin
 echo.
 echo   To start:  node server.js
 echo   Or double-click the BCK desktop shortcut
+echo.
+echo   [!] IMPORTANT: PostgreSQL is required!
+echo   Please ensure PostgreSQL is installed on your Windows machine.
+echo   Create a database and user with the following credentials 
+echo   (or use Docker: docker-compose up -d postgres):
+echo.
+echo   DB_HOST: 127.0.0.1
+echo   DB_PORT: 5432
+echo   DB_USER: %DB_USER%
+echo   DB_PASSWORD: %DB_PASS%
+echo   DB_NAME: %DB_NAME%
 echo.
 
 pause

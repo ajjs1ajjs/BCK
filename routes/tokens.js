@@ -20,8 +20,8 @@ function generateRawToken() {
 // GET /api/tokens — list own tokens (admin sees all)
 router.get('/tokens', async (req, res) => {
   const tokens = req.user.role === 'admin'
-    ? db.prepare('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens ORDER BY createdAt DESC').all()
-    : db.prepare('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens WHERE userId = ? ORDER BY createdAt DESC').all(req.user.id);
+    ? await db.all('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens ORDER BY createdAt DESC')
+    : await db.all('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens WHERE userId = ? ORDER BY createdAt DESC', req.user.id);
   res.json(tokens.map(t => ({ ...t, permissions: JSON.parse(t.permissions || '{}') })));
 });
 
@@ -42,7 +42,7 @@ router.post('/tokens', async (req, res) => {
   );
 
   try {
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO api_tokens (id, name, tokenHash, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
     `).run(id, name.trim(), hashed, req.user.id, req.user.orgId || 'default', JSON.stringify(effectivePerms), expiresAt || null, now);
@@ -64,7 +64,7 @@ router.post('/tokens', async (req, res) => {
 
 // DELETE /api/tokens/:id — revoke token
 router.delete('/tokens/:id', async (req, res) => {
-  const token = db.prepare('SELECT * FROM api_tokens WHERE id = ?').get(req.params.id);
+  const token = await db.get('SELECT * FROM api_tokens WHERE id = ?', req.params.id);
   if (!token) return res.status(404).json({ error: 'Not found' });
 
   // Only owner or admin can revoke
@@ -73,7 +73,7 @@ router.delete('/tokens/:id', async (req, res) => {
   }
 
   try {
-    db.prepare('DELETE FROM api_tokens WHERE id = ?').run(req.params.id);
+    await db.run('DELETE FROM api_tokens WHERE id = ?', req.params.id);
     await addLog(`API token revoked: "${token.name}" by ${req.user.username}`, 'warning');
     res.json({ message: 'Token revoked' });
   } catch (err) {

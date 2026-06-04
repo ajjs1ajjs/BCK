@@ -7,8 +7,8 @@ const s3versions = require('../services/s3versions');
 const { addLog } = require('../services/helpers');
 
 // Helper to decrypt credentials
-function getDecryptedCred(cloudCredentialId) {
-  const credRaw = db.prepare('SELECT * FROM cloud_credentials WHERE id = ?').get(cloudCredentialId);
+async function getDecryptedCred(cloudCredentialId) {
+  const credRaw = await db.get('SELECT * FROM cloud_credentials WHERE id = ?', cloudCredentialId);
   if (!credRaw) return null;
   const cred = { ...credRaw, credentials: JSON.parse(credRaw.credentials) };
   ['secretAccessKey', 'accessKey', 'password', 'credentials'].forEach(k => {
@@ -28,7 +28,7 @@ function getDecryptedCred(cloudCredentialId) {
 
 // GET /api/versions/:backupId
 router.get('/versions/:backupId', authorize('viewLogs'), async (req, res) => {
-  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.backupId);
+  const backup = await db.get('SELECT * FROM backups WHERE id = ?', req.params.backupId);
   if (!backup) return res.status(404).json({ error: 'Backup job not found' });
 
   if (backup.orgId !== req.user.orgId && req.user.role !== 'admin') {
@@ -75,7 +75,7 @@ router.get('/versions/:backupId', authorize('viewLogs'), async (req, res) => {
 
 // POST /api/versions/:backupId/enable
 router.post('/versions/:backupId/enable', authorize('configure'), async (req, res) => {
-  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.backupId);
+  const backup = await db.get('SELECT * FROM backups WHERE id = ?', req.params.backupId);
   if (!backup) return res.status(404).json({ error: 'Backup job not found' });
 
   if (backup.orgId !== req.user.orgId && req.user.role !== 'admin') {
@@ -108,7 +108,7 @@ router.post('/versions/:id/restore', authorize('restore'), async (req, res) => {
   if (!versionId) return res.status(400).json({ error: 'versionId is required' });
 
   // Verify backup job exists
-  const backup = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
+  const backup = await db.get('SELECT * FROM backups WHERE id = ?', req.params.id);
   if (!backup) return res.status(404).json({ error: 'Backup job not found' });
 
   if (backup.orgId !== req.user.orgId && req.user.role !== 'admin') {

@@ -1,14 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Box, Card, CardContent, Typography, Button, Chip, List, ListItem,
-  Avatar,   TextField, MenuItem, InputAdornment,
-} from '@mui/material';
-import {
-  Refresh as RefreshIcon, Search as SearchIcon,
-  FilterList as FilterIcon,
-} from '@mui/icons-material';
+import { 
+  RefreshCw, Search, Filter, 
+  AlertTriangle, CheckCircle2, Info, XCircle
+} from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
-
 import { API } from '../utils/config';
 
 export default function ActivityLog() {
@@ -32,91 +27,102 @@ export default function ActivityLog() {
     return true;
   });
 
-  const getColor = (status) => {
+  const getStatusConfig = (status) => {
     switch (status) {
-      case 'error': return 'error';
-      case 'warning': return 'warning';
-      case 'success': return 'success';
-      default: return 'info';
-    }
-  };
-
-  const getIcon = (status) => {
-    switch (status) {
-      case 'error': return '!';
-      case 'warning': return '?';
-      case 'success': return '\u2713';
-      default: return 'i';
+      case 'error': 
+        return { icon: XCircle, color: 'text-red-600', bg: 'bg-red-500/10', border: 'border-red-500/20' };
+      case 'warning': 
+        return { icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-500/10', border: 'border-amber-500/20' };
+      case 'success': 
+        return { icon: CheckCircle2, color: 'text-emerald-600', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' };
+      default: 
+        return { icon: Info, color: 'text-blue-600', bg: 'bg-blue-500/10', border: 'border-blue-500/20' };
     }
   };
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="h4">{t('activityLogTitle')}</Typography>
-        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load}>{t('refresh')}</Button>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {t('activityLogSubtitle', { total: logs.length })}
-      </Typography>
+    <div className="max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">
+            {t('activityLogTitle')}
+          </h1>
+          <p className="text-sm font-medium text-slate-500">
+            {t('activityLogSubtitle', { total: logs.length }).replace('{{total}}', logs.length)}
+          </p>
+        </div>
+        <button onClick={load} className="btn-secondary py-2 px-4 w-full sm:w-auto">
+          <RefreshCw size={16} />
+          {t('refresh')}
+        </button>
+      </div>
 
-      <Card>
-        <CardContent sx={{ pb: '8px !important' }}>
-          <Box sx={{ display: 'flex', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
-            <TextField
-              select size="small" value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              sx={{ minWidth: 130 }}
-              InputProps={{ startAdornment: <InputAdornment position="start"><FilterIcon fontSize="small" /></InputAdornment> }}
+      <div className="glass-card">
+        {/* Filters */}
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-wrap gap-4">
+          <div className="relative">
+            <Filter size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <select 
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              className="pl-9 pr-8 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-700 dark:text-slate-200 appearance-none min-w-[140px]"
             >
-              <MenuItem value="all">{t('allLevels')}</MenuItem>
-              <MenuItem value="info">{t('info')}</MenuItem>
-              <MenuItem value="success">{t('success')}</MenuItem>
-              <MenuItem value="warning">{t('warning')}</MenuItem>
-              <MenuItem value="error">{t('error')}</MenuItem>
-            </TextField>
-            <TextField
-              size="small" placeholder={t('searchLogs')}
-              value={search} onChange={(e) => setSearch(e.target.value)}
-              sx={{ flex: 1, maxWidth: 320 }}
-              InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }}
-            />
-          </Box>
+              <option value="all">{t('allLevels')}</option>
+              <option value="info">{t('info')}</option>
+              <option value="success">{t('success')}</option>
+              <option value="warning">{t('warning')}</option>
+              <option value="error">{t('error')}</option>
+            </select>
+          </div>
 
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text"
+              placeholder={t('searchLogs')}
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2 text-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-slate-700 dark:text-slate-200"
+            />
+          </div>
+        </div>
+
+        {/* List */}
+        <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
           {filtered.length === 0 ? (
-            <Box sx={{ py: 6, textAlign: 'center' }}>
-              <Typography color="text.secondary">{t('noLogEntries')}</Typography>
-            </Box>
+            <div className="p-12 text-center text-slate-500">
+              <Info size={48} className="mx-auto mb-4 opacity-20" />
+              <p className="text-sm font-medium">{t('noLogEntries')}</p>
+            </div>
           ) : (
-            <List disablePadding>
-              {filtered.map((log) => (
-                <ListItem
-                  key={log.id}
-                  sx={{
-                    px: 0, py: 1.2, borderBottom: '1px solid', borderColor: 'divider',
-                    '&:last-child': { borderBottom: 'none' },
-                  }}
-                >
-                  <Avatar sx={{
-                    width: 32, height: 32, fontSize: 13, mr: 1.5,
-                    bgcolor: `${getColor(log.status)}.main`,
-                    color: '#fff',
-                  }}>
-                    {getIcon(log.status)}
-                  </Avatar>
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>{log.message}</Typography>
-                    <Typography variant="caption">
+            filtered.map((log) => {
+              const conf = getStatusConfig(log.status);
+              const Icon = conf.icon;
+              return (
+                <div key={log.id} className="p-4 flex items-start gap-4 hover:bg-slate-50 dark:hover:bg-slate-800/30 transition-colors">
+                  <div className={`mt-0.5 p-2 rounded-full ${conf.bg} ${conf.color}`}>
+                    <Icon size={18} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white leading-snug mb-1">
+                      {log.message}
+                    </p>
+                    <p className="text-xs font-mono text-slate-500">
                       {(log.timestamp || '').slice(0, 19).replace('T', ' ')}
-                    </Typography>
-                  </Box>
-                  <Chip label={t(log.status)} size="small" color={getColor(log.status)} variant="outlined" sx={{ ml: 1, textTransform: 'capitalize' }} />
-                </ListItem>
-              ))}
-            </List>
+                    </p>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider whitespace-nowrap ${conf.bg} ${conf.color} ${conf.border}`}>
+                      {t(log.status) || log.status}
+                    </span>
+                  </div>
+                </div>
+              );
+            })
           )}
-        </CardContent>
-      </Card>
-    </Box>
+        </div>
+      </div>
+    </div>
   );
 }
