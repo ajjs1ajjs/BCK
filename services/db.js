@@ -144,6 +144,17 @@ async function initSchema() {
       "orgId" TEXT DEFAULT 'default'
     );
 
+    CREATE TABLE IF NOT EXISTS policies (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      "keepDaily" INTEGER DEFAULT 7,
+      "keepWeekly" INTEGER DEFAULT 4,
+      "keepMonthly" INTEGER DEFAULT 12,
+      "keepYearly" INTEGER DEFAULT 1,
+      "createdAt" TEXT,
+      "orgId" TEXT DEFAULT 'default'
+    );
+
     CREATE TABLE IF NOT EXISTS backups (
       id TEXT PRIMARY KEY,
       name TEXT,
@@ -162,7 +173,8 @@ async function initSchema() {
       size BIGINT DEFAULT 0,
       "orgId" TEXT DEFAULT 'default',
       "lastValidatedAt" TEXT,
-      "validationStatus" TEXT
+      "validationStatus" TEXT,
+      "policyId" TEXT
     );
 
     CREATE TABLE IF NOT EXISTS schedules (
@@ -246,8 +258,19 @@ async function initSchema() {
   try {
     await db.exec('ALTER TABLE backups ADD COLUMN "lastValidatedAt" TEXT;');
     await db.exec('ALTER TABLE backups ADD COLUMN "validationStatus" TEXT;');
+    await db.exec('ALTER TABLE backups ADD COLUMN "policyId" TEXT;');
   } catch(e) {
     // Columns probably exist already
+  }
+
+  try {
+    const existingPolicy = await db.get("SELECT id FROM policies WHERE id = 'default'");
+    if (!existingPolicy) {
+      await db.run('INSERT INTO policies (id, name, "keepDaily", "keepWeekly", "keepMonthly", "keepYearly", "createdAt") VALUES (?, ?, ?, ?, ?, ?, ?)', 
+        ['default', 'Standard GFS Retention', 7, 4, 12, 1, new Date().toISOString()]);
+    }
+  } catch (e) {
+    console.error('Failed to seed default policy:', e.message);
   }
 }
 

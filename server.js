@@ -90,17 +90,21 @@ app.get('/health', (req, res) => {
 
 // ─── Authenticated API Routes ────────────────────────────────────────────────
 
+const policiesRouter = require('./routes/policies');
+
 app.use('/api/', authenticate);
-app.use('/api', backupsRouter);
-app.use('/api', connectionsRouter);
-app.use('/api', schedulesRouter);
+app.use('/api', systemRouter);
+app.use('/api', authRouter);
 app.use('/api', usersRouter);
 app.use('/api', rolesRouter);
-app.use('/api', systemRouter);
 app.use('/api', tokensRouter);
+app.use('/api', connectionsRouter);
+app.use('/api', backupsRouter);
+app.use('/api', schedulesRouter);
 app.use('/api', organizationsRouter);
 app.use('/api', webhooksRouter);
 app.use('/api', versionsRouter);
+app.use('/api', policiesRouter);
 
 // ─── Frontend Static Files ───────────────────────────────────────────────────
 

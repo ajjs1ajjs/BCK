@@ -1,6 +1,7 @@
 const { db } = require('./db');
 const logger = require('./logger');
 const { getSettings, pruneLogs } = require('./helpers');
+const { runGfsRetention } = require('./gfsRetention');
 
 class CronManager {
   constructor() {
@@ -47,19 +48,23 @@ class CronManager {
       logger.error('Error pruning webhook deliveries: ' + e.message);
     }
 
-    // 3. Prune Backup History (older than 90 days)
+    // 3. GFS Retention for Completed Backups
+    await runGfsRetention();
+
+    // 4. Prune Backup History (only failed backups older than 30 days, 
+    // since completed backups are handled by GFS)
     try {
-      const threshold90d = new Date();
-      threshold90d.setDate(threshold90d.getDate() - 90);
+      const threshold30d = new Date();
+      threshold30d.setDate(threshold30d.getDate() - 30);
       const res = await db.run(
-        "DELETE FROM backups WHERE (status = 'completed' OR status = 'failed') AND createdAt < ?", 
-        threshold90d.toISOString()
+        "DELETE FROM backups WHERE status = 'failed' AND \"createdAt\" < $1", 
+        [threshold30d.toISOString()]
       );
       if (res.changes > 0) {
-        logger.info(`Pruned ${res.changes} old backup records from history.`);
+        logger.info(`Pruned ${res.changes} old failed backup records from history.`);
       }
     } catch (e) {
-      logger.error('Error pruning backup history: ' + e.message);
+      logger.error('Error pruning failed backup history: ' + e.message);
     }
   }
 }
