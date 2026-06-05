@@ -42,10 +42,10 @@ router.post('/tokens', async (req, res) => {
   );
 
   try {
-    await db.prepare(`
+    await db.run(`
       INSERT INTO api_tokens (id, name, tokenHash, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
-    `).run(id, name.trim(), hashed, req.user.id, req.user.orgId || 'default', JSON.stringify(effectivePerms), expiresAt || null, now);
+    `, id, name.trim(), hashed, req.user.id, req.user.orgId || 'default', JSON.stringify(effectivePerms), expiresAt || null, now);
 
     await addLog(`API token created: "${name}" by ${req.user.username}`, 'info');
 

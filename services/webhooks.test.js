@@ -29,10 +29,10 @@ describe('Webhook Service Tests', () => {
 
   test('should filter out mismatched webhook subscriptions', async () => {
     // Inject a disabled webhook
-    await db.prepare(`
+    await db.run(`
       INSERT INTO webhook_endpoints (id, name, url, secret, events, retries, active, orgId, createdAt)
       VALUES ('test-id', 'Test WH', 'http://localhost/ping', 'secret', '["backup.failed"]', 3, 1, 'default', '2026-05-29')
-    `).run();
+    `, );
 
     // Emitting backup.completed should not match
     await emit('backup.completed', { id: 'abc' });

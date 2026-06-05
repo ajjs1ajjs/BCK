@@ -68,10 +68,10 @@ async function deliverToEndpoint(endpoint, payload) {
       if (res.ok) {
         // Log successful delivery
         try {
-          await db.prepare(`
+          await db.run(`
             INSERT INTO webhook_deliveries (id, endpointId, event, status, statusCode, attempt, deliveredAt)
             VALUES (?, ?, ?, 'success', ?, ?, ?)
-          `).run(payload.deliveryId, endpoint.id, payload.event, res.status, attempt, new Date().toISOString());
+          `, payload.deliveryId, endpoint.id, payload.event, res.status, attempt, new Date().toISOString());
         } catch (e) {}
         return { success: true, statusCode: res.status };
       }
@@ -89,10 +89,10 @@ async function deliverToEndpoint(endpoint, payload) {
 
   // Log failed delivery
   try {
-    await db.prepare(`
+    await db.run(`
       INSERT INTO webhook_deliveries (id, endpointId, event, status, statusCode, attempt, error, deliveredAt)
       VALUES (?, ?, ?, 'failed', NULL, ?, ?, ?)
-    `).run(payload.deliveryId, endpoint.id, payload.event, MAX_ATTEMPTS, lastError, new Date().toISOString());
+    `, payload.deliveryId, endpoint.id, payload.event, MAX_ATTEMPTS, lastError, new Date().toISOString());
   } catch (e) {}
 
   return { success: false, error: lastError };

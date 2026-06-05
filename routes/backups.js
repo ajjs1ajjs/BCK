@@ -65,10 +65,10 @@ router.post('/backups', authorize('manageBackups'), async (req, res) => {
   };
   
   try {
-    await db.prepare(`
+    await db.run(`
       INSERT INTO backups (id, name, source, destination, type, backupType, config, status, createdAt, updatedAt)
       VALUES (@id, @name, @source, @destination, @type, @backupType, @config, @status, @createdAt, @updatedAt)
-    `).run(backup);
+    `, backup);
     
     await addLog(`Created backup: ${name} [${backupType}]`, 'success');
     res.status(201).json({ ...backup, config: config || {} });
@@ -93,13 +93,13 @@ router.put('/backups/:id', authorize('manageBackups'), async (req, res) => {
   if (req.body.config) update.config = JSON.stringify(req.body.config);
   
   try {
-    await db.prepare(`
+    await db.run(`
       UPDATE backups SET 
         name = @name, source = @source, destination = @destination, 
         type = @type, backupType = @backupType, config = @config, 
         status = @status, updatedAt = @updatedAt 
       WHERE id = @id
-    `).run(update);
+    `, update);
     
     await addLog(`Updated backup: ${update.name}`, 'success');
     res.json({ ...update, config: JSON.parse(update.config) });
@@ -136,10 +136,10 @@ router.post('/vm-backups', authorize('manageBackups'), async (req, res) => {
   const id = uuidv4();
   const now = new Date().toISOString();
   try {
-    await db.prepare(`
+    await db.run(`
       INSERT INTO backups (id, name, type, backupType, config, status, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, name, 'full', type, JSON.stringify(config || {}), 'pending', now, now);
+    `, id, name, 'full', type, JSON.stringify(config || {}), 'pending', now, now);
     
     res.status(201).json({ id, name, type, config: config || {} });
   } catch (err) {

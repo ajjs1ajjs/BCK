@@ -114,7 +114,7 @@ router.post('/users/2fa/setup', authenticate, async (req, res) => {
   try {
     const qrCodeUrl = await qrcode.toDataURL(otpauth);
     // Secure fix: Save the secret as pending in the database immediately rather than relying on client return
-    await db.prepare('UPDATE users SET twoFactorSecret = ?, twoFactorEnabled = 0 WHERE id = ?')
+    await db.run('UPDATE users SET twoFactorSecret = ?, twoFactorEnabled = 0 WHERE id = ?')
       .run(cryptoHelper.encrypt(secret), req.user.id);
     
     res.json({ secret, qrCodeUrl });
@@ -197,7 +197,7 @@ router.post('/auth/ldap', authLimiter, async (req, res) => {
       await db.prepare(`
         INSERT INTO users (id, username, password, role, email, active, ldapDn, authProvider, createdAt)
         VALUES (?, ?, ?, ?, ?, 1, ?, 'ldap', ?)
-      `).run(newId, ldapUser.username, tempPw, ldapUser.role, ldapUser.email, ldapUser.ldapDn, new Date().toISOString());
+      `, newId, ldapUser.username, tempPw, ldapUser.role, ldapUser.email, ldapUser.ldapDn, new Date().toISOString());
 
       localUser = await db.get('SELECT * FROM users WHERE id = ?', newId);
       await addLog(`LDAP user auto-provisioned: ${ldapUser.username}`, 'info');

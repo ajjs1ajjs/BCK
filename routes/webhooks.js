@@ -25,7 +25,7 @@ router.get('/webhooks', authorize('configure'), async (req, res) => {
 
 // GET /api/webhooks/:id/deliveries — delivery history for an endpoint
 router.get('/webhooks/:id/deliveries', authorize('configure'), async (req, res) => {
-  const deliveries = await db.prepare(
+  const deliveries = await db.run(
     'SELECT * FROM webhook_deliveries WHERE endpointId = ? ORDER BY deliveredAt DESC LIMIT 100'
   ).all(req.params.id);
   res.json(deliveries);
@@ -53,7 +53,7 @@ router.post('/webhooks', authorize('configure'), async (req, res) => {
     await db.prepare(`
       INSERT INTO webhook_endpoints (id, name, url, secret, events, retries, active, orgId, createdAt)
       VALUES (@id, @name, @url, @secret, @events, @retries, @active, @orgId, @createdAt)
-    `).run(endpoint);
+    `, endpoint);
     await addLog(`Webhook endpoint added: ${name} → ${url}`, 'info');
     res.status(201).json({ ...endpoint, secret, events: JSON.parse(endpoint.events) });
   } catch (err) {
@@ -78,10 +78,10 @@ router.put('/webhooks/:id', authorize('configure'), async (req, res) => {
   };
 
   try {
-    await db.prepare(`
+    await db.run(`
       UPDATE webhook_endpoints SET name=@name, url=@url, secret=@secret, events=@events,
       retries=@retries, active=@active WHERE id=@id
-    `).run(updated);
+    `, updated);
     await addLog(`Webhook endpoint updated: ${updated.name}`, 'info');
     res.json({ ...updated, secret: secret !== undefined ? secret : (ep.secret ? cryptoHelper.decrypt(ep.secret) : null), events: JSON.parse(updated.events) });
   } catch (err) {

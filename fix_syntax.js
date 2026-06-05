@@ -4,7 +4,7 @@ const path = require('path');
 const dirs = ['routes', 'services', 'middleware', '.'];
 
 function fixFile(fp) {
-  if (!fp.endsWith('.js')) return;
+  if (!fp.endsWith('.js') || fp === 'fix_syntax.js' || fp === 'transform.js' || fp === 'migrate_to_pg.js') return;
   let content = fs.readFileSync(fp, 'utf8');
   let original = content;
   
@@ -15,16 +15,20 @@ function fixFile(fp) {
   // Fix double awaits
   content = content.replace(/await\s+await\s+/g, 'await ');
   
-  // Fix missed db.prepare
-  content = content.replace(/await\s+db\.prepare\((.*?)\)\.run\((.*?)\)/g, 'await db.run($1, $2)');
-  content = content.replace(/await\s+db\.prepare\((.*?)\)\.get\((.*?)\)/g, 'await db.get($1, $2)');
-  content = content.replace(/await\s+db\.prepare\((.*?)\)\.all\((.*?)\)/g, 'await db.all($1, $2)');
-  content = content.replace(/db\.prepare\((.*?)\)\.run\((.*?)\)/g, 'await db.run($1, $2)');
-  content = content.replace(/db\.prepare\((.*?)\)\.get\((.*?)\)/g, 'await db.get($1, $2)');
-  content = content.replace(/db\.prepare\((.*?)\)\.all\((.*?)\)/g, 'await db.all($1, $2)');
-  
-  // Remove db.prepare completely if used without run/get/all
-  // E.g., const stmt = db.prepare('SELECT ...'); ... stmt.all() -> requires manual fix but let's see.
+  // Fix missed db.prepare with multiline support
+  content = content.replace(/await\s+db\.prepare\(([\s\S]*?)\)\.run\(([\s\S]*?)\)/g, 'await db.run($1, $2)');
+  content = content.replace(/await\s+db\.prepare\(([\s\S]*?)\)\.get\(([\s\S]*?)\)/g, 'await db.get($1, $2)');
+  content = content.replace(/await\s+db\.prepare\(([\s\S]*?)\)\.all\(([\s\S]*?)\)/g, 'await db.all($1, $2)');
+  content = content.replace(/await\s+db\.prepare\(([\s\S]*?)\)\.run\(\)/g, 'await db.run($1)');
+  content = content.replace(/await\s+db\.prepare\(([\s\S]*?)\)\.get\(\)/g, 'await db.get($1)');
+  content = content.replace(/await\s+db\.prepare\(([\s\S]*?)\)\.all\(\)/g, 'await db.all($1)');
+
+  content = content.replace(/db\.prepare\(([\s\S]*?)\)\.run\(([\s\S]*?)\)/g, 'await db.run($1, $2)');
+  content = content.replace(/db\.prepare\(([\s\S]*?)\)\.get\(([\s\S]*?)\)/g, 'await db.get($1, $2)');
+  content = content.replace(/db\.prepare\(([\s\S]*?)\)\.all\(([\s\S]*?)\)/g, 'await db.all($1, $2)');
+  content = content.replace(/db\.prepare\(([\s\S]*?)\)\.run\(\)/g, 'await db.run($1)');
+  content = content.replace(/db\.prepare\(([\s\S]*?)\)\.get\(\)/g, 'await db.get($1)');
+  content = content.replace(/db\.prepare\(([\s\S]*?)\)\.all\(\)/g, 'await db.all($1)');
 
   if (content !== original) {
     fs.writeFileSync(fp, content);
@@ -41,4 +45,3 @@ dirs.forEach(d => {
     });
   }
 });
-fixFile('server.js');
