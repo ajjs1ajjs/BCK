@@ -10,10 +10,10 @@ const { addLog } = require('../services/helpers');
 router.get('/organizations', authorize('manageUsers'), async (req, res) => {
   const orgs = await db.all('SELECT * FROM organizations ORDER BY createdAt ASC');
   // Annotate with user count per org
-  const result = orgs.map(async org => {
+  const result = await Promise.all(orgs.map(async org => {
     const userCount = (await db.get("SELECT COUNT(*) as cnt FROM users WHERE orgId = ?", org.id))?.cnt || 0;
     return { ...org, userCount };
-  });
+  }));
   res.json(result);
 });
 

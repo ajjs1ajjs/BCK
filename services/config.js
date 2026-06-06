@@ -1,13 +1,14 @@
-const crypto = require('crypto');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
 // JWT Secret: shared across all routers and middlewares
 if (!process.env.JWT_SECRET) {
-  console.warn('WARNING: No JWT_SECRET set. Using a persistent generated secret for this session.');
+  console.error('FATAL ERROR: JWT_SECRET is not set in environment variables.');
+  console.error('Please add JWT_SECRET=your-random-secret to your .env file.');
+  process.exit(1);
 }
-const JWT_SECRET = process.env.JWT_SECRET || crypto.randomBytes(64).toString('hex');
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const PORT = process.env.PORT || 9000;
 const HOST = process.env.HOST || '0.0.0.0';

@@ -94,7 +94,6 @@ const policiesRouter = require('./routes/policies');
 
 app.use('/api/', authenticate);
 app.use('/api', systemRouter);
-app.use('/api', authRouter);
 app.use('/api', usersRouter);
 app.use('/api', rolesRouter);
 app.use('/api', tokensRouter);

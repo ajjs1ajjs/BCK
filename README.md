@@ -36,7 +36,7 @@ Enterprise-grade web-based backup management system with scheduling, monitoring,
 |-----------|------------|
 | Frontend  | React 18, MUI 5, Recharts |
 | Backend   | Node.js 18+, Express 4 |
-| Database  | SQLite (via `better-sqlite3`) |
+| Database  | PostgreSQL (via `pg`) |
 | Scheduling | `node-cron` |
 | Security  | `helmet`, `express-rate-limit`, JWT, bcrypt, AES-256 |
 | Build     | Create React App |
@@ -65,7 +65,7 @@ chmod +x run-local.sh && ./run-local.sh
 ```
 
 Then open **http://localhost:9000**  
-Default credentials: `admin` / `291263` — **change on first login**
+Default credentials: `admin` / auto-generated (printed on first start) — **change on first login**
 
 ## Development
 

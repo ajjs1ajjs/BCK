@@ -41,7 +41,7 @@ router.get('/versions/:backupId', authorize('viewLogs'), async (req, res) => {
     return res.status(400).json({ error: 'This backup is not configured for cloud storage' });
   }
 
-  const cred = getDecryptedCred(cloudCredentialId);
+  const cred = await getDecryptedCred(cloudCredentialId);
   if (!cred) {
     return res.status(404).json({ error: 'Cloud credentials not found' });
   }
@@ -88,7 +88,7 @@ router.post('/versions/:backupId/enable', authorize('configure'), async (req, re
     return res.status(400).json({ error: 'This backup is not configured for cloud storage' });
   }
 
-  const cred = getDecryptedCred(cloudCredentialId);
+  const cred = await getDecryptedCred(cloudCredentialId);
   if (!cred) {
     return res.status(404).json({ error: 'Cloud credentials not found' });
   }

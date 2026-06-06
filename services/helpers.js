@@ -36,7 +36,7 @@ const addLog = async (message, status = 'info') => {
 };
 
 async function sendNotification(message, status) {
-  const settings = getSettings();
+  const settings = await getSettings();
   const { notifications, smtp } = settings;
 
   if (notifications.email && smtp.host && smtp.user && smtp.password) {
@@ -114,7 +114,7 @@ async function sendNotification(message, status) {
 
 const pruneLogs = async () => {
   try {
-    const settings = getSettings();
+    const settings = await getSettings();
     const retentionDays = (settings.retention && settings.retention.days) || 30;
     const thresholdDate = new Date();
     thresholdDate.setDate(thresholdDate.getDate() - retentionDays);

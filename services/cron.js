@@ -57,8 +57,8 @@ class CronManager {
       const threshold30d = new Date();
       threshold30d.setDate(threshold30d.getDate() - 30);
       const res = await db.run(
-        "DELETE FROM backups WHERE status = 'failed' AND \"createdAt\" < $1", 
-        [threshold30d.toISOString()]
+        "DELETE FROM backups WHERE status = 'failed' AND \"createdAt\" < ?", 
+        threshold30d.toISOString()
       );
       if (res.changes > 0) {
         logger.info(`Pruned ${res.changes} old failed backup records from history.`);

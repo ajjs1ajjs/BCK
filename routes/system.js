@@ -109,7 +109,7 @@ router.get('/stats', async (req, res) => {
   const last = backups.filter(b => b.completedAt).sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt))[0];
   
   // Implement real disk statistics checking
-  const settings = getSettings();
+  const settings = await getSettings();
   const backupDir = settings.advanced?.tempPath || '.';
   const disk = getDiskStats(backupDir);
 
@@ -129,7 +129,7 @@ router.get('/stats', async (req, res) => {
 
 // GET /api/settings
 router.get('/settings', async (req, res) => {
-  const settings = getSettings();
+  const settings = await getSettings();
   const safe = {
     ...settings,
     smtp: { ...settings.smtp, password: settings.smtp?.password ? '***' : '' },
@@ -146,7 +146,7 @@ router.get('/settings', async (req, res) => {
 // PUT /api/settings
 router.put('/settings', authorize('configure'), async (req, res) => {
   const body = req.body;
-  const current = getSettings();
+  const current = await getSettings();
 
   const merged = {
     smtp: { ...current.smtp, ...(body.smtp || {}) },

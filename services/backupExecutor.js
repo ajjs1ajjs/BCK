@@ -13,7 +13,7 @@ const StrategyFactory = require('./strategy/StrategyFactory');
 
 const pruneBackups = async (job) => {
   try {
-    const settings = getSettings();
+    const settings = await getSettings();
     const { retention } = settings;
     if (!retention || !retention.enabled) return;
 

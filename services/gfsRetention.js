@@ -25,8 +25,8 @@ async function runGfsRetention() {
     for (const job of jobs) {
       // Get all completed backups for this job name, oldest to newest
       const backups = await db.all(
-        'SELECT * FROM backups WHERE name = $1 AND status = $2 ORDER BY "completedAt" ASC',
-        [job.name, 'completed']
+        'SELECT * FROM backups WHERE name = ? AND status = ? ORDER BY "completedAt" ASC',
+        job.name, 'completed'
       );
 
       if (backups.length === 0) continue;
@@ -122,7 +122,7 @@ async function runGfsRetention() {
         }
         
         // Delete DB record
-        await db.run('DELETE FROM backups WHERE id = $1', [b.id]);
+        await db.run('DELETE FROM backups WHERE id = ?', b.id);
       }
     }
   } catch (err) {
