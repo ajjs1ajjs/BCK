@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const { db } = require('../services/db');
 const { authorize } = require('../middleware/auth');
+const { sensitiveApiLimiter } = require('../middleware/rateLimit');
 const { addLog } = require('../services/helpers');
 
 // GET /api/roles
@@ -13,7 +14,7 @@ router.get('/roles', authorize('manageRoles'), async (req, res) => {
 });
 
 // POST /api/roles
-router.post('/roles', authorize('manageRoles'), async (req, res) => {
+router.post('/roles', sensitiveApiLimiter, authorize('manageRoles'), async (req, res) => {
   const { name, description, permissions } = req.body;
   if (!name || !permissions) return res.status(400).json({ error: 'Name and permissions required' });
   const role = { id: uuidv4(), name, description: description || '', level: 1, permissions: JSON.stringify(permissions) };
@@ -28,7 +29,7 @@ router.post('/roles', authorize('manageRoles'), async (req, res) => {
 });
 
 // PUT /api/roles/:id
-router.put('/roles/:id', authorize('manageRoles'), async (req, res) => {
+router.put('/roles/:id', sensitiveApiLimiter, authorize('manageRoles'), async (req, res) => {
   const role = await db.get('SELECT * FROM roles WHERE id = ?', req.params.id);
   if (!role) return res.status(404).json({ error: 'Not found' });
   
@@ -45,7 +46,7 @@ router.put('/roles/:id', authorize('manageRoles'), async (req, res) => {
 });
 
 // DELETE /api/roles/:id
-router.delete('/roles/:id', authorize('manageRoles'), async (req, res) => {
+router.delete('/roles/:id', sensitiveApiLimiter, authorize('manageRoles'), async (req, res) => {
   try {
     await db.run('DELETE FROM roles WHERE id = ?', req.params.id);
     res.json({ message: 'Deleted' });

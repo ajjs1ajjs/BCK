@@ -45,6 +45,7 @@ Enterprise-grade web-based backup management system with scheduling, monitoring,
 
 ### Linux (one-line install)
 ```bash
+# ⚠️ Review the install script first before piping to sudo:
 curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/master/install.sh | sudo bash
 ```
 

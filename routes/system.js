@@ -12,6 +12,7 @@ const backupQueue = require('../services/queue');
 
 const { authorize } = require('../middleware/auth');
 const { getSettings, updateSetting, addLog, sendNotification } = require('../services/helpers');
+const { sensitiveApiLimiter } = require('../middleware/rateLimit');
 const { PORT } = require('../services/config');
 
 const getLocalIp = () => {
@@ -144,7 +145,7 @@ router.get('/settings', async (req, res) => {
 });
 
 // PUT /api/settings
-router.put('/settings', authorize('configure'), async (req, res) => {
+router.put('/settings', sensitiveApiLimiter, authorize('configure'), async (req, res) => {
   const body = req.body;
   const current = await getSettings();
 

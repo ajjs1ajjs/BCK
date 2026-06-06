@@ -8,6 +8,7 @@ const { db } = require('../services/db');
 const { addLog } = require('../services/helpers');
 const { authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
+const { backupRunLimiter } = require('../middleware/rateLimit');
 const { executeBackup } = require('../services/backupExecutor');
 const { executeRestore } = require('../services/restoreExecutor');
 const { validateBackupFile } = require('../services/validator');
@@ -148,7 +149,7 @@ router.post('/vm-backups', authorize('manageBackups'), async (req, res) => {
 });
 
 // POST /api/backups/:id/run
-router.post('/backups/:id/run', authorize('manageBackups'), async (req, res) => {
+router.post('/backups/:id/run', backupRunLimiter, authorize('manageBackups'), async (req, res) => {
   const b = await db.get('SELECT * FROM backups WHERE id = ?', req.params.id);
   if (!b) return res.status(404).json({ error: 'Not found' });
 

@@ -3,7 +3,7 @@ const globals = require('globals');
 
 module.exports = [
   {
-    ignores: ['frontend/**', 'node_modules/**', 'test-cloud.js', 'test-all-services.js', 'test-services.js', 'test_gfs.js', 'fix_syntax.js', 'transform.js', 'migrate_to_pg.js', 'migrate2.js'],
+    ignores: ['frontend/**', 'node_modules/**', 'scripts/**'],
   },
   js.configs.recommended,
   {

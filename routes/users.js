@@ -6,6 +6,7 @@ const { v4: uuidv4 } = require('uuid');
 const { db } = require('../services/db');
 const { authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
+const { sensitiveApiLimiter } = require('../middleware/rateLimit');
 const { addLog } = require('../services/helpers');
 const { SALT_ROUNDS } = require('../services/config');
 
@@ -16,7 +17,7 @@ router.get('/users', authorize('manageUsers'), async (req, res) => {
 });
 
 // POST /api/users
-router.post('/users', authorize('manageUsers'), async (req, res) => {
+router.post('/users', sensitiveApiLimiter, authorize('manageUsers'), async (req, res) => {
   const v = validate('createUser', req.body);
   if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
   const { username, password, role, email } = v.data;
@@ -38,7 +39,7 @@ router.post('/users', authorize('manageUsers'), async (req, res) => {
 });
 
 // PUT /api/users/:id
-router.put('/users/:id', authorize('manageUsers'), async (req, res) => {
+router.put('/users/:id', sensitiveApiLimiter, authorize('manageUsers'), async (req, res) => {
   const user = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
   if (!user) return res.status(404).json({ error: 'Not found' });
   
@@ -58,7 +59,7 @@ router.put('/users/:id', authorize('manageUsers'), async (req, res) => {
 });
 
 // DELETE /api/users/:id
-router.delete('/users/:id', authorize('manageUsers'), async (req, res) => {
+router.delete('/users/:id', sensitiveApiLimiter, authorize('manageUsers'), async (req, res) => {
   const user = await db.get('SELECT username FROM users WHERE id = ?', req.params.id);
   if (!user) return res.status(404).json({ error: 'Not found' });
   

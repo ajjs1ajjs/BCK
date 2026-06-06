@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: bckuser
-      POSTGRES_PASSWORD: bckdbpass
-      POSTGRES_DB: bckdb
+      POSTGRES_USER: ${DB_USER:-bckuser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-bckdbpass}
+      POSTGRES_DB: ${DB_NAME:-bckdb}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -18,9 +18,11 @@ services:
       - PORT=9000
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=bckuser
-      - DB_PASSWORD=bckdbpass
-      - DB_NAME=bckdb
+      - DB_USER=${DB_USER:-bckuser}
+      - DB_PASSWORD=${DB_PASSWORD:-bckdbpass}
+      - DB_NAME=${DB_NAME:-bckdb}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     depends_on:
       - postgres
     restart: unless-stopped
