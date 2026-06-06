@@ -114,8 +114,7 @@ router.post('/users/2fa/setup', authenticate, async (req, res) => {
   try {
     const qrCodeUrl = await qrcode.toDataURL(otpauth);
     // Secure fix: Save the secret as pending in the database immediately rather than relying on client return
-    await db.run('UPDATE users SET twoFactorSecret = ?, twoFactorEnabled = 0 WHERE id = ?')
-      .run(cryptoHelper.encrypt(secret), req.user.id);
+    await db.run('UPDATE users SET twoFactorSecret = ?, twoFactorEnabled = 0 WHERE id = ?', cryptoHelper.encrypt(secret), req.user.id);
     
     res.json({ secret, qrCodeUrl });
   } catch (err) {
@@ -136,8 +135,7 @@ router.post('/users/2fa/verify', authenticate, async (req, res) => {
     const isValid = authenticator.verify({ token: code, secret });
     if (!isValid) return res.status(400).json({ error: 'Invalid verification code' });
 
-    await db.prepare('UPDATE users SET twoFactorEnabled = 1 WHERE id = ?')
-      .run(req.user.id);
+    await db.run('UPDATE users SET twoFactorEnabled = 1 WHERE id = ?', req.user.id);
     await addLog(`User ${user.username} enabled 2FA`, 'info');
     res.json({ success: true, message: '2FA enabled successfully' });
   } catch (err) {
@@ -149,8 +147,7 @@ router.post('/users/2fa/verify', authenticate, async (req, res) => {
 router.post('/users/2fa/disable', authenticate, async (req, res) => {
   try {
     const user = await db.get('SELECT username FROM users WHERE id = ?', req.user.id);
-    await db.prepare('UPDATE users SET twoFactorSecret = NULL, twoFactorEnabled = 0 WHERE id = ?')
-      .run(req.user.id);
+    await db.run('UPDATE users SET twoFactorSecret = NULL, twoFactorEnabled = 0 WHERE id = ?', req.user.id);
     await addLog(`User ${user ? user.username : req.user.id} disabled 2FA`, 'warning');
     res.json({ success: true, message: '2FA disabled' });
   } catch (err) {
@@ -183,8 +180,7 @@ router.post('/auth/ldap', authLimiter, async (req, res) => {
     const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
 
     // Find or auto-provision local user record from LDAP data
-    let localUser = await db.prepare('SELECT * FROM users WHERE ldapDn = ? OR username = ?')
-      .get(ldapUser.ldapDn, ldapUser.username);
+    let localUser = await db.get('SELECT * FROM users WHERE ldapDn = ? OR username = ?', ldapUser.ldapDn, ldapUser.username);
 
     if (!localUser) {
       // Auto-provision LDAP user
@@ -194,7 +190,7 @@ router.post('/auth/ldap', authLimiter, async (req, res) => {
       const newId = uuidv4();
       const tempPw = await bcrypt.hash(uuidv4(), SALT_ROUNDS); // unusable local password
 
-      await db.prepare(`
+      await db.run(`
         INSERT INTO users (id, username, password, role, email, active, ldapDn, authProvider, createdAt)
         VALUES (?, ?, ?, ?, ?, 1, ?, 'ldap', ?)
       `, newId, ldapUser.username, tempPw, ldapUser.role, ldapUser.email, ldapUser.ldapDn, new Date().toISOString());
@@ -203,8 +199,7 @@ router.post('/auth/ldap', authLimiter, async (req, res) => {
       await addLog(`LDAP user auto-provisioned: ${ldapUser.username}`, 'info');
     } else {
       // Update role from LDAP group mapping on every login
-      await db.prepare('UPDATE users SET role = ?, email = ?, active = 1 WHERE id = ?')
-        .run(ldapUser.role, ldapUser.email || localUser.email, localUser.id);
+      await db.run('UPDATE users SET role = ?, email = ?, active = 1 WHERE id = ?', ldapUser.role, ldapUser.email || localUser.email, localUser.id);
     }
 
     const role = await db.get('SELECT * FROM roles WHERE id = ?', localUser.role || ldapUser.role);

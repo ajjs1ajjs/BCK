@@ -3,7 +3,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 
 const { db } = require('../services/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { addLog } = require('../services/helpers');
 
 // GET /api/roles
@@ -19,8 +19,7 @@ router.post('/roles', authorize('manageRoles'), async (req, res) => {
   const role = { id: uuidv4(), name, description: description || '', level: 1, permissions: JSON.stringify(permissions) };
   
   try {
-    await db.prepare('INSERT INTO roles (id, name, description, level, permissions) VALUES (@id, @name, @description, @level, @permissions)')
-      .run(role);
+    await db.run('INSERT INTO roles (id, name, description, level, permissions) VALUES (@id, @name, @description, @level, @permissions)', role);
     await addLog(`Role created: ${name}`, 'success');
     res.status(201).json({ ...role, permissions });
   } catch (err) {
@@ -37,8 +36,7 @@ router.put('/roles/:id', authorize('manageRoles'), async (req, res) => {
   if (req.body.permissions) update.permissions = JSON.stringify(req.body.permissions);
   
   try {
-    await db.prepare('UPDATE roles SET name = @name, description = @description, level = @level, permissions = @permissions WHERE id = @id')
-      .run(update);
+    await db.run('UPDATE roles SET name = @name, description = @description, level = @level, permissions = @permissions WHERE id = @id', update);
     await addLog(`Role updated: ${update.name}`, 'info');
     res.json({ ...update, permissions: JSON.parse(update.permissions) });
   } catch (err) {

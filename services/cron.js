@@ -1,6 +1,6 @@
 const { db } = require('./db');
 const logger = require('./logger');
-const { getSettings, pruneLogs } = require('./helpers');
+const { pruneLogs } = require('./helpers');
 const { runGfsRetention } = require('./gfsRetention');
 
 class CronManager {

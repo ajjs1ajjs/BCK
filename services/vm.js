@@ -1,7 +1,7 @@
 const { runAsync, checkTool } = require('./exec');
 
 async function backup(backupConfig) {
-  const { type, vmName, host, user, password, datastore, backupPath } = backupConfig;
+  const { type, vmName, host, user, password, backupPath } = backupConfig;
 
   switch (type) {
     case 'vmware': {

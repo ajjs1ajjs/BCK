@@ -3,7 +3,7 @@ const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
 
 const { db } = require('../services/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { addLog } = require('../services/helpers');
 const { testEndpoint, EVENT_TYPES } = require('../services/webhooks');
 const cryptoHelper = require('../services/crypto');
@@ -25,9 +25,10 @@ router.get('/webhooks', authorize('configure'), async (req, res) => {
 
 // GET /api/webhooks/:id/deliveries — delivery history for an endpoint
 router.get('/webhooks/:id/deliveries', authorize('configure'), async (req, res) => {
-  const deliveries = await db.run(
-    'SELECT * FROM webhook_deliveries WHERE endpointId = ? ORDER BY deliveredAt DESC LIMIT 100'
-  ).all(req.params.id);
+  const deliveries = await db.all(
+    'SELECT * FROM webhook_deliveries WHERE endpointId = ? ORDER BY deliveredAt DESC LIMIT 100',
+    req.params.id
+  );
   res.json(deliveries);
 });
 
@@ -50,7 +51,7 @@ router.post('/webhooks', authorize('configure'), async (req, res) => {
   };
 
   try {
-    await db.prepare(`
+    await db.run(`
       INSERT INTO webhook_endpoints (id, name, url, secret, events, retries, active, orgId, createdAt)
       VALUES (@id, @name, @url, @secret, @events, @retries, @active, @orgId, @createdAt)
     `, endpoint);

@@ -72,16 +72,14 @@ const executeBackup = async (jobId) => {
   const b = await db.get('SELECT * FROM backups WHERE id = ?', jobId);
   if (!b) throw new Error('Job not found');
   
-  await db.prepare('UPDATE backups SET status = ? WHERE id = ?')
-    .run('pending', jobId);
+  await db.run('UPDATE backups SET status = ? WHERE id = ?', 'pending', jobId);
 
   await backupQueue.push(jobId);
 };
 
 const executeBackupInternal = async (jobId) => {
     const jobData = await db.get('SELECT * FROM backups WHERE id = ?', jobId);
-    await db.prepare('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?')
-      .run('running', new Date().toISOString(), jobId);
+    await db.run('UPDATE backups SET status = ?, startedAt = ? WHERE id = ?', 'running', new Date().toISOString(), jobId);
 
     const backupType = jobData.backupType || jobData.type;
 
@@ -101,7 +99,7 @@ const executeBackupInternal = async (jobId) => {
       const job = { ...jobData, config: JSON.parse(jobData.config) };
       
       const strategy = StrategyFactory.getStrategy(backupType);
-      let result = await strategy.backup(job);
+      const result = await strategy.backup(job);
 
       if (result.success && backupType !== 'cloud') {
         // 1. Encryption
@@ -147,8 +145,7 @@ const executeBackupInternal = async (jobId) => {
 
       const status = result.success ? 'completed' : 'failed';
       const now = new Date().toISOString();
-      await db.prepare('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = ? WHERE id = ?')
-        .run(status, now, result.file || null, result.error || null, result.size || 0, jobId);
+      await db.run('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = ? WHERE id = ?', status, now, result.file || null, result.error || null, result.size || 0, jobId);
 
       const logMsg = result.success ? `Backup completed: ${jobData.name}` : `Backup failed: ${jobData.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');
@@ -178,8 +175,7 @@ const executeBackupInternal = async (jobId) => {
 
       return result;
     } catch (e) {
-      await db.prepare('UPDATE backups SET status = ?, error = ? WHERE id = ?')
-        .run('failed', e.message, jobId);
+      await db.run('UPDATE backups SET status = ?, error = ? WHERE id = ?', 'failed', e.message, jobId);
       const errMsg = `Backup error: ${jobData.name} - ${e.message}`;
       await addLog(errMsg, 'error');
       await sendNotification(errMsg, 'error');

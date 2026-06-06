@@ -13,19 +13,16 @@ const getSettings = async () => {
 };
 
 const updateSetting = async (key, value) => {
-  await db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)')
-    .run(key, JSON.stringify(value));
+  await db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', key, JSON.stringify(value));
 };
 
 const addLog = async (message, status = 'info') => {
   try {
-    await db.prepare('INSERT INTO logs (id, timestamp, message, status) VALUES (?, ?, ?, ?)')
-      .run(uuidv4(), new Date().toISOString(), message, status);
+    await db.run('INSERT INTO logs (id, timestamp, message, status) VALUES (?, ?, ?, ?)', uuidv4(), new Date().toISOString(), message, status);
     
     const count = (await db.get('SELECT COUNT(*) as count FROM logs')).count;
     if (count > 500) {
-      await db.prepare('DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT ?)')
-        .run(count - 500);
+      await db.run('DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY timestamp ASC LIMIT ?)', count - 500);
     }
   } catch (err) {
     logger.error('Failed to add log: ' + err.message);

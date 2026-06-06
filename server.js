@@ -41,7 +41,7 @@ const tokensRouter = require('./routes/tokens');
 const organizationsRouter = require('./routes/organizations');
 const webhooksRouter = require('./routes/webhooks');
 const versionsRouter = require('./routes/versions');
-const { register: metricsRegister, metricsMiddleware, refreshMetrics } = require('./services/metrics');
+const { register: metricsRegister, metricsMiddleware } = require('./services/metrics');
 
 const app = express();
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));

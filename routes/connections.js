@@ -10,7 +10,7 @@ const dbService = require('../services/database');
 const sshService = require('../services/ssh');
 const cloudService = require('../services/cloud');
 
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { addLog } = require('../services/helpers');
 
@@ -47,8 +47,7 @@ router.post('/db-connections', authorize('manageBackups'), async (req, res) => {
   const conn = { id: uuidv4(), name, type, host, port: finalPort, user, password: cryptoHelper.encrypt(password || ''), database: database || '' };
   
   try {
-    await db.prepare('INSERT INTO db_connections (id, name, type, host, port, user, password, database) VALUES (@id, @name, @type, @host, @port, @user, @password, @database)')
-      .run(conn);
+    await db.run('INSERT INTO db_connections (id, name, type, host, port, user, password, database) VALUES (@id, @name, @type, @host, @port, @user, @password, @database)', conn);
     res.status(201).json({ ...conn, password: '***' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to save: ' + err.message });
@@ -66,12 +65,11 @@ router.put('/db-connections/:id', authorize('manageBackups'), async (req, res) =
   
   const defaultPorts = { mysql: 3306, postgres: 5432, oracle: 1521, mongodb: 27017, mssql: 1433, redis: 6379 };
   const finalType = req.body.type || conn.type;
-  const portInput = req.body.hasOwnProperty('port') ? req.body.port : conn.port;
+  const portInput = Object.prototype.hasOwnProperty.call(req.body, 'port') ? req.body.port : conn.port;
   update.port = portInput || defaultPorts[finalType] || 3306;
   
   try {
-    await db.prepare('UPDATE db_connections SET name = @name, type = @type, host = @host, port = @port, user = @user, password = @password, database = @database WHERE id = @id')
-      .run(update);
+    await db.run('UPDATE db_connections SET name = @name, type = @type, host = @host, port = @port, user = @user, password = @password, database = @database WHERE id = @id', update);
     res.json({ ...update, password: '***' });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update: ' + err.message });
@@ -115,8 +113,7 @@ router.post('/ssh-connections', authorize('manageBackups'), async (req, res) => 
   const conn = { id, name, host, port: port || 22, user, password: cryptoHelper.encrypt(password || ''), key: keyPath || '', createdAt: new Date().toISOString() };
   
   try {
-    await db.prepare('INSERT INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)')
-      .run(conn);
+    await db.run('INSERT INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)', conn);
     await addLog(`SSH connection added: ${name}`, 'success');
     res.status(201).json({ ...conn, password: '***', key: '***' });
   } catch (err) {
@@ -138,8 +135,7 @@ router.put('/ssh-connections/:id', authorize('manageBackups'), async (req, res) 
   }
   
   try {
-    await db.prepare('UPDATE ssh_connections SET name = @name, host = @host, port = @port, user = @user, password = @password, key = @key WHERE id = @id')
-      .run(update);
+    await db.run('UPDATE ssh_connections SET name = @name, host = @host, port = @port, user = @user, password = @password, key = @key WHERE id = @id', update);
     await addLog(`SSH connection updated: ${update.name}`, 'info');
     res.json({ ...update, password: '***', key: '***' });
   } catch (err) {
@@ -233,8 +229,7 @@ router.post('/cloud-credentials', authorize('manageBackups'), async (req, res) =
   }
 
   try {
-    await db.prepare('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)')
-      .run(id, name, provider, JSON.stringify(encryptedCredentials), now);
+    await db.run('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)', id, name, provider, JSON.stringify(encryptedCredentials), now);
     await addLog(`Cloud credentials added: ${name} [${provider}]`, 'success');
     res.status(201).json({ id, name, provider, credentials: { ...credentials, secretAccessKey: '***', accessKey: '***', password: '***' } });
   } catch (err) {
@@ -247,7 +242,7 @@ router.put('/cloud-credentials/:id', authorize('manageBackups'), async (req, res
   if (!curr) return res.status(404).json({ error: 'Not found' });
   
   const { credentials, name } = req.body;
-  let finalCreds = JSON.parse(curr.credentials);
+  const finalCreds = JSON.parse(curr.credentials);
   
   if (credentials) {
     for (const [k, v] of Object.entries(credentials)) {
@@ -270,8 +265,7 @@ router.put('/cloud-credentials/:id', authorize('manageBackups'), async (req, res
   }
 
   try {
-    await db.prepare('UPDATE cloud_credentials SET name = ?, credentials = ? WHERE id = ?')
-      .run(name || curr.name, JSON.stringify(finalCreds), req.params.id);
+    await db.run('UPDATE cloud_credentials SET name = ?, credentials = ? WHERE id = ?', name || curr.name, JSON.stringify(finalCreds), req.params.id);
     res.json({ id: curr.id, name: name || curr.name, provider: curr.provider, credentials: { ...finalCreds, secretAccessKey: '***', accessKey: '***', password: '***' } });
   } catch (err) {
     res.status(500).json({ error: 'Failed to update: ' + err.message });

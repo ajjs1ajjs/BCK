@@ -1,8 +1,8 @@
-const { run, runAsync, checkTool, getDiskStats } = require('./exec');
+const { runAsync, checkTool, getDiskStats } = require('./exec');
 const spawn = require('child_process').spawn;
 const fs = require('fs');
 const zlib = require('zlib');
-const os = require('os');
+
 const path = require('path');
 
 const ENGINES = {

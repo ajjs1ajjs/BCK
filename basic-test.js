@@ -1,5 +1,5 @@
 // Simple test to verify the server can be started and basic routes work
-const http = require('http');
+
 const fs = require('fs');
 
 console.log('=== BCK Backup System - Basic Functionality Test ===\n');

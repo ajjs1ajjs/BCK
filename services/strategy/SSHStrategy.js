@@ -18,7 +18,7 @@ class SSHStrategy {
     });
   }
 
-  async restore(job, config, restoreFile) {
+  async restore(_job, _config, _restoreFile) {
     // SSH restore might not be fully implemented as a specific function yet, 
     // returning success true as fallback if there is no separate restore for SSH currently
     return { success: true, error: null };

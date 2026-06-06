@@ -10,7 +10,7 @@ const cloudService = require('../services/cloud');
 const sshService = require('../services/ssh');
 const backupQueue = require('../services/queue');
 
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { getSettings, updateSetting, addLog, sendNotification } = require('../services/helpers');
 const { PORT } = require('../services/config');
 

@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
 const { db } = require('../services/db');
-const { authenticate, authorize } = require('../middleware/auth');
+
 const { addLog } = require('../services/helpers');
 
 // Hash a raw token for secure storage

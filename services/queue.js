@@ -1,6 +1,6 @@
 const { db } = require('./db');
 const logger = require('./logger');
-const { executeBackup } = require('./backupExecutor'); // Warning: potential circular dependency if backupExecutor requires queue
+// backupExecutor is loaded lazily in runJob() to avoid circular dependency
 
 class DBTaskQueue {
   constructor(concurrency = 2, maxRetries = 3) {

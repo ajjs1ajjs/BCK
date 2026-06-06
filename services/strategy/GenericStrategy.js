@@ -3,7 +3,7 @@ class GenericStrategy {
     return { success: true, file: job.destination, error: null };
   }
 
-  async restore(job, config, restoreFile, targetType) {
+  async restore(_job, _config, _restoreFile, _targetType) {
     return { success: true, error: null };
   }
 }

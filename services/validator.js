@@ -1,7 +1,7 @@
 const util = require('util');
 const exec = util.promisify(require('child_process').exec);
 const fsSync = require('fs');
-const logger = require('./logger');
+
 
 async function validateBackupFile(backupType, filePath, password) {
   if (!fsSync.existsSync(filePath)) {
@@ -40,7 +40,7 @@ async function validateBackupFile(backupType, filePath, password) {
 
   // Restic repositories
   if (backupType === 'restic' && fsSync.statSync(filePath).isDirectory()) {
-    const { stdout, stderr } = await exec(`restic -r "${filePath}" check`, {
+    const { stdout: _stdout, stderr } = await exec(`restic -r "${filePath}" check`, {
       env: { ...process.env, RESTIC_PASSWORD: password || 'default_restic_pass_if_not_set' }
     });
     if (stderr && stderr.toLowerCase().includes('error')) {

@@ -5,7 +5,7 @@ const cron = require('node-cron');
 
 const { db } = require('../services/db');
 const logger = require('../services/logger');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { addLog } = require('../services/helpers');
 const { executeBackup } = require('./backups');
@@ -49,8 +49,7 @@ router.post('/schedules', authorize('manageSchedules'), async (req, res) => {
   const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   
   try {
-    await db.prepare('INSERT INTO schedules (id, name, cronExpression, backupId, enabled, createdAt, updatedAt) VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)')
-      .run(schedule);
+    await db.run('INSERT INTO schedules (id, name, cronExpression, backupId, enabled, createdAt, updatedAt) VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)', schedule);
     refreshScheduler();
     await addLog(`Schedule created: ${name}`, 'success');
     res.status(201).json(schedule);
@@ -68,8 +67,7 @@ router.put('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   update.enabled = update.enabled ? 1 : 0;
   
   try {
-    await db.prepare('UPDATE schedules SET name = @name, cronExpression = @cronExpression, backupId = @backupId, enabled = @enabled, updatedAt = @updatedAt WHERE id = @id')
-      .run(update);
+    await db.run('UPDATE schedules SET name = @name, cronExpression = @cronExpression, backupId = @backupId, enabled = @enabled, updatedAt = @updatedAt WHERE id = @id', update);
     refreshScheduler();
     res.json(update);
   } catch (err) {

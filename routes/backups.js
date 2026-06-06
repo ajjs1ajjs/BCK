@@ -6,7 +6,7 @@ const fsSync = require('fs');
 
 const { db } = require('../services/db');
 const { addLog } = require('../services/helpers');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { executeBackup } = require('../services/backupExecutor');
 const { executeRestore } = require('../services/restoreExecutor');
@@ -181,19 +181,17 @@ router.post('/backups/:id/validate', authorize('manageBackups'), async (req, res
   const backupType = b.backupType || b.type;
   
   // Basic validation without downloading from cloud for now (we validate local disk only)
-  let filePath = b.resultFile || b.destination;
+  const filePath = b.resultFile || b.destination;
   
   try {
     await validateBackupFile(backupType, filePath, jobConfig.encryptionPassword);
     const now = new Date().toISOString();
-    await db.prepare('UPDATE backups SET "lastValidatedAt" = ?, "validationStatus" = ? WHERE id = ?')
-      .run(now, 'valid', b.id);
+    await db.run('UPDATE backups SET "lastValidatedAt" = ?, "validationStatus" = ? WHERE id = ?', now, 'valid', b.id);
     await addLog(`Backup validated successfully: ${b.name}`, 'info');
     res.json({ message: 'Validation successful', valid: true });
   } catch (err) {
     const now = new Date().toISOString();
-    await db.prepare('UPDATE backups SET "lastValidatedAt" = ?, "validationStatus" = ? WHERE id = ?')
-      .run(now, 'invalid', b.id);
+    await db.run('UPDATE backups SET "lastValidatedAt" = ?, "validationStatus" = ? WHERE id = ?', now, 'invalid', b.id);
     await addLog(`Backup validation failed: ${b.name} - ${err.message}`, 'error');
     res.status(400).json({ error: err.message, valid: false });
   }

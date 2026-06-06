@@ -1,6 +1,6 @@
 const path = require('path');
 const fs = require('fs').promises;
-const fsSync = require('fs');
+
 const os = require('os');
 
 const { db } = require('./db');

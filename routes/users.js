@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
 const { db } = require('../services/db');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authorize } = require('../middleware/auth');
 const { validate } = require('../middleware/validation');
 const { addLog } = require('../services/helpers');
 const { SALT_ROUNDS } = require('../services/config');
@@ -29,8 +29,7 @@ router.post('/users', authorize('manageUsers'), async (req, res) => {
   const user = { id: uuidv4(), username, password: hashed, role, email: email || '', active: 1, createdAt: new Date().toISOString() };
   
   try {
-    await db.prepare('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (@id, @username, @password, @role, @email, @active, @createdAt)')
-      .run(user);
+    await db.run('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (@id, @username, @password, @role, @email, @active, @createdAt)', user);
     await addLog(`User created: ${username}`, 'success');
     res.status(201).json({ ...user, password: '***' });
   } catch (err) {
@@ -50,8 +49,7 @@ router.put('/users/:id', authorize('manageUsers'), async (req, res) => {
   update.active = update.active ? 1 : 0;
   
   try {
-    await db.prepare('UPDATE users SET username = @username, password = @password, role = @role, email = @email, active = @active WHERE id = @id')
-      .run(update);
+    await db.run('UPDATE users SET username = @username, password = @password, role = @role, email = @email, active = @active WHERE id = @id', update);
     await addLog(`User updated: ${update.username}`, 'info');
     res.json({ ...update, password: '***' });
   } catch (err) {
