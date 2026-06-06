@@ -92,7 +92,7 @@ const executeBackupInternal = async (jobId) => {
 
     if (global.io) {
       global.io.emit('jobStarted', { id: jobId, name: jobData.name });
-      global.io.emit('queueStats', backupQueue.getStats());
+      global.io.emit('queueStats', await backupQueue.getStats());
     }
 
     try {
@@ -170,7 +170,7 @@ const executeBackupInternal = async (jobId) => {
 
       if (global.io) {
         global.io.emit('jobCompleted', { id: jobId, name: jobData.name, status: result.success ? 'completed' : 'failed' });
-        global.io.emit('queueStats', backupQueue.getStats());
+        global.io.emit('queueStats', await backupQueue.getStats());
       }
 
       return result;
@@ -182,7 +182,7 @@ const executeBackupInternal = async (jobId) => {
 
       if (global.io) {
         global.io.emit('jobFailed', { id: jobId, name: jobData.name, error: e.message });
-        global.io.emit('queueStats', backupQueue.getStats());
+        global.io.emit('queueStats', await backupQueue.getStats());
       }
       throw e;
     }

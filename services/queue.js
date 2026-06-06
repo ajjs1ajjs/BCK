@@ -32,7 +32,7 @@ class DBTaskQueue {
     logger.info(`Job ${jobId} pushed to queue.`);
     if (global.io) {
       global.io.emit('jobQueued', { id: jobId });
-      global.io.emit('queueStats', this.getStats());
+      global.io.emit('queueStats', await this.getStats());
     }
     this.processQueue(); // trigger immediately
   }
@@ -59,9 +59,9 @@ class DBTaskQueue {
         // Let it run in background
         this.runJob(pendingJob).catch(err => {
           logger.error(`Unhandled error in job ${pendingJob.id}: ${err.message}`);
-        }).finally(() => {
+        }).finally(async () => {
           this.running--;
-          if (global.io) global.io.emit('queueStats', this.getStats());
+          if (global.io) global.io.emit('queueStats', await this.getStats());
           this.processQueue(); // trigger next
         });
       }
@@ -81,10 +81,15 @@ class DBTaskQueue {
     }
   }
 
-  getStats() {
+  async getStats() {
+    let pendingCount = 0;
+    try {
+      const row = await db.get("SELECT COUNT(*) as cnt FROM backups WHERE status = 'pending'");
+      pendingCount = row?.cnt || 0;
+    } catch (e) {}
     return {
       running: this.running,
-      pending: -1, // Cannot easily know without a DB count query, we can omit or send an estimate
+      pending: pendingCount,
       concurrency: this.concurrency
     };
   }

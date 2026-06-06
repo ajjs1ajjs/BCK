@@ -47,7 +47,7 @@ const app = express();
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));
 
 // Trust proxy for secure IP whitelisting when running behind reverse proxies
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' || true);
+app.set('trust proxy', process.env.TRUST_PROXY === 'true');
 
 // ─── Global Middlewares ──────────────────────────────────────────────────────
 
@@ -240,7 +240,7 @@ const start = async () => {
 
   io.on('connection', (socket) => {
     logger.info(`New client connected: ${socket.id}`);
-    socket.emit('queueStats', backupQueue.getStats());
+    backupQueue.getStats().then(stats => socket.emit('queueStats', stats));
     socket.on('disconnect', () => {
       logger.info(`Client disconnected: ${socket.id}`);
     });
@@ -251,6 +251,23 @@ const start = async () => {
     const displayUrl = appUrl || `http://${HOST === '0.0.0.0' ? '127.0.0.1' : HOST}:${PORT}`;
     console.log(`BCK server running on ${displayUrl}`);
   });
+
+  // Graceful shutdown
+  const shutdown = async (signal) => {
+    console.log(`\n${signal} received. Shutting down gracefully...`);
+    server.close(() => {
+      console.log('HTTP server closed.');
+    });
+    backupQueue.stop();
+    cronManager.stop();
+    const { closePool } = require('./services/db');
+    await closePool();
+    console.log('Database connections closed.');
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 };
 
 start();

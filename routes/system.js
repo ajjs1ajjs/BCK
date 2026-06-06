@@ -183,7 +183,7 @@ router.put('/settings', sensitiveApiLimiter, authorize('configure'), async (req,
 
 // GET /api/stats/queue
 router.get('/stats/queue', async (req, res) => {
-  res.json(backupQueue.getStats());
+  res.json(await backupQueue.getStats());
 });
 
 module.exports = router;

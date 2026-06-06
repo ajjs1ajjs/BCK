@@ -280,4 +280,8 @@ async function migrate(jsonPath) {
   console.log('JSON migration is skipped in Postgres mode. Please manually import data.');
 }
 
-module.exports = { db, initSchema, migrate };
+async function closePool() {
+  await pool.end();
+}
+
+module.exports = { db, initSchema, migrate, closePool };

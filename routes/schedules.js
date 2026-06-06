@@ -63,7 +63,10 @@ router.put('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   const s = await db.get('SELECT * FROM schedules WHERE id = ?', req.params.id);
   if (!s) return res.status(404).json({ error: 'Not found' });
   
-  const update = { ...s, ...req.body, updatedAt: new Date().toISOString() };
+  const v = validate('createSchedule', { name: s.name, cronExpression: s.cronExpression, backupId: s.backupId, ...req.body });
+  if (!v.valid) return res.status(400).json({ error: 'Validation failed', details: v.errors });
+  
+  const update = { ...s, ...v.data, updatedAt: new Date().toISOString() };
   update.enabled = update.enabled ? 1 : 0;
   
   try {
