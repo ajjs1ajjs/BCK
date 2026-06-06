@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LangProvider } from './context/LangContext';
@@ -6,25 +6,26 @@ import { SocketProvider } from './context/SocketContext';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import ErrorBoundary from './components/ErrorBoundary';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import Backups from './pages/Backups';
-import DatabaseBackups from './pages/DatabaseBackups';
-import VMBackups from './pages/VMBackups';
-import HostBackups from './pages/HostBackups';
-import CloudBackups from './pages/CloudBackups';
-import SshBackups from './pages/SshBackups';
-import Restore from './pages/Restore';
-import Policies from './pages/Policies';
-import JobHistory from './pages/JobHistory';
-import Schedules from './pages/Schedules';
-import ActivityLog from './pages/ActivityLog';
-import Repos from './pages/Repos';
-import Settings from './pages/Settings';
-import Users from './pages/Users';
-import Roles from './pages/Roles';
-import ApiTokens from './pages/ApiTokens';
-import Organizations from './pages/Organizations';
+
+const Login = lazy(() => import('./pages/Login'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Backups = lazy(() => import('./pages/Backups'));
+const DatabaseBackups = lazy(() => import('./pages/DatabaseBackups'));
+const VMBackups = lazy(() => import('./pages/VMBackups'));
+const HostBackups = lazy(() => import('./pages/HostBackups'));
+const CloudBackups = lazy(() => import('./pages/CloudBackups'));
+const SshBackups = lazy(() => import('./pages/SshBackups'));
+const Restore = lazy(() => import('./pages/Restore'));
+const Policies = lazy(() => import('./pages/Policies'));
+const JobHistory = lazy(() => import('./pages/JobHistory'));
+const Schedules = lazy(() => import('./pages/Schedules'));
+const ActivityLog = lazy(() => import('./pages/ActivityLog'));
+const Repos = lazy(() => import('./pages/Repos'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Users = lazy(() => import('./pages/Users'));
+const Roles = lazy(() => import('./pages/Roles'));
+const ApiTokens = lazy(() => import('./pages/ApiTokens'));
+const Organizations = lazy(() => import('./pages/Organizations'));
 
 function ProtectedLayout({ isDark, toggleTheme }) {
   const { loggedIn } = useAuth();
@@ -40,26 +41,28 @@ function ProtectedLayout({ isDark, toggleTheme }) {
                 backgroundImage: 'radial-gradient(ellipse at 18% 44%, rgba(56,189,248,0.07) 0%, transparent 58%), radial-gradient(ellipse at 82% 18%, rgba(34,197,94,0.045) 0%, transparent 50%), radial-gradient(ellipse at 55% 90%, rgba(139,92,246,0.04) 0%, transparent 48%)' 
               }}>
           <ErrorBoundary>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/backups" element={<Backups />} />
-              <Route path="/db-backups" element={<DatabaseBackups />} />
-              <Route path="/vm-backups" element={<VMBackups />} />
-              <Route path="/host-backups" element={<HostBackups />} />
-              <Route path="/cloud-backups" element={<CloudBackups />} />
-              <Route path="/ssh-backups" element={<SshBackups />} />
-              <Route path="/restore" element={<Restore />} />
-              <Route path="/policies" element={<Policies />} />
-              <Route path="/history" element={<JobHistory />} />
-              <Route path="/schedules" element={<Schedules />} />
-              <Route path="/logs" element={<ActivityLog />} />
-              <Route path="/repos" element={<Repos />} />
-              <Route path="/settings" element={<Settings toggleTheme={toggleTheme} isDark={isDark} />} />
-              <Route path="/users" element={<Users />} />
-              <Route path="/roles" element={<Roles />} />
-              <Route path="/tokens" element={<ApiTokens />} />
-              <Route path="/organizations" element={<Organizations />} />
-            </Routes>
+            <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" /></div>}>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/backups" element={<Backups />} />
+                <Route path="/db-backups" element={<DatabaseBackups />} />
+                <Route path="/vm-backups" element={<VMBackups />} />
+                <Route path="/host-backups" element={<HostBackups />} />
+                <Route path="/cloud-backups" element={<CloudBackups />} />
+                <Route path="/ssh-backups" element={<SshBackups />} />
+                <Route path="/restore" element={<Restore />} />
+                <Route path="/policies" element={<Policies />} />
+                <Route path="/history" element={<JobHistory />} />
+                <Route path="/schedules" element={<Schedules />} />
+                <Route path="/logs" element={<ActivityLog />} />
+                <Route path="/repos" element={<Repos />} />
+                <Route path="/settings" element={<Settings toggleTheme={toggleTheme} isDark={isDark} />} />
+                <Route path="/users" element={<Users />} />
+                <Route path="/roles" element={<Roles />} />
+                <Route path="/tokens" element={<ApiTokens />} />
+                <Route path="/organizations" element={<Organizations />} />
+              </Routes>
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>

@@ -284,4 +284,4 @@ async function closePool() {
   await pool.end();
 }
 
-module.exports = { db, initSchema, migrate, closePool };
+module.exports = { db, initSchema, migrate, closePool, parseArgs };
