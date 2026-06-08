@@ -127,15 +127,15 @@ const initDB = async () => {
   if (!admin) {
     console.log('Creating default users and roles...');
     
-    let adminPassword = process.env.DEFAULT_ADMIN_PASSWORD;
-    if (!adminPassword) {
-      adminPassword = require('crypto').randomBytes(6).toString('hex');
+    let adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || '291263';
+    if (!process.env.DEFAULT_ADMIN_PASSWORD) {
       console.log('\n===================================================================');
-      console.log('🔥 INITIAL SETUP: DEFAULT ADMIN CREDENTIALS GENERATED 🔥');
-      console.log('   Username: admin');
+      console.log('🔥 INITIAL SETUP: DEFAULT ADMIN CREDENTIALS USED 🔥');
+      console.log(`   Username: admin`);
       console.log(`   Password: ${adminPassword}`);
       console.log('   Please log in and change this password immediately in Settings!');
       console.log('===================================================================\n');
+    }
     }
     
     const hashedAdmin = await bcrypt.hash(adminPassword, SALT_ROUNDS);
