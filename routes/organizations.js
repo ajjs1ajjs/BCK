@@ -38,9 +38,9 @@ router.post('/organizations', authorize('manageUsers'), async (req, res) => {
 
 // PUT /api/organizations/:id
 router.put('/organizations/:id', authorize('manageUsers'), async (req, res) => {
+  if (req.params.id === 'default') return res.status(400).json({ error: 'Cannot modify default organization' });
   const org = await db.get('SELECT * FROM organizations WHERE id = ?', req.params.id);
   if (!org) return res.status(404).json({ error: 'Not found' });
-  if (req.params.id === 'default') return res.status(400).json({ error: 'Cannot modify default organization' });
 
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
