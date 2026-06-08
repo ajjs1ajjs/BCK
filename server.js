@@ -120,7 +120,7 @@ fs.access(buildPath).then(() => {
 // ─── DB Initializer ─────────────────────────────────────────────────────────
 
 const initDB = async () => {
-  migrate(DB_PATH);
+  await migrate(DB_PATH);
   await initSchema();
 
   const admin = await db.get('SELECT * FROM users WHERE username = ?', ['admin']);
@@ -142,7 +142,7 @@ const initDB = async () => {
     const hashedOperator = await bcrypt.hash('operator', SALT_ROUNDS);
     const hashedViewer = await bcrypt.hash('viewer', SALT_ROUNDS);
 
-    await db.transaction(async () => {
+    const txFn = db.transaction(async () => {
       await db.run('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)',
         ['admin', 'Admin', 100, 'Full system access', JSON.stringify({ manageUsers: true, manageBackups: true, manageSchedules: true, restore: true, delete: true, configure: true, viewLogs: true, manageRoles: true })]);
       await db.run('INSERT INTO roles (id, name, level, description, permissions) VALUES (?, ?, ?, ?, ?)',
@@ -176,7 +176,8 @@ const initDB = async () => {
       const defaultAppUrl = appUrl || `http://127.0.0.1:${PORT}`;
       await db.run('INSERT INTO settings (key, value) VALUES (?, ?)',
         ['network', JSON.stringify({ appUrl: defaultAppUrl, bindHost: HOST })]);
-    })();
+    });
+    await txFn();
   }
 };
 

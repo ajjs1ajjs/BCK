@@ -162,7 +162,7 @@ router.post('/auth/ldap', authLimiter, async (req, res) => {
 
   try {
     const { getSettings } = require('../services/helpers');
-    const settings = getSettings();
+    const settings = await getSettings();
     const ldapConfig = settings.ldap;
 
     if (!ldapConfig || !ldapConfig.enabled) {

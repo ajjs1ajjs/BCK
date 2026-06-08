@@ -219,7 +219,7 @@ async function backup(backupConfig) {
   const { type, connection, backupPath, name } = backupConfig;
   const engine = getEngine(type);
 
-  const toolCheck = engine.check();
+  const toolCheck = await engine.check();
   if (!toolCheck.available) {
     return { success: false, error: `${type} CLI tools not found on server` };
   }
@@ -266,7 +266,7 @@ async function restore(restoreConfig) {
   const { type, connection, file } = restoreConfig;
   const engine = getEngine(type);
 
-  const toolCheck = engine.check();
+  const toolCheck = await engine.check();
   if (!toolCheck.available) {
     return { success: false, error: `${type} CLI tools not found on server` };
   }

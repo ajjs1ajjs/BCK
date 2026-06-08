@@ -39,7 +39,7 @@ router.get('/backups', async (req, res) => {
     }
     const header = 'id,name,backupType,status,size,createdAt,completedAt\n';
     const rows = parsed.map(b =>
-      `"${b.id}","${b.name}","${b.backupType || b.type}","${b.status}","${b.size || 0}","${b.createdAt || ''}","${b.completedAt || ''}"`
+      `"${(b.id||'').replace(/"/g, '""')}","${(b.name||'').replace(/"/g, '""')}","${((b.backupType || b.type)||'').replace(/"/g, '""')}","${(b.status||'').replace(/"/g, '""')}","${b.size || 0}","${(b.createdAt || '').replace(/"/g, '""')}","${(b.completedAt || '').replace(/"/g, '""')}"`
     ).join('\n');
     res.setHeader('Content-Disposition', 'attachment; filename="backups.csv"');
     res.setHeader('Content-Type', 'text/csv');

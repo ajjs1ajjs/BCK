@@ -8,8 +8,9 @@ const { Client } = require('ldapts');
  * Build LDAP client from settings config
  */
 function createClient(config) {
+  const ldapUrl = config.url || `${config.ssl ? 'ldaps' : 'ldap'}://${config.host}:${config.port || (config.ssl ? 636 : 389)}`;
   return new Client({
-    url: `${config.ssl ? 'ldaps' : 'ldap'}://${config.host}:${config.port || (config.ssl ? 636 : 389)}`,
+    url: ldapUrl,
     tlsOptions: config.ssl ? { rejectUnauthorized: config.sslVerify !== false } : undefined,
     connectTimeout: 8000,
     timeout: 10000,

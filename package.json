@@ -1,7 +1,7 @@
 {
   "name": "BCK",
   "version": "1.0.0",
-  "description": "Backup Solution App",
+  "description": "BCK — корпоративна веб-система резервного копіювання (Backup Solution App)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
