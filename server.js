@@ -136,8 +136,7 @@ const initDB = async () => {
       console.log('   Please log in and change this password immediately in Settings!');
       console.log('===================================================================\n');
     }
-    }
-    
+
     const hashedAdmin = await bcrypt.hash(adminPassword, SALT_ROUNDS);
     const hashedOperator = await bcrypt.hash('operator', SALT_ROUNDS);
     const hashedViewer = await bcrypt.hash('viewer', SALT_ROUNDS);
