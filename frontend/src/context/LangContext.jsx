@@ -708,7 +708,7 @@ export function LangProvider({ children }) {
     const saved = localStorage.getItem('bck-lang');
     if (saved === 'uk' || saved === 'en') return saved;
     // Auto-detect browser language
-    const navLang = navigator.language || navigator.userLanguage;
+    const navLang = navigator.language;
     return (navLang && navLang.startsWith('uk')) ? 'uk' : 'en';
   });
 

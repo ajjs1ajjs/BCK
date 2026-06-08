@@ -8,7 +8,7 @@ export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
   const [socket, setSocket] = useState(null);
-  const [queueStats, setQueueStats] = useState({ active: 0, pending: 0, completed: 0, failed: 0 });
+  const [queueStats, setQueueStats] = useState({ running: 0, pending: 0, concurrency: 0 });
   const [lastEvent, setLastEvent] = useState(null);
 
   useEffect(() => {

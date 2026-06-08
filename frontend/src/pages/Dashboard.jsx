@@ -88,17 +88,17 @@ export default function Dashboard() {
     };
   }, [stats, backups]);
 
-  const disks = (stats?.diskSpaces || []).map(d => {
-    const tGB = Math.round(d.totalBytes / 1073741824 * 10) / 10 || 0;
-    const uGB = Math.round(d.usedBytes / 1073741824 * 10) / 10 || 0;
-    const fGB = Math.round(d.freeBytes / 1073741824 * 10) / 10 || 0;
-    return { ...d, totalGB: tGB, usedGB: uGB, freeGB: fGB };
-  });
+  const disks = stats?.diskSpace ? [{
+    mount: '/',
+    totalBytes: stats.diskSpace.totalBytes,
+    usedBytes: stats.diskSpace.usedBytes,
+    freeBytes: stats.diskSpace.freeBytes,
+    totalGB: Math.round(stats.diskSpace.totalBytes / 1073741824 * 10) / 10 || 0,
+    usedGB: Math.round(stats.diskSpace.usedBytes / 1073741824 * 10) / 10 || 0,
+    freeGB: Math.round(stats.diskSpace.freeBytes / 1073741824 * 10) / 10 || 0,
+  }] : [];
 
-  const cloudDisks = (stats?.cloudSpaces || []).map(c => {
-    const usedGB = Math.round(c.usedBytes / 1073741824 * 10) / 10 || 0;
-    return { ...c, usedGB };
-  });
+  const cloudDisks = [];
 
   const totalConnections = dbConnections.length + cloudCreds.length + vmBackups.length;
   const avgSpeed = useMemo(() => {
@@ -297,7 +297,7 @@ export default function Dashboard() {
                         key={i} 
                         title={`${cs.type}: ${cs.items.length}`}
                         onClick={() => navigate(cs.path)}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer ring-2 ring-white dark:ring-slate-900 z-${30 - i * 10} ${cs.bg} ${cs.color} transition-transform hover:-translate-y-1`}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer ring-2 ring-white dark:ring-slate-900 ${cs.bg} ${cs.color} transition-transform hover:-translate-y-1`}
                       >
                         {cs.icon}
                       </div>
@@ -615,9 +615,9 @@ export default function Dashboard() {
               <h2 className="text-lg font-bold text-slate-900 dark:text-white">
                 {t('recentActivity') || 'Recent Activity'}
               </h2>
-              {queueStats?.active > 0 && (
+              {queueStats?.running > 0 && (
                 <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
-                  {queueStats.active} Active
+                  {queueStats.running} Active
                 </span>
               )}
             </div>

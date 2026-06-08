@@ -17,9 +17,7 @@ call npm install
 call npm run build
 cd ..
 
-if not exist db.json (
-    echo {"backups":[],"schedules":[],"logs":[],"stats":{"totalBackups":0,"successfulBackups":0,"failedBackups":0,"lastBackup":null}} > db.json
-)
+REM PostgreSQL is required — configure via .env or Docker
 
 echo.
 echo === Deployment complete! ===

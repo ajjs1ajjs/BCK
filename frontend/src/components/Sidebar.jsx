@@ -97,19 +97,19 @@ export default function Sidebar() {
             <SubItem icon={Server} label={t('hosts') || 'Hosts'} path="/host-backups" />
             <SubItem icon={Cloud} label={t('cloud')} path="/cloud-backups" />
             <SubItem icon={Key} label="SSH" path="/ssh-backups" />
-            {(!can || can('restore')) && <SubItem icon={RotateCcw} label={t('restore')} path="/restore" />}
+            {can('restore') && <SubItem icon={RotateCcw} label={t('restore')} path="/restore" />}
           </div>
         )}
 
-        {(!can || can('manageSchedules')) && (
+        {can('manageSchedules') && (
           <NavItem icon={Clock} label={t('schedules')} path="/schedules" selected={isActive('/schedules')} />
         )}
 
-        {(!can || can('manageUsers')) && (
+        {can('manageUsers') && (
           <NavItem icon={Users} label={t('users')} path="/users" selected={isActive('/users')} />
         )}
 
-        {(!can || can('manageRoles')) && (
+        {can('manageRoles') && (
           <NavItem icon={ShieldCheck} label={t('roles')} path="/roles" selected={isActive('/roles')} />
         )}
 
@@ -118,13 +118,13 @@ export default function Sidebar() {
         <NavItem icon={HardDrive} label="Repositories" path="/repos" selected={isActive('/repos')} />
         <NavItem icon={KeyRound} label="API Tokens" path="/tokens" selected={isActive('/tokens')} />
 
-        {(!can || can('manageUsers')) && (
+        {can('manageUsers') && (
           <NavItem icon={Building2} label="Organizations" path="/organizations" selected={isActive('/organizations')} />
         )}
 
         <NavItem icon={FileText} label={t('logs')} path="/logs" selected={isActive('/logs')} />
         
-        {(!can || can('configure')) && (
+        {can('configure') && (
           <NavItem icon={Settings} label={t('settings')} path="/settings" selected={isActive('/settings')} />
         )}
       </div>
