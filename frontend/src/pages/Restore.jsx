@@ -4,6 +4,7 @@ import {
   FileText, Server, Loader2, ArrowRight
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 export default function Restore() {
@@ -17,15 +18,17 @@ export default function Restore() {
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const [restoring, setRestoring] = useState(false);
   const { t } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?limit=500`).then(r => r.json()).then(data => {
+    fetch(`${API}/api/backups?limit=500`, { headers }).then(r => r.json()).then(data => {
       const b = data?.data || (Array.isArray(data) ? data : []);
       setBackups(b.filter(x => x.status === 'completed' && x.resultFile));
     }).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/db-connections`).then(r => r.json()).then(data => setConnections(Array.isArray(data) ? data : [])).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/ssh-connections`).then(r => r.json()).then(data => setSshConns(Array.isArray(data) ? data : [])).catch(e => console.error('Load error:', e));
-  }, []);
+    fetch(`${API}/api/db-connections`, { headers }).then(r => r.json()).then(data => setConnections(Array.isArray(data) ? data : [])).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/ssh-connections`, { headers }).then(r => r.json()).then(data => setSshConns(Array.isArray(data) ? data : [])).catch(e => console.error('Load error:', e));
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -53,7 +56,7 @@ export default function Restore() {
     try {
       const r = await fetch(`${API}/api/restore`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ backupId: selected.id, targetType: restoreType, config }),
       });
       await r.json();

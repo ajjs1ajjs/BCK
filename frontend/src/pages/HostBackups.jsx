@@ -4,6 +4,7 @@ import {
   CheckCircle2, PlayCircle, X 
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 const EMPTY_FORM = {
@@ -20,14 +21,16 @@ export default function HostBackups() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t, lang } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
   const isUk = lang === 'uk';
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?type=host`)
+    fetch(`${API}/api/backups?type=host`, { headers })
       .then(r => r.json())
       .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -76,7 +79,7 @@ export default function HostBackups() {
     try {
       const response = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error();
@@ -90,7 +93,7 @@ export default function HostBackups() {
 
   const runBackup = async (id) => {
     try {
-      await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
+      await fetch(`${API}/api/backups/${id}/run`, { method: 'POST', headers });
       showSnack(isUk ? 'Копіювання хоста запущено' : 'Host backup started', 'info');
       setTimeout(load, 2000);
     } catch {
@@ -101,7 +104,7 @@ export default function HostBackups() {
   const deleteBackup = async (id) => {
     if(!window.confirm(isUk ? 'Видалити?' : 'Delete?')) return;
     try {
-      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers });
       showSnack('Deleted', 'success');
       load();
     } catch {

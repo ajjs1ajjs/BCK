@@ -4,6 +4,7 @@ import {
   AlertTriangle, CheckCircle2, Info, XCircle
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 export default function ActivityLog() {
@@ -11,13 +12,15 @@ export default function ActivityLog() {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const { t } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/logs`)
+    fetch(`${API}/api/logs`, { headers })
       .then(r => r.json())
       .then(data => setLogs(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 

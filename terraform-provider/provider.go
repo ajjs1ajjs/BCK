@@ -24,7 +24,7 @@ func (p *bckProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
 				Required:            true,
-				Description:         "BCK API Endpoint URL (e.g. http://localhost:6000)",
+				Description:         "BCK API Endpoint URL (e.g. http://localhost:9000)",
 			},
 			"token": schema.StringAttribute{
 				Required:            true,

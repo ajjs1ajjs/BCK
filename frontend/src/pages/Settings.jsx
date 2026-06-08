@@ -5,6 +5,7 @@ import {
   X, AlertCircle, Check
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 export default function Settings({ toggleTheme, isDark }) {
@@ -22,6 +23,8 @@ export default function Settings({ toggleTheme, isDark }) {
   const [tools, setTools] = useState({});
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   // Webhooks state
   const [webhooks, setWebhooks] = useState([]);
@@ -35,10 +38,10 @@ export default function Settings({ toggleTheme, isDark }) {
   const [selectedWhName, setSelectedWhName] = useState('');
 
   const load = useCallback(() => {
-    fetch(`${API}/api/settings`).then(r => r.json()).then(setSettings).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/tools`).then(r => r.json()).then(setTools).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/webhooks`).then(r => r.json()).then(setWebhooks).catch(e => console.error('Webhooks load error:', e));
-  }, []);
+    fetch(`${API}/api/settings`, { headers }).then(r => r.json()).then(setSettings).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/tools`, { headers }).then(r => r.json()).then(setTools).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/webhooks`, { headers }).then(r => r.json()).then(setWebhooks).catch(e => console.error('Webhooks load error:', e));
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -51,7 +54,7 @@ export default function Settings({ toggleTheme, isDark }) {
     try {
       const r = await fetch(`${API}/api/settings`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(settings),
       });
       if (r.ok) showSnack(t('settingsSaved') || 'Settings saved successfully', 'success');
@@ -78,7 +81,7 @@ export default function Settings({ toggleTheme, isDark }) {
     try {
       const r = await fetch(`${API}/api/auth/ldap/test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(settings.ldap),
       });
       const data = await r.json();
@@ -111,7 +114,7 @@ export default function Settings({ toggleTheme, isDark }) {
       const method = editingWh ? 'PUT' : 'POST';
       const r = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(whForm),
       });
       if (!r.ok) {
@@ -129,7 +132,7 @@ export default function Settings({ toggleTheme, isDark }) {
   const deleteWebhook = async (id) => {
     if (!window.confirm('Are you sure you want to delete this webhook endpoint?')) return;
     try {
-      const r = await fetch(`${API}/api/webhooks/${id}`, { method: 'DELETE' });
+      const r = await fetch(`${API}/api/webhooks/${id}`, { method: 'DELETE', headers });
       if (r.ok) {
         showSnack('Webhook deleted', 'success');
         load();
@@ -143,7 +146,7 @@ export default function Settings({ toggleTheme, isDark }) {
 
   const testWebhook = async (id) => {
     try {
-      const r = await fetch(`${API}/api/webhooks/${id}/test`, { method: 'POST' });
+      const r = await fetch(`${API}/api/webhooks/${id}/test`, { method: 'POST', headers });
       const data = await r.json();
       if (data.success) {
         showSnack(`Webhook test completed! Status: ${data.statusCode}`, 'success');
@@ -158,7 +161,7 @@ export default function Settings({ toggleTheme, isDark }) {
   const viewDeliveries = async (wh) => {
     setSelectedWhName(wh.name);
     try {
-      const r = await fetch(`${API}/api/webhooks/${wh.id}/deliveries`);
+      const r = await fetch(`${API}/api/webhooks/${wh.id}/deliveries`, { headers });
       if (r.ok) {
         const data = await r.json();
         setDeliveries(data);

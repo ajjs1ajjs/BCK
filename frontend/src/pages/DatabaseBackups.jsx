@@ -4,6 +4,7 @@ import {
   AlertCircle, CheckCircle2, PlayCircle, X 
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 const DB_TYPES = ['mysql', 'postgres', 'oracle', 'mongodb', 'mssql', 'redis'];
@@ -29,14 +30,16 @@ export default function DatabaseBackups() {
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const [cloudCreds, setCloudCreds] = useState([]);
   const { t } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/db-connections`)
+    fetch(`${API}/api/db-connections`, { headers })
       .then(r => r.json())
       .then(data => setConnections(Array.isArray(data) ? data : []))
       .catch(e => console.error('Load error:', e));
       
-    fetch(`${API}/api/backups?limit=500&type=db`)
+    fetch(`${API}/api/backups?limit=500&type=db`, { headers })
       .then(r => r.json())
       .then(data => {
         const b = data?.data || (Array.isArray(data) ? data : []);
@@ -44,11 +47,11 @@ export default function DatabaseBackups() {
       })
       .catch(e => console.error('Load error:', e));
       
-    fetch(`${API}/api/cloud-credentials`)
+    fetch(`${API}/api/cloud-credentials`, { headers })
       .then(r => r.json())
       .then(data => setCloudCreds(Array.isArray(data) ? data : []))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -78,7 +81,7 @@ export default function DatabaseBackups() {
     const method = editingConn ? 'PUT' : 'POST';
     const url = editingConn ? `${API}/api/db-connections/${editingConn.id}` : `${API}/api/db-connections`;
     try {
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(connForm) });
+      const r = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(connForm) });
       if (!r.ok) throw new Error();
       showSnack(editingConn ? 'Connection updated' : 'Connection created', 'success');
       setConnDialog(false); 
@@ -88,13 +91,13 @@ export default function DatabaseBackups() {
 
   const deleteConn = async (id) => {
     if(!window.confirm("Are you sure?")) return;
-    try { await fetch(`${API}/api/db-connections/${id}`, { method: 'DELETE' }); load(); }
+    try { await fetch(`${API}/api/db-connections/${id}`, { method: 'DELETE', headers }); load(); }
     catch { showSnack('Failed to delete', 'error'); }
   };
 
   const testConn = async (id) => {
     try {
-      const r = await fetch(`${API}/api/db-connections/${id}/test`, { method: 'POST' });
+      const r = await fetch(`${API}/api/db-connections/${id}/test`, { method: 'POST', headers });
       const data = await r.json();
       showSnack(data.success ? `${t('connectionSuccess')}! ${data.databases?.length || 0} ${t('databasesFound').toLowerCase()}` : `${t('connectionFailed')}: ${data.error}`, data.success ? 'success' : 'error');
     } catch { showSnack(t('connectionFailed'), 'error'); }
@@ -134,7 +137,7 @@ export default function DatabaseBackups() {
     const url = editing ? `${API}/api/backups/${editing.id}` : `${API}/api/backups`;
     try {
       const r = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
+        method, headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, backupType: form.type, type: 'full', source: form.config.connectionId || form.source }),
       });
       if (!r.ok) throw new Error();
@@ -146,7 +149,7 @@ export default function DatabaseBackups() {
 
   const runBackup = async (id) => {
     try {
-      const r = await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
+      const r = await fetch(`${API}/api/backups/${id}/run`, { method: 'POST', headers });
       const data = await r.json();
       showSnack(data.message, 'info');
       setTimeout(load, 2000);
@@ -155,14 +158,14 @@ export default function DatabaseBackups() {
 
   const deleteBackup = async (id) => {
     if(!window.confirm("Are you sure?")) return;
-    try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' }); load(); }
+    try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers }); load(); }
     catch { showSnack('Failed to delete', 'error'); }
   };
 
   const runAllBackups = async () => {
     const dbBackups = backups.filter(b => b.status !== 'running');
     for (const b of dbBackups) {
-      await fetch(`${API}/api/backups/${b.id}/run`, { method: 'POST' });
+      await fetch(`${API}/api/backups/${b.id}/run`, { method: 'POST', headers });
     }
     showSnack(`Started ${dbBackups.length} backup(s)`, 'info');
     setTimeout(load, 3000);

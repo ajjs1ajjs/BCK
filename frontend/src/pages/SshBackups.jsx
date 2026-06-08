@@ -4,6 +4,7 @@ import {
   CheckCircle2, PlayCircle, X, Terminal, Database
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 const EMPTY_FORM = {
@@ -22,22 +23,24 @@ export default function SshBackups() {
   const [connForm, setConnForm] = useState({ name: '', host: '', port: 22, user: '', password: '', key: '' });
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t, lang } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
   const isUk = lang === 'uk';
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?type=ssh`)
+    fetch(`${API}/api/backups?type=ssh`, { headers })
       .then(r => r.json())
       .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/ssh-connections`)
+    fetch(`${API}/api/ssh-connections`, { headers })
       .then(r => r.json())
       .then(data => setSshConns(Array.isArray(data) ? data : []))
       .catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/cloud-credentials`)
+    fetch(`${API}/api/cloud-credentials`, { headers })
       .then(r => r.json())
       .then(data => setCloudCreds(Array.isArray(data) ? data : []))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -84,7 +87,7 @@ export default function SshBackups() {
     const url = editing ? `${API}/api/backups/${editing.id}` : `${API}/api/backups`;
 
     try {
-      const resp = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const resp = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (resp.ok) {
         showSnack(isUk ? 'Збережено' : 'Saved', 'success');
         setDialogOpen(false);
@@ -98,7 +101,7 @@ export default function SshBackups() {
 
   const runBackup = async (id) => {
     try {
-      const resp = await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
+      const resp = await fetch(`${API}/api/backups/${id}/run`, { method: 'POST', headers });
       const data = await resp.json();
       showSnack(data.message || 'Started', 'success');
       load();
@@ -108,7 +111,7 @@ export default function SshBackups() {
   const deleteBackup = async (id) => {
     if (!window.confirm(isUk ? 'Видалити?' : 'Delete?')) return;
     try {
-      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers });
       showSnack(isUk ? 'Видалено' : 'Deleted', 'success');
       load();
     } catch { showSnack('Error', 'error'); }
@@ -118,7 +121,7 @@ export default function SshBackups() {
     e.preventDefault();
     if (!connForm.name || !connForm.host || !connForm.user) return;
     try {
-      const resp = await fetch(`${API}/api/ssh-connections`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(connForm) });
+      const resp = await fetch(`${API}/api/ssh-connections`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(connForm) });
       if (resp.ok) {
         setConnDialogOpen(false);
         setConnForm({ name: '', host: '', port: 22, user: '', password: '', key: '' });
@@ -130,12 +133,12 @@ export default function SshBackups() {
 
   const deleteConnection = async (id) => {
     if (!window.confirm(isUk ? 'Видалити з\'єднання?' : 'Delete connection?')) return;
-    try { await fetch(`${API}/api/ssh-connections/${id}`, { method: 'DELETE' }); load(); showSnack('Deleted', 'success'); } catch { showSnack('Error deleting connection', 'error'); }
+    try { await fetch(`${API}/api/ssh-connections/${id}`, { method: 'DELETE', headers }); load(); showSnack('Deleted', 'success'); } catch { showSnack('Error deleting connection', 'error'); }
   };
 
   const testConnection = async (id) => {
     try {
-      const resp = await fetch(`${API}/api/ssh-connections/${id}/test`, { method: 'POST' });
+      const resp = await fetch(`${API}/api/ssh-connections/${id}/test`, { method: 'POST', headers });
       const data = await resp.json();
       showSnack(data.success ? (isUk ? `Підключено до ${data.hostname}` : `Connected to ${data.hostname}`) : (data.error || 'Failed'), data.success ? 'success' : 'error');
     } catch { showSnack('Error testing connection', 'error'); }

@@ -8,7 +8,7 @@ terraform {
 }
 
 provider "bck" {
-  endpoint = "http://localhost:6000"
+  endpoint = "http://localhost:9000"
   token    = "bck_tok_abc123xyz" # API Token generated in BCK Admin Dashboard
 }
 

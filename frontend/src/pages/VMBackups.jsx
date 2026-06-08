@@ -4,6 +4,7 @@ import {
   AlertCircle, CheckCircle2, PlayCircle, X 
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 export default function VMBackups() {
@@ -16,16 +17,18 @@ export default function VMBackups() {
   });
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?limit=500&type=vm`)
+    fetch(`${API}/api/backups?limit=500&type=vm`, { headers })
       .then(r => r.json())
       .then(data => {
         const b = data?.data || (Array.isArray(data) ? data : []);
         setBackups(b.filter(x => ['vmware', 'hyperv'].includes(x.backupType || x.type)));
       })
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -72,7 +75,7 @@ export default function VMBackups() {
 
     try {
       const r = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
+        method, headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (!r.ok) throw new Error();
@@ -84,7 +87,7 @@ export default function VMBackups() {
 
   const runBackup = async (id) => {
     try {
-      await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
+      await fetch(`${API}/api/backups/${id}/run`, { method: 'POST', headers });
       showSnack('VM backup started', 'info');
       setTimeout(load, 2000);
     } catch { showSnack('Failed to start', 'error'); }
@@ -92,7 +95,7 @@ export default function VMBackups() {
 
   const deleteBackup = async (id) => {
     if(!window.confirm("Are you sure?")) return;
-    try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' }); load(); }
+    try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers }); load(); }
     catch { showSnack('Failed to delete', 'error'); }
   };
 

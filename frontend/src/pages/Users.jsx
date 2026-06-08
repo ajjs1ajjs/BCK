@@ -14,13 +14,14 @@ export default function Users() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ username: '', password: '', role: 'viewer', email: '' });
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
-  const { can } = useAuth();
+  const { can, token } = useAuth();
   const { t } = useTranslation();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/users`).then(r => r.json()).then(setUsers).catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/roles`).then(r => r.json()).then(setRoles).catch(e => console.error('Load error:', e));
-  }, []);
+    fetch(`${API}/api/users`, { headers }).then(r => r.json()).then(setUsers).catch(e => console.error('Load error:', e));
+    fetch(`${API}/api/roles`, { headers }).then(r => r.json()).then(setRoles).catch(e => console.error('Load error:', e));
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -49,7 +50,7 @@ export default function Users() {
     const method = editing ? 'PUT' : 'POST';
     const url = editing ? `${API}/api/users/${editing.id}` : `${API}/api/users`;
     try {
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const r = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (!r.ok) { const err = await r.json(); throw new Error(err.error); }
       showSnack(editing ? (t('userUpdated') || 'User updated successfully') : (t('userCreated') || 'User created successfully'), 'success');
       setDialogOpen(false); 
@@ -62,7 +63,7 @@ export default function Users() {
   const remove = async (id) => {
     if (!window.confirm('Are you sure you want to delete this user?')) return;
     try {
-      await fetch(`${API}/api/users/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/users/${id}`, { method: 'DELETE', headers });
       load();
       showSnack(t('userDeleted') || 'User deleted successfully', 'success');
     } catch { 
@@ -72,7 +73,7 @@ export default function Users() {
 
   const toggleActive = async (u) => {
     try {
-      await fetch(`${API}/api/users/${u.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: !u.active }) });
+      await fetch(`${API}/api/users/${u.id}`, { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ active: !u.active }) });
       load();
     } catch (_) { /* ignore */ }
   };

@@ -49,13 +49,21 @@ Create a `.env` file in the project root:
 ```
 PORT=9000
 JWT_SECRET=<generate-a-random-secret>
-DB_PATH=./db.json
 NODE_ENV=production
 HOST=0.0.0.0
 APP_URL=http://your-ip:9000
 ENCRYPTION_KEY=<generate-a-random-32-byte-hex-key>
 DEFAULT_ADMIN_PASSWORD=<custom-admin-password>
 TRUST_PROXY=true
+
+# PostgreSQL
+DATABASE_URL=postgresql://user:password@localhost:5432/bck
+PG_HOST=localhost
+PG_PORT=5432
+PG_USER=bck
+PG_PASSWORD=<your-password>
+PG_DATABASE=bck
+
 # Optional: HTTPS
 # SSL_CERT_PATH=./cert.pem
 # SSL_KEY_PATH=./key.pem

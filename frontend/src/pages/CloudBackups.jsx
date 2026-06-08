@@ -4,6 +4,7 @@ import {
   AlertCircle, CheckCircle2, PlayCircle, X 
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 const PROVIDERS = [
@@ -22,6 +23,8 @@ export default function CloudBackups() {
   const [editingCred, setEditingCred] = useState(null);
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const [credForm, setCredForm] = useState({
     name: '', provider: 'aws',
@@ -34,18 +37,18 @@ export default function CloudBackups() {
   });
 
   const load = useCallback(() => {
-    fetch(`${API}/api/cloud-credentials`)
+    fetch(`${API}/api/cloud-credentials`, { headers })
       .then(r => r.json())
       .then(data => setCreds(Array.isArray(data) ? data : []))
       .catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/backups?limit=500&type=cloud`)
+    fetch(`${API}/api/backups?limit=500&type=cloud`, { headers })
       .then(r => r.json())
       .then(data => {
         const b = data?.data || (Array.isArray(data) ? data : []);
         setBackups(b.filter(x => x.backupType === 'cloud').map(x => ({ ...x, type: 'cloud' })));
       })
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -79,7 +82,7 @@ export default function CloudBackups() {
     const url = editingCred ? `${API}/api/cloud-credentials/${editingCred.id}` : `${API}/api/cloud-credentials`;
     try {
       const body = { name: credForm.name, provider: credForm.provider, credentials: credForm.credentials };
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const r = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!r.ok) throw new Error();
       showSnack(editingCred ? 'Credentials updated' : 'Credentials created', 'success');
       setCredDialog(false); 
@@ -89,13 +92,13 @@ export default function CloudBackups() {
 
   const deleteCred = async (id) => {
     if(!window.confirm("Are you sure?")) return;
-    try { await fetch(`${API}/api/cloud-credentials/${id}`, { method: 'DELETE' }); load(); }
+    try { await fetch(`${API}/api/cloud-credentials/${id}`, { method: 'DELETE', headers }); load(); }
     catch { showSnack('Failed to delete', 'error'); }
   };
 
   const testCred = async (id) => {
     try {
-      const r = await fetch(`${API}/api/cloud-credentials/${id}/test`, { method: 'POST' });
+      const r = await fetch(`${API}/api/cloud-credentials/${id}/test`, { method: 'POST', headers });
       const data = await r.json();
       showSnack(data.success ? data.message : `Failed: ${data.error}`, data.success ? 'success' : 'error');
     } catch { showSnack('Test failed', 'error'); }
@@ -137,7 +140,7 @@ export default function CloudBackups() {
     const url = editing ? `${API}/api/backups/${editing.id}` : `${API}/api/backups`;
     try {
       const r = await fetch(url, {
-        method, headers: { 'Content-Type': 'application/json' },
+        method, headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(backupForm),
       });
       if (!r.ok) throw new Error();
@@ -149,7 +152,7 @@ export default function CloudBackups() {
 
   const runBackup = async (id) => {
     try {
-      const r = await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
+      const r = await fetch(`${API}/api/backups/${id}/run`, { method: 'POST', headers });
       const data = await r.json();
       showSnack(data.message, 'info');
       setTimeout(load, 2000);
@@ -160,7 +163,7 @@ export default function CloudBackups() {
 
   const deleteBackup = async (id) => {
     if(!window.confirm("Are you sure?")) return;
-    try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' }); load(); }
+    try { await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers }); load(); }
     catch { showSnack('Failed to delete', 'error'); }
   };
 

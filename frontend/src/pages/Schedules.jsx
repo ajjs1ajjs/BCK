@@ -4,6 +4,7 @@ import {
   AlertCircle, CheckCircle2, X, Clock, PlayCircle
 } from 'lucide-react';
 import { useTranslation } from '../context/LangContext';
+import { useAuth } from '../context/AuthContext';
 import { API } from '../utils/config';
 
 export default function Schedules() {
@@ -14,6 +15,8 @@ export default function Schedules() {
   const [form, setForm] = useState({ name: '', cronExpression: '0 0 * * *', backupId: '', enabled: true, notifyOn: 'failure', description: '' });
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
   const { t, lang } = useTranslation();
+  const { token } = useAuth();
+  const headers = { Authorization: `Bearer ${token}` };
 
   // Builder states
   const [builderType, setBuilderType] = useState('daily');
@@ -119,15 +122,15 @@ export default function Schedules() {
   };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/schedules`)
+    fetch(`${API}/api/schedules`, { headers })
       .then(r => r.json())
       .then(data => setSchedules(Array.isArray(data) ? data : []))
       .catch(e => console.error('Load error:', e));
-    fetch(`${API}/api/backups`)
+    fetch(`${API}/api/backups`, { headers })
       .then(r => r.json())
       .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -173,7 +176,7 @@ export default function Schedules() {
     const method = editing ? 'PUT' : 'POST';
     const url = editing ? `${API}/api/schedules/${editing.id}` : `${API}/api/schedules`;
     try {
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const r = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (!r.ok) throw new Error();
       showSnack(editing ? t('scheduleUpdated') : t('scheduleCreated'), 'success');
       setDialogOpen(false);
@@ -186,7 +189,7 @@ export default function Schedules() {
   const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this schedule?")) return;
     try {
-      await fetch(`${API}/api/schedules/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/schedules/${id}`, { method: 'DELETE', headers });
       showSnack(t('scheduleDeleted'), 'success');
       load();
     } catch {
@@ -199,7 +202,7 @@ export default function Schedules() {
     try {
       await fetch(`${API}/api/schedules/${s.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(updated),
       });
       load();

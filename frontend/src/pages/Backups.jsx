@@ -19,8 +19,9 @@ export default function Backups() {
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [bulkConfirm, setBulkConfirm] = useState(null);
   const [selected, setSelected] = useState([]);
-  const { can } = useAuth();
+  const { can, token } = useAuth();
   const { t } = useTranslation();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const filtered = backups.filter(b =>
     b.name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -28,11 +29,11 @@ export default function Backups() {
   );
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups?limit=500`)
+    fetch(`${API}/api/backups?limit=500`, { headers })
       .then(r => r.json())
       .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -57,7 +58,7 @@ export default function Backups() {
     const method = editing ? 'PUT' : 'POST';
     const url = editing ? `${API}/api/backups/${editing.id}` : `${API}/api/backups`;
     try {
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const r = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (!r.ok) throw new Error('Request failed');
       showSnack(editing ? 'Backup updated' : 'Backup created', 'success');
       setDialogOpen(false);
@@ -69,7 +70,7 @@ export default function Backups() {
 
   const handleDelete = async (id) => {
     try {
-      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers });
       showSnack('Backup deleted', 'success');
       setDeleteConfirm(null);
       load();
@@ -80,7 +81,7 @@ export default function Backups() {
 
   const handleRun = async (id) => {
     try {
-      await fetch(`${API}/api/backups/${id}/run`, { method: 'POST' });
+      await fetch(`${API}/api/backups/${id}/run`, { method: 'POST', headers });
       showSnack('Backup job started', 'info');
       setTimeout(load, 2000);
     } catch {

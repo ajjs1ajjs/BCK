@@ -19,12 +19,13 @@ export default function Roles() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', description: '', permissions: { ...defaultPermissions } });
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
-  const { can } = useAuth();
+  const { can, token } = useAuth();
   const { t } = useTranslation();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/roles`).then(r => r.json()).then(setRoles).catch(e => console.error('Load error:', e));
-  }, []);
+    fetch(`${API}/api/roles`, { headers }).then(r => r.json()).then(setRoles).catch(e => console.error('Load error:', e));
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -55,7 +56,7 @@ export default function Roles() {
     const method = editing ? 'PUT' : 'POST';
     const url = editing ? `${API}/api/roles/${editing.id}` : `${API}/api/roles`;
     try {
-      const r = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      const r = await fetch(url, { method, headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
       if (!r.ok) { const err = await r.json(); throw new Error(err.error); }
       showSnack(editing ? (t('roleUpdated') || 'Role updated successfully') : (t('roleCreated') || 'Role created successfully'), 'success');
       setDialogOpen(false); 
@@ -71,7 +72,7 @@ export default function Roles() {
     }
     if (!window.confirm(`Are you sure you want to delete the role "${name}"?`)) return;
     try {
-      await fetch(`${API}/api/roles/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/roles/${id}`, { method: 'DELETE', headers });
       load(); 
       showSnack((t('roleDeleted', { name }) || `Role ${name} deleted`), 'success');
     } catch { 

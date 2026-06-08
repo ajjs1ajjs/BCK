@@ -13,15 +13,16 @@ export default function JobHistory() {
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [snack, setSnack] = useState({ open: false, msg: '', type: 'success' });
-  const { can } = useAuth();
+  const { can, token } = useAuth();
   const { t } = useTranslation();
+  const headers = { Authorization: `Bearer ${token}` };
 
   const load = useCallback(() => {
-    fetch(`${API}/api/backups`)
+    fetch(`${API}/api/backups`, { headers })
       .then(r => r.json())
       .then(data => setBackups(data?.data || (Array.isArray(data) ? data : [])))
       .catch(e => console.error('Load error:', e));
-  }, []);
+  }, [token]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -41,7 +42,7 @@ export default function JobHistory() {
   const deleteBackup = async (id) => {
     if(!window.confirm(t('confirmDelete') || "Are you sure?")) return;
     try {
-      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/backups/${id}`, { method: 'DELETE', headers });
       load();
       showSnack(t('deleted'), 'success');
     } catch {
@@ -51,7 +52,7 @@ export default function JobHistory() {
 
   const downloadBackupFile = async (b) => {
     try {
-      const r = await fetch(`${API}/api/backups/${b.id}/download`);
+      const r = await fetch(`${API}/api/backups/${b.id}/download`, { headers });
       if (!r.ok) {
         const err = await r.json();
         throw new Error(err.error || 'Download failed');
