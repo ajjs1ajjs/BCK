@@ -4,9 +4,9 @@ dotenv.config();
 
 // JWT Secret: shared across all routers and middlewares
 if (!process.env.JWT_SECRET) {
-  console.error('FATAL ERROR: JWT_SECRET is not set in environment variables.');
-  console.error('Please add JWT_SECRET=your-random-secret to your .env file.');
-  process.exit(1);
+  const fallbackSecret = require('crypto').randomBytes(32).toString('hex');
+  process.env.JWT_SECRET = fallbackSecret;
+  console.warn('WARNING: JWT_SECRET not set. Auto-generated. Set it in .env for persistence.');
 }
 const JWT_SECRET = process.env.JWT_SECRET;
 

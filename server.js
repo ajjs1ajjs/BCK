@@ -10,12 +10,11 @@ const morgan = require('morgan');
 
 require('dotenv').config();
 
-// Ensure ENCRYPTION_KEY is present in environment
+// Auto-generate ENCRYPTION_KEY if not set
 if (!process.env.ENCRYPTION_KEY) {
-  console.error('FATAL ERROR: ENCRYPTION_KEY is not set in environment variables.');
-  console.error('For security reasons, this application will not start without a defined encryption key.');
-  console.error('Please add ENCRYPTION_KEY=your-secure-random-secret to your .env file.');
-  process.exit(1);
+  const fallbackKey = require('crypto').randomBytes(32).toString('hex');
+  process.env.ENCRYPTION_KEY = fallbackKey;
+  console.warn('WARNING: ENCRYPTION_KEY not set. Auto-generated. Set it in .env for persistence.');
 }
 
 const { PORT, HOST, SALT_ROUNDS } = require('./services/config');
