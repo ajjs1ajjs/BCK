@@ -22,7 +22,7 @@ router.get('/backups', async (req, res) => {
 
   const conditions = [];
   const params = [];
-  if (type) { conditions.push('(backupType = ? OR type = ?)'); params.push(type, type); }
+  if (type) { conditions.push('("backupType" = ? OR type = ?)'); params.push(type, type); }
   if (status) { conditions.push('status = ?'); params.push(status); }
 
   const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
@@ -67,7 +67,7 @@ router.post('/backups', authorize('manageBackups'), async (req, res) => {
   
   try {
     await db.run(`
-      INSERT INTO backups (id, name, source, destination, type, backupType, config, status, createdAt, updatedAt)
+      INSERT INTO backups (id, name, source, destination, type, "backupType", config, status, "createdAt", "updatedAt")
       VALUES (@id, @name, @source, @destination, @type, @backupType, @config, @status, @createdAt, @updatedAt)
     `, backup);
     
@@ -97,8 +97,8 @@ router.put('/backups/:id', authorize('manageBackups'), async (req, res) => {
     await db.run(`
       UPDATE backups SET 
         name = @name, source = @source, destination = @destination, 
-        type = @type, backupType = @backupType, config = @config, 
-        status = @status, updatedAt = @updatedAt 
+        type = @type, "backupType" = @backupType, config = @config, 
+        status = @status, "updatedAt" = @updatedAt 
       WHERE id = @id
     `, update);
     
@@ -125,7 +125,7 @@ router.delete('/backups/:id', authorize('delete'), async (req, res) => {
 
 // GET /api/vm-backups
 router.get('/vm-backups', async (req, res) => {
-  const vmJobs = await db.all("SELECT * FROM backups WHERE backupType IN ('vmware', 'hyperv')");
+  const vmJobs = await db.all('SELECT * FROM backups WHERE "backupType" IN (\'vmware\', \'hyperv\')');
   res.json(vmJobs.map(b => ({ ...b, config: JSON.parse(b.config) })));
 });
 
@@ -138,7 +138,7 @@ router.post('/vm-backups', authorize('manageBackups'), async (req, res) => {
   const now = new Date().toISOString();
   try {
     await db.run(`
-      INSERT INTO backups (id, name, type, backupType, config, status, createdAt, updatedAt)
+      INSERT INTO backups (id, name, type, "backupType", config, status, "createdAt", "updatedAt")
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, id, name, 'full', type, JSON.stringify(config || {}), 'pending', now, now);
     

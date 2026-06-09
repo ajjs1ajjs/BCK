@@ -52,7 +52,7 @@ router.post('/webhooks', authorize('configure'), async (req, res) => {
 
   try {
     await db.run(`
-      INSERT INTO webhook_endpoints (id, name, url, secret, events, retries, active, orgId, createdAt)
+      INSERT INTO webhook_endpoints (id, name, url, secret, events, retries, active, "orgId", "createdAt")
       VALUES (@id, @name, @url, @secret, @events, @retries, @active, @orgId, @createdAt)
     `, endpoint);
     await addLog(`Webhook endpoint added: ${name} → ${url}`, 'info');

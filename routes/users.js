@@ -12,7 +12,7 @@ const { SALT_ROUNDS } = require('../services/config');
 
 // GET /api/users
 router.get('/users', authorize('manageUsers'), async (req, res) => {
-  const users = await db.all('SELECT id, username, role, email, active, createdAt FROM users');
+  const users = await db.all('SELECT id, username, role, email, active, "createdAt" FROM users');
   res.json(users);
 });
 
@@ -30,7 +30,7 @@ router.post('/users', sensitiveApiLimiter, authorize('manageUsers'), async (req,
   const user = { id: uuidv4(), username, password: hashed, role, email: email || '', active: 1, createdAt: new Date().toISOString() };
   
   try {
-    await db.run('INSERT INTO users (id, username, password, role, email, active, createdAt) VALUES (@id, @username, @password, @role, @email, @active, @createdAt)', user);
+    await db.run('INSERT INTO users (id, username, password, role, email, active, "createdAt") VALUES (@id, @username, @password, @role, @email, @active, @createdAt)', user);
     await addLog(`User created: ${username}`, 'success');
     res.status(201).json({ ...user, password: '***' });
   } catch (err) {

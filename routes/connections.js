@@ -113,7 +113,7 @@ router.post('/ssh-connections', authorize('manageBackups'), async (req, res) => 
   const conn = { id, name, host, port: port || 22, user, password: cryptoHelper.encrypt(password || ''), key: keyPath || '', createdAt: new Date().toISOString() };
   
   try {
-    await db.run('INSERT INTO ssh_connections (id, name, host, port, user, password, key, createdAt) VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)', conn);
+    await db.run('INSERT INTO ssh_connections (id, name, host, port, user, password, key, "createdAt") VALUES (@id, @name, @host, @port, @user, @password, @key, @createdAt)', conn);
     await addLog(`SSH connection added: ${name}`, 'success');
     res.status(201).json({ ...conn, password: '***', key: '***' });
   } catch (err) {
@@ -229,7 +229,7 @@ router.post('/cloud-credentials', authorize('manageBackups'), async (req, res) =
   }
 
   try {
-    await db.run('INSERT INTO cloud_credentials (id, name, provider, credentials, createdAt) VALUES (?, ?, ?, ?, ?)', id, name, provider, JSON.stringify(encryptedCredentials), now);
+    await db.run('INSERT INTO cloud_credentials (id, name, provider, credentials, "createdAt") VALUES (?, ?, ?, ?, ?)', id, name, provider, JSON.stringify(encryptedCredentials), now);
     await addLog(`Cloud credentials added: ${name} [${provider}]`, 'success');
     res.status(201).json({ id, name, provider, credentials: { ...credentials, secretAccessKey: '***', accessKey: '***', password: '***' } });
   } catch (err) {

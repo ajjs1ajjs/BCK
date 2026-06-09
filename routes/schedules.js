@@ -49,7 +49,7 @@ router.post('/schedules', authorize('manageSchedules'), async (req, res) => {
   const schedule = { id: uuidv4(), name, cronExpression, backupId, enabled: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
   
   try {
-    await db.run('INSERT INTO schedules (id, name, cronExpression, backupId, enabled, createdAt, updatedAt) VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)', schedule);
+    await db.run('INSERT INTO schedules (id, name, "cronExpression", "backupId", enabled, "createdAt", "updatedAt") VALUES (@id, @name, @cronExpression, @backupId, @enabled, @createdAt, @updatedAt)', schedule);
     refreshScheduler();
     await addLog(`Schedule created: ${name}`, 'success');
     res.status(201).json(schedule);
@@ -70,7 +70,7 @@ router.put('/schedules/:id', authorize('manageSchedules'), async (req, res) => {
   update.enabled = update.enabled ? 1 : 0;
   
   try {
-    await db.run('UPDATE schedules SET name = @name, cronExpression = @cronExpression, backupId = @backupId, enabled = @enabled, updatedAt = @updatedAt WHERE id = @id', update);
+    await db.run('UPDATE schedules SET name = @name, "cronExpression" = @cronExpression, "backupId" = @backupId, enabled = @enabled, "updatedAt" = @updatedAt WHERE id = @id', update);
     refreshScheduler();
     res.json(update);
   } catch (err) {

@@ -145,7 +145,7 @@ const executeBackupInternal = async (jobId) => {
 
       const status = result.success ? 'completed' : 'failed';
       const now = new Date().toISOString();
-      await db.run('UPDATE backups SET status = ?, completedAt = ?, resultFile = ?, error = ?, size = ? WHERE id = ?', status, now, result.file || null, result.error || null, result.size || 0, jobId);
+      await db.run('UPDATE backups SET status = ?, "completedAt" = ?, resultFile = ?, error = ?, size = ? WHERE id = ?', status, now, result.file || null, result.error || null, result.size || 0, jobId);
 
       const logMsg = result.success ? `Backup completed: ${jobData.name}` : `Backup failed: ${jobData.name} - ${result.error}`;
       await addLog(logMsg, result.success ? 'success' : 'error');

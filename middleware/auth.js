@@ -25,7 +25,7 @@ const authenticate = async (req, res, next) => {
   if (rawToken) {
     const db = getDb();
     const hashed = hashToken(rawToken);
-    const apiToken = await db.get('SELECT * FROM api_tokens WHERE tokenHash = ?', hashed);
+    const apiToken = await db.get('SELECT * FROM api_tokens WHERE "tokenHash" = ?', hashed);
 
     if (!apiToken) return res.status(401).json({ error: 'Invalid API token' });
 
@@ -52,7 +52,7 @@ const authenticate = async (req, res, next) => {
     // Update lastUsedAt asynchronously (don't block request)
     setImmediate(async () => {
       try {
-        await db.run('UPDATE api_tokens SET lastUsedAt = ? WHERE id = ?', new Date().toISOString(), apiToken.id);
+        await db.run('UPDATE api_tokens SET "lastUsedAt" = ? WHERE id = ?', new Date().toISOString(), apiToken.id);
       } catch (e) {}
     });
 

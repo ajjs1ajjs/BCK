@@ -103,7 +103,7 @@ router.get('/health', async (req, res) => {
 
 // GET /api/stats
 router.get('/stats', async (req, res) => {
-  const backups = await db.all('SELECT status, completedAt FROM backups');
+  const backups = await db.all('SELECT status, "completedAt" FROM backups');
   const total = backups.length;
   const success = backups.filter(b => b.status === 'completed').length;
   const failed = backups.filter(b => b.status === 'failed').length;

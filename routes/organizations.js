@@ -11,7 +11,7 @@ router.get('/organizations', authorize('manageUsers'), async (req, res) => {
   const orgs = await db.all('SELECT * FROM organizations ORDER BY "createdAt" ASC');
   // Annotate with user count per org
   const result = await Promise.all(orgs.map(async org => {
-    const userCount = (await db.get("SELECT COUNT(*) as cnt FROM users WHERE orgId = ?", org.id))?.cnt || 0;
+    const userCount = (await db.get('SELECT COUNT(*) as cnt FROM users WHERE "orgId" = ?', org.id))?.cnt || 0;
     return { ...org, userCount };
   }));
   res.json(result);
@@ -28,7 +28,7 @@ router.post('/organizations', authorize('manageUsers'), async (req, res) => {
 
   const org = { id: uuidv4(), name, slug, createdAt: new Date().toISOString() };
   try {
-    await db.run('INSERT INTO organizations (id, name, slug, createdAt) VALUES (?, ?, ?, ?)', org.id, org.name, org.slug, org.createdAt);
+    await db.run('INSERT INTO organizations (id, name, slug, "createdAt") VALUES (?, ?, ?, ?)', org.id, org.name, org.slug, org.createdAt);
     await addLog(`Organization created: ${name} [${slug}]`, 'success');
     res.status(201).json(org);
   } catch (err) {
@@ -62,7 +62,7 @@ router.delete('/organizations/:id', authorize('manageUsers'), async (req, res) =
   if (!org) return res.status(404).json({ error: 'Not found' });
 
   // Move users to default before deleting
-  await db.run("UPDATE users SET orgId = 'default' WHERE orgId = ?", req.params.id);
+  await db.run('UPDATE users SET "orgId" = \'default\' WHERE "orgId" = ?', req.params.id);
 
   try {
     await db.run('DELETE FROM organizations WHERE id = ?', req.params.id);
