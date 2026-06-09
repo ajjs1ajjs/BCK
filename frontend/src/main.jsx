@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import './index.css';
 import './utils/api'; // patches global fetch with JWT
 import App from './App';
 
