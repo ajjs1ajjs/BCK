@@ -127,7 +127,7 @@ const initDB = async () => {
   if (!admin) {
     console.log('Creating default users and roles...');
     
-    let adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || '291263';
+    const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || '291263';
     if (!process.env.DEFAULT_ADMIN_PASSWORD) {
       console.log('\n===================================================================');
       console.log('🔥 INITIAL SETUP: DEFAULT ADMIN CREDENTIALS USED 🔥');
