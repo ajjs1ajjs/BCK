@@ -30,7 +30,7 @@ router.get('/backups', async (req, res) => {
 
   // Export mode
   if (exportFmt === 'csv' || exportFmt === 'json') {
-    const all = await db.all(`SELECT * FROM backups${where} ORDER BY createdAt DESC`, ...params);
+    const all = await db.all(`SELECT * FROM backups${where} ORDER BY "createdAt" DESC`, ...params);
     const parsed = all.map(b => ({ ...b, config: JSON.parse(b.config) }));
     if (exportFmt === 'json') {
       res.setHeader('Content-Disposition', 'attachment; filename="backups.json"');
@@ -46,7 +46,7 @@ router.get('/backups', async (req, res) => {
     return res.send(header + rows);
   }
 
-  const items = await db.all(`SELECT * FROM backups${where} ORDER BY createdAt DESC LIMIT ? OFFSET ?`, ...params, pageSize, offset);
+  const items = await db.all(`SELECT * FROM backups${where} ORDER BY "createdAt" DESC LIMIT ? OFFSET ?`, ...params, pageSize, offset);
   res.json({ data: items.map(b => ({ ...b, config: JSON.parse(b.config) })), total, page: pageNum, pageSize, totalPages: Math.ceil(total / pageSize) });
 });
 

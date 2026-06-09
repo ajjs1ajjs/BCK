@@ -48,7 +48,7 @@ class DBTaskQueue {
         const pendingJob = await db.get(`
           SELECT * FROM backups 
           WHERE status = 'pending' 
-          ORDER BY createdAt ASC 
+          ORDER BY "createdAt" ASC 
           LIMIT 1
         `);
 

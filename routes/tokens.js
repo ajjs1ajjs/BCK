@@ -20,8 +20,8 @@ function generateRawToken() {
 // GET /api/tokens — list own tokens (admin sees all)
 router.get('/tokens', async (req, res) => {
   const tokens = req.user.role === 'admin'
-    ? await db.all('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens ORDER BY createdAt DESC')
-    : await db.all('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens WHERE userId = ? ORDER BY createdAt DESC', req.user.id);
+    ? await db.all('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens ORDER BY "createdAt" DESC')
+    : await db.all('SELECT id, name, userId, orgId, permissions, lastUsedAt, expiresAt, createdAt FROM api_tokens WHERE userId = ? ORDER BY "createdAt" DESC', req.user.id);
   res.json(tokens.map(t => ({ ...t, permissions: JSON.parse(t.permissions || '{}') })));
 });
 

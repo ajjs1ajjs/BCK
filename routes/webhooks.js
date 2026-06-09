@@ -15,7 +15,7 @@ router.get('/webhooks/events', async (req, res) => {
 
 // GET /api/webhooks — list all endpoints
 router.get('/webhooks', authorize('configure'), async (req, res) => {
-  const endpoints = await db.all('SELECT * FROM webhook_endpoints ORDER BY createdAt DESC');
+  const endpoints = await db.all('SELECT * FROM webhook_endpoints ORDER BY "createdAt" DESC');
   res.json(endpoints.map(e => ({ 
     ...e, 
     secret: e.secret ? cryptoHelper.decrypt(e.secret) : null,

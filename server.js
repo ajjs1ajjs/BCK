@@ -46,7 +46,7 @@ const app = express();
 const DB_PATH = path.resolve(process.env.DB_PATH || path.join(__dirname, 'db.json'));
 
 // Trust proxy for secure IP whitelisting when running behind reverse proxies
-app.set('trust proxy', process.env.TRUST_PROXY === 'true');
+app.set('trust proxy', process.env.TRUST_PROXY !== 'false');
 
 // ─── Global Middlewares ──────────────────────────────────────────────────────
 

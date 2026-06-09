@@ -4,8 +4,8 @@ const mockDb = {
     const tableMatch = sql.match(/FROM\s+(\w+)/i);
     const table = tableMatch ? tableMatch[1] : null;
     const data = Object.values(mockStore).filter(r => r._table === table);
-    if (sql.includes('ORDER BY createdAt ASC')) return data.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
-    if (sql.includes('ORDER BY createdAt DESC')) return data.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    if (sql.includes('ORDER BY createdAt ASC') || sql.includes('ORDER BY "createdAt" ASC')) return data.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+    if (sql.includes('ORDER BY createdAt DESC') || sql.includes('ORDER BY "createdAt" DESC')) return data.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     return data;
   }),
   get: jest.fn(async (sql, ...params) => {
