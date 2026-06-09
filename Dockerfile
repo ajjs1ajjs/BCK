@@ -24,6 +24,8 @@ COPY --from=backend-deps /app/node_modules ./node_modules
 COPY package*.json ./
 COPY server.js ./
 COPY services/ ./services/
+COPY middleware/ ./middleware/
+COPY routes/ ./routes/
 COPY --from=frontend-builder /app/build ./frontend/build
 
 RUN chown -R bck:bck /app
