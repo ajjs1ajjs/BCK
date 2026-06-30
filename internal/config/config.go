@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
@@ -94,6 +95,9 @@ type TelegramConfig struct {
 }
 
 func Load() (*Config, error) {
+	// Load .env file first
+	godotenv.Load()
+
 	v := viper.New()
 
 	v.SetConfigName("config")
@@ -157,8 +161,29 @@ func (c *Config) applyDefaults() {
 	if c.Server.Port == 0 {
 		c.Server.Port = 8050
 	}
+	if c.Database.Host == "" {
+		c.Database.Host = "localhost"
+	}
+	if c.Database.Port == 0 {
+		c.Database.Port = 5432
+	}
+	if c.Database.Name == "" {
+		c.Database.Name = "backupmanager"
+	}
+	if c.Database.User == "" {
+		c.Database.User = "backup"
+	}
+	if c.Database.Password == "" {
+		c.Database.Password = "backup"
+	}
 	if c.Database.SSLMode == "" {
 		c.Database.SSLMode = "disable"
+	}
+	if c.Redis.Host == "" {
+		c.Redis.Host = "localhost"
+	}
+	if c.Redis.Port == 0 {
+		c.Redis.Port = 6379
 	}
 	if c.Storage.Type == "" {
 		c.Storage.Type = "local"
@@ -171,6 +196,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Logging.Format == "" {
 		c.Logging.Format = "json"
+	}
+	if c.Auth.JWTSecret == "" {
+		c.Auth.JWTSecret = "dev-secret-change-in-production"
+	}
+	if c.Auth.RefreshSecret == "" {
+		c.Auth.RefreshSecret = "dev-refresh-change-in-production"
 	}
 	if c.Auth.TokenExpiry == 0 {
 		c.Auth.TokenExpiry = 24 * time.Hour

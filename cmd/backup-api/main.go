@@ -50,14 +50,14 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Print startup banner BEFORE starting server
+	printStartupBanner(cfg)
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("server failed", zap.Error(err))
 		}
 	}()
-
-	// Print startup banner
-	printStartupBanner(cfg)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
