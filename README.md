@@ -86,7 +86,8 @@ cd web && npm install && npm run dev   # → http://localhost:3000
 ### 6. Run smoke tests
 
 ```bash
-bash scripts/smoke-test.sh   # Tests all 25+ endpoints
+# All-in-one setup + smoke test
+curl -sL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/setup.sh | bash
 ```
 
 ---
@@ -212,7 +213,7 @@ make build
 make test
 
 # Run full smoke test (requires running server)
-bash scripts/smoke-test.sh
+bash scripts/setup.sh
 
 # Lint
 make lint
