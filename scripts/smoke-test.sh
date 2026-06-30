@@ -6,7 +6,7 @@
 # =============================================================================
 set -e
 
-API="${BCK_API_URL:-http://localhost:8080/api/v1}"
+API="${BCK_API_URL:-http://localhost:8050/api/v1}"
 PASS=0; FAIL=0
 RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 
@@ -170,7 +170,7 @@ STATS=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH" "$API/stats")
 # ──── 9. METRICS ────
 echo "── Metrics ──"
 METRICS=$(curl -s -o /dev/null -w "%{http_code}" "$API/../metrics")
-[ "$METRICS" = "200" ] || METRICS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080/metrics")
+[ "$METRICS" = "200" ] || METRICS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8050/metrics")
 [ "$METRICS" = "200" ] && ok "GET /metrics → 200" || fail "GET /metrics" "got $METRICS (Prometheus not scraped?)"
 
 # ──── 10. CLEANUP ────

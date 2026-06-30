@@ -49,7 +49,7 @@ resource "azurerm_container_group" "bck" {
     name = "api"
     image = "bck/backup-api:latest"
     cpu = 1; memory = 2
-    ports { port = 8080; protocol = "TCP" }
+    ports { port = 8050; protocol = "TCP" }
     environment_variables = {
       DB_HOST = azurerm_postgresql_server.bck.fqdn
       REDIS_HOST = azurerm_redis_cache.bck.hostname

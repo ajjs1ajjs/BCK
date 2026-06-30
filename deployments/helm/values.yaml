@@ -21,7 +21,7 @@ image:
 service:
   api:
     type: ClusterIP
-    port: 8080
+    port: 8050
   ui:
     type: ClusterIP
     port: 3000

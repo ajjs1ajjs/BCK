@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth";
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const [apiUrl, setApiUrl] = useState(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api/v1");
+  const [apiUrl, setApiUrl] = useState(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8050/api/v1");
   const [darkMode, setDarkMode] = useState(true);
 
   return (

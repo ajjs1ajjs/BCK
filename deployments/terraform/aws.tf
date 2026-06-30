@@ -30,7 +30,7 @@ resource "aws_subnet" "bck_b" {
 resource "aws_security_group" "bck" {
   vpc_id = aws_vpc.bck.id
   ingress {
-    from_port = 8080; to_port = 8080; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"]
+    from_port = 8050; to_port = 8050; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"]
   }
   ingress {
     from_port = 3000; to_port = 3000; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"]
@@ -68,7 +68,7 @@ resource "aws_ecs_task_definition" "api" {
   container_definitions = jsonencode([{
     name = "api"
     image = "bck/backup-api:latest"
-    portMappings = [{ containerPort = 8080 }]
+    portMappings = [{ containerPort = 8050 }]
     environment = [
       { name = "DB_HOST"; value = aws_db_instance.bck.address },
       { name = "REDIS_HOST"; value = aws_elasticache_cluster.bck.cache_nodes[0].address },

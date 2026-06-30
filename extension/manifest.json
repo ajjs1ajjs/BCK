@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Quick backup actions and monitoring for BCK Backup Manager",
   "permissions": ["storage", "alarms", "notifications", "bookmarks"],
-  "host_permissions": ["http://localhost:8080/*"],
+  "host_permissions": ["http://localhost:8050/*"],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

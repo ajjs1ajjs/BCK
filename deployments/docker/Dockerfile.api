@@ -9,5 +9,5 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /backup-api ./cmd/backup-api
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates tzdata
 COPY --from=builder /backup-api /usr/local/bin/backup-api
-EXPOSE 8080
+EXPOSE 8050
 ENTRYPOINT ["backup-api"]

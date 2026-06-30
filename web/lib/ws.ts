@@ -13,7 +13,7 @@ export function useWebSocket() {
   const [lastMessage, setLastMessage] = useState<WSMessage | null>(null);
 
   const connect = useCallback(() => {
-    const wsUrl = (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080").replace(/^http/, "ws") + "/ws";
+    const wsUrl = (process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8050").replace(/^http/, "ws") + "/ws";
     const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => setConnected(true);

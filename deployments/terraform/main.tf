@@ -41,7 +41,7 @@ resource "kubernetes_namespace" "bck" {
 }
 
 output "api_endpoint" {
-  value = "http://${helm_release.bck.name}-api:8080"
+  value = "http://${helm_release.bck.name}-api:8050"
 }
 
 output "ui_endpoint" {

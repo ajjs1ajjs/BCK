@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert } from "reac
 import { login } from "../lib/api";
 
 export default function SettingsScreen() {
-  const [server, setServer] = useState("http://localhost:8080/api/v1");
+  const [server, setServer] = useState("http://localhost:8050/api/v1");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 

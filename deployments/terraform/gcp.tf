@@ -41,7 +41,7 @@ resource "google_cloud_run_service" "api" {
     spec {
       containers {
         image = "bck/backup-api:latest"
-        ports { container_port = 8080 }
+        ports { container_port = 8050 }
         env {
           name = "DB_HOST"; value = google_sql_database_instance.bck.public_ip_address
         }

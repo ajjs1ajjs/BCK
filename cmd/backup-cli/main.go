@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const defaultAPIURL = "http://localhost:8080/api/v1"
+const defaultAPIURL = "http://localhost:8050/api/v1"
 
 var apiURL string
 var accessToken string
@@ -83,7 +83,7 @@ Commands:
   health                          Health check
 
 Environment:
-  BCK_API_URL    API server URL (default: http://localhost:8080/api/v1)
+  BCK_API_URL    API server URL (default: http://localhost:8050/api/v1)
   BCK_TOKEN      JWT access token
 `)
 }

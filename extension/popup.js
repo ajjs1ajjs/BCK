@@ -1,4 +1,4 @@
-const API = 'http://localhost:8080/api/v1';
+const API = 'http://localhost:8050/api/v1';
 
 async function init() {
   try {

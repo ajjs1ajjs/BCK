@@ -1,5 +1,5 @@
 // BCK Background Service Worker
-const API_URL = 'http://localhost:8080/api/v1';
+const API_URL = 'http://localhost:8050/api/v1';
 let accessToken = '';
 
 // Periodically check backup status

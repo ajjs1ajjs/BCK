@@ -155,7 +155,7 @@ func (c *Config) applyDefaults() {
 		c.Server.Host = "0.0.0.0"
 	}
 	if c.Server.Port == 0 {
-		c.Server.Port = 8080
+		c.Server.Port = 8050
 	}
 	if c.Database.SSLMode == "" {
 		c.Database.SSLMode = "disable"
