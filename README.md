@@ -2,23 +2,25 @@
 
 Enterprise-grade backup management system with file-level & database backup, scheduler, encryption, Web UI, and cross-platform agents.
 
+---
+
+## ⚡ One Command — Full Setup + Test
+
+Copy-paste for your OS. Installs Docker + Go, clones repo, starts services, runs smoke test.
+
+### Ubuntu / Linux
+```bash
+curl -sL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/setup.sh | bash
 ```
-     ┌──────────┐     ┌──────────┐     ┌──────────────┐
-     │ Next.js  │────▶│  Go API  │────▶│ PostgreSQL 16│
-     │   UI     │     │  (Chi)   │     │  (metadata)  │
-     └──────────┘     └────┬─────┘     └──────────────┘
-                           │
-                     ┌─────┴─────┐     ┌──────────────┐
-                     │   Redis 7 │     │  Storage     │
-                     │ (queue)   │     │ local / S3   │
-                     └───────────┘     └──────────────┘
-                           │
-              ┌────────────┼────────────┐
-         ┌────┴────┐ ┌────┴────┐ ┌─────┴──────┐
-         │ Worker  │ │Scheduler│ │ gRPC Agent │
-         │  Pool   │ │ (cron)  │ │ (remote)   │
-         └─────────┘ └─────────┘ └────────────┘
+
+### Windows PowerShell (Run as Administrator)
+```powershell
+irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/setup.ps1 | iex
 ```
+
+**Login**: `admin` / `admin` • **API**: `http://localhost:8050` • **UI**: `http://localhost:3000`
+
+> ⚠️ Change default password after first login: `POST /api/v1/auth/change-password`
 
 ---
 
@@ -36,79 +38,6 @@ Enterprise-grade backup management system with file-level & database backup, sch
 | **Storage** | Local filesystem / S3 (AWS SDK v2) |
 | **Observability** | Prometheus, OpenTelemetry, Grafana |
 | **Deployment** | Docker Compose, Helm, Terraform, Ansible |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Go 1.22+
-- Node.js 22+
-- Docker & Docker Compose
-- PostgreSQL 16 (or use Docker)
-
-### 1. Clone & configure
-
-```bash
-git clone https://github.com/ajjs1ajjs/BCK.git
-cd BCK
-cp .env.example .env
-```
-
-### 2. Start infrastructure
-
-```bash
-# Start PostgreSQL + Redis + Prometheus
-make docker-up
-```
-
-### 3. Run migrations
-
-```bash
-make migrate-up
-```
-
-### 4. Start services
-
-```bash
-# In separate terminals:
-make run-api          # API server → :8050
-make run-worker       # Worker pool → processes jobs
-make run-scheduler    # Cron scheduler
-```
-
-### 5. Start frontend
-
-```bash
-cd web && npm install && npm run dev   # → http://localhost:3000
-```
-
-### 6. Run smoke tests
-
-```bash
-# All-in-one setup + smoke test
-curl -sL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/setup.sh | bash
-```
-
----
-
-## 🧪 Smoke Test — One Command
-
-Copy-paste the single command for your OS. Tests 14 API endpoints: health → login → me → repo CRUD → job CRUD → run → snapshots → stats → agents → cleanup.
-
-### Ubuntu / Linux
-
-```bash
-curl -s http://localhost:8050/api/v1/health && echo " ✓ health" && TOKEN=$(curl -s -X POST http://localhost:8050/api/v1/auth/login -H "Content-Type: application/json" -d '{"username":"admin","password":"admin"}' | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4) && echo " ✓ login" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/v1/auth/me > /dev/null && echo " ✓ me" && REPO_ID=$(curl -s -X POST http://localhost:8050/api/v1/repositories -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d '{"name":"smoke","storage_type":"local"}' | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4) && echo " ✓ create repo" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/v1/repositories > /dev/null && echo " ✓ list repos" && JOB_ID=$(curl -s -X POST http://localhost:8050/api/v1/jobs -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d "{\"name\":\"smoke\",\"source_path\":\"/tmp\",\"repository_id\":\"$REPO_ID\"}" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4) && echo " ✓ create job" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/v1/jobs > /dev/null && echo " ✓ list jobs" && curl -s -X POST http://localhost:8050/api/v1/jobs/$JOB_ID/run -H "Authorization: Bearer $TOKEN" > /dev/null && echo " ✓ run job" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/v1/jobs/$JOB_ID/runs > /dev/null && echo " ✓ job runs" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/v1/snapshots > /dev/null && echo " ✓ snapshots" && curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8050/api/v1/stats > /dev/null && echo " ✓ stats" && AGENT_ID=$(curl -s -X POST http://localhost:8050/api/v1/agents -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d '{"name":"smoke","address":"10.0.0.1","port":50051}' | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4) && echo " ✓ create agent" && curl -s -X DELETE http://localhost:8050/api/v1/agents/$AGENT_ID -H "Authorization: Bearer $TOKEN" > /dev/null && echo " ✓ delete agent" && curl -s -X DELETE http://localhost:8050/api/v1/jobs/$JOB_ID -H "Authorization: Bearer $TOKEN" > /dev/null && echo " ✓ delete job" && curl -s -X DELETE http://localhost:8050/api/v1/repositories/$REPO_ID -H "Authorization: Bearer $TOKEN" > /dev/null && echo " ✓ delete repo" && echo "=== ALL 14 TESTS PASSED ==="
-```
-
-### Windows (PowerShell)
-
-```powershell
-Invoke-RestMethod http://localhost:8050/api/v1/health|Out-Null; Write-Host "✓ health"; $b=@{username='admin';password='admin'}|ConvertTo-Json; $r=Invoke-RestMethod http://localhost:8050/api/v1/auth/login -Method Post -Body $b -ContentType 'application/json'; $t=$r.access_token; Write-Host "✓ login"; $h=@{Authorization="Bearer $t"}; Invoke-RestMethod http://localhost:8050/api/v1/auth/me -Headers $h|Out-Null; Write-Host "✓ me"; $repo=Invoke-RestMethod http://localhost:8050/api/v1/repositories -Method Post -Body '{"name":"smoke","storage_type":"local"}' -ContentType 'application/json' -Headers $h; $rid=$repo.id; Write-Host "✓ create repo"; Invoke-RestMethod http://localhost:8050/api/v1/repositories -Headers $h|Out-Null; Write-Host "✓ list repos"; $job=Invoke-RestMethod http://localhost:8050/api/v1/jobs -Method Post -Body "{`"name`":`"smoke`",`"source_path`":`"/tmp`",`"repository_id`":`"$rid`"}" -ContentType 'application/json' -Headers $h; $jid=$job.id; Write-Host "✓ create job"; Invoke-RestMethod http://localhost:8050/api/v1/jobs -Headers $h|Out-Null; Write-Host "✓ list jobs"; Invoke-RestMethod "http://localhost:8050/api/v1/jobs/$jid/run" -Method Post -Headers $h|Out-Null; Write-Host "✓ run job"; Invoke-RestMethod "http://localhost:8050/api/v1/jobs/$jid/runs" -Headers $h|Out-Null; Write-Host "✓ job runs"; Invoke-RestMethod http://localhost:8050/api/v1/snapshots -Headers $h|Out-Null; Write-Host "✓ snapshots"; Invoke-RestMethod http://localhost:8050/api/v1/stats -Headers $h|Out-Null; Write-Host "✓ stats"; $ag=Invoke-RestMethod http://localhost:8050/api/v1/agents -Method Post -Body '{"name":"smoke","address":"10.0.0.1","port":50051}' -ContentType 'application/json' -Headers $h; $aid=$ag.id; Write-Host "✓ create agent"; Invoke-RestMethod "http://localhost:8050/api/v1/agents/$aid" -Method Delete -Headers $h|Out-Null; Write-Host "✓ delete agent"; Invoke-RestMethod "http://localhost:8050/api/v1/jobs/$jid" -Method Delete -Headers $h|Out-Null; Write-Host "✓ delete job"; Invoke-RestMethod "http://localhost:8050/api/v1/repositories/$rid" -Method Delete -Headers $h|Out-Null; Write-Host "✓ delete repo"; Write-Host "=== ALL 14 TESTS PASSED ==="
-```
-
-> **Note**: Requires the API server running (`make run-api`). Default admin credentials: `admin` / `admin`. Assumes `http://localhost:8050`.
 
 ---
 
