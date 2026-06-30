@@ -42,6 +42,7 @@ proto:
 	protoc --go_out=. --go-grpc_out=. proto/agent/agent.proto
 
 docker-up:
+	docker compose -f deployments/docker-compose.yml build --no-cache backup-ui 2>/dev/null || true
 	docker compose -f deployments/docker-compose.yml up -d
 
 docker-down:
