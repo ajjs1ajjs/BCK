@@ -1,0 +1,51 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Test binary
+*.test
+
+# Go workspace
+go.work
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+/web/.next/
+/web/out/
+
+# Backup repository data
+/repos/
+
+# Logs
+*.log
+/logs/
+
+# Temp
+/tmp/
+/temp/
+
+# Generated protobuf
+/proto/**/*.pb.go

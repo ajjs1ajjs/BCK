@@ -1,0 +1,238 @@
+openapi: "3.0.3"
+info:
+  title: BCK Backup Manager API
+  version: "1.0.0"
+  description: REST API for backup management system
+  contact:
+    name: BCK Team
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+    
+    LoginResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer }
+    
+    BackupJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source_path: { type: string }
+        repository_id: { type: string }
+        cron_expression: { type: string }
+        status: { type: string, enum: [active, paused, disabled] }
+    
+    Repository:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        storage_type: { type: string, enum: [local, s3] }
+        status: { type: string }
+    
+    Agent:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        address: { type: string }
+        port: { type: integer }
+        status: { type: string, enum: [online, offline] }
+    
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        200: { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/LoginResponse" } } } }
+        401: { description: Invalid credentials }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security: []
+      responses:
+        200: { description: New token pair }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      responses:
+        200: { description: User object }
+
+  /jobs:
+    get:
+      tags: [Jobs]
+      summary: List backup jobs
+      responses:
+        200: { description: Array of BackupJob }
+    post:
+      tags: [Jobs]
+      summary: Create backup job
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/BackupJob" } } }
+      responses:
+        201: { description: Created }
+
+  /jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get job details
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Job object }
+    put:
+      tags: [Jobs]
+      summary: Update job
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Updated }
+    delete:
+      tags: [Jobs]
+      summary: Delete job
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        204: { description: Deleted }
+
+  /jobs/{id}/run:
+    post:
+      tags: [Jobs]
+      summary: Trigger job execution
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        202: { description: Job enqueued }
+
+  /jobs/{id}/runs:
+    get:
+      tags: [Jobs]
+      summary: List job execution history
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Array of job runs }
+
+  /repositories:
+    get:
+      tags: [Repositories]
+      summary: List repositories
+      responses:
+        200: { description: Array of Repository }
+    post:
+      tags: [Repositories]
+      summary: Create repository
+      responses:
+        201: { description: Created }
+
+  /repositories/{id}:
+    get:
+      tags: [Repositories]
+      summary: Get repository
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Repository object }
+    put:
+      tags: [Repositories]
+      summary: Update repository
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Updated }
+    delete:
+      tags: [Repositories]
+      summary: Delete repository
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        204: { description: Deleted }
+
+  /agents:
+    get:
+      tags: [Agents]
+      summary: List agents
+      responses:
+        200: { description: Array of Agent }
+    post:
+      tags: [Agents]
+      summary: Register agent
+      responses:
+        201: { description: Agent registered }
+
+  /agents/{id}:
+    get:
+      tags: [Agents]
+      summary: Get agent
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Agent }
+
+  /snapshots:
+    get:
+      tags: [Snapshots]
+      summary: List snapshots
+      parameters: [{ name: repository_id, in: query, schema: { type: string } }]
+      responses:
+        200: { description: Array of snapshots }
+
+  /restore:
+    post:
+      tags: [Restore]
+      summary: Start restore operation
+      responses:
+        202: { description: Restore started }
+
+  /restore/{id}:
+    get:
+      tags: [Restore]
+      summary: Get restore status
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        200: { description: Restore status }
+
+  /stats:
+    get:
+      tags: [System]
+      summary: Get dashboard statistics
+      responses:
+        200: { description: Stats object }
+
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      security: []
+      responses:
+        200: { description: OK }

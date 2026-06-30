@@ -1,0 +1,45 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+
+database:
+  host: localhost
+  port: 5432
+  name: backupmanager
+  user: backup
+  password: ${DB_PASSWORD}
+  sslmode: disable
+
+redis:
+  host: localhost
+  port: 6379
+
+auth:
+  jwt_secret: ${JWT_SECRET}
+  refresh_secret: ${JWT_REFRESH_SECRET}
+  token_expiry: 24h
+  refresh_token_expiry: 720h
+
+storage:
+  type: local
+  local:
+    path: /var/lib/backupmanager/repos
+
+cors:
+  allowed_origins:
+    - http://localhost:3000
+
+logging:
+  level: info
+  format: json
+
+smtp:
+  host: ""
+  port: 587
+  user: ""
+  password: ""
+  from: "noreply@backupmanager.local"
+
+telegram:
+  bot_token: ""
+  chat_id: ""

@@ -1,0 +1,5 @@
+ALTER TABLE backup_jobs DROP COLUMN IF EXISTS organization_id;
+ALTER TABLE repositories DROP COLUMN IF EXISTS organization_id;
+DROP TABLE IF EXISTS team_members CASCADE;
+DROP TABLE IF EXISTS teams CASCADE;
+DROP TABLE IF EXISTS organizations CASCADE;
