@@ -1,0 +1,125 @@
+{
+  "name": "bck-marketplace",
+  "version": "1.0.0",
+  "description": "BCK Backup Manager Plugin Marketplace",
+  "recipes": [
+    {
+      "id": "daily-postgres-backup",
+      "name": "Daily PostgreSQL Backup",
+      "description": "Backup PostgreSQL database with 7-day retention",
+      "author": "BCK Team",
+      "version": "1.0",
+      "category": "database",
+      "kind": "BackupPlan",
+      "downloads": 1240,
+      "rating": 4.8,
+      "manifest": {
+        "apiVersion": "v1",
+        "kind": "BackupPlan",
+        "metadata": { "name": "daily-pg-backup" },
+        "spec": {
+          "source": "postgresql://localhost:5432/mydb",
+          "repository": "primary-repo",
+          "schedule": "0 0 2 * * *",
+          "retention": { "daily": 7, "weekly": 4 },
+          "encryption": { "algorithm": "aes-256-gcm", "key_source": "local" },
+          "compression": { "algorithm": "zstd", "level": 5 }
+        }
+      }
+    },
+    {
+      "id": "mysql-weekly-backup",
+      "name": "Weekly MySQL Backup",
+      "description": "Weekly full MySQL backup with monthly retention",
+      "author": "BCK Team",
+      "version": "1.0",
+      "category": "database",
+      "kind": "BackupPlan",
+      "downloads": 890,
+      "rating": 4.5,
+      "manifest": {
+        "apiVersion": "v1",
+        "kind": "BackupPlan",
+        "metadata": { "name": "weekly-mysql-backup" },
+        "spec": {
+          "source": "mysql://localhost:3306/mydb",
+          "repository": "primary-repo",
+          "schedule": "0 0 3 * * 0",
+          "retention": { "weekly": 4, "monthly": 3 },
+          "notifications": [{ "type": "email", "on_failure": true }]
+        }
+      }
+    },
+    {
+      "id": "etc-config-backup",
+      "name": "System Config Backup",
+      "description": "Backup /etc directory hourly with 30-day retention",
+      "author": "BCK Team",
+      "version": "1.0",
+      "category": "system",
+      "kind": "BackupPlan",
+      "downloads": 2100,
+      "rating": 4.9,
+      "manifest": {
+        "apiVersion": "v1",
+        "kind": "BackupPlan",
+        "metadata": { "name": "etc-hourly" },
+        "spec": {
+          "source": "/etc",
+          "repository": "primary-repo",
+          "schedule": "0 0 * * * *",
+          "retention": { "daily": 30 },
+          "exclude": ["*.tmp", "*.swp", ".cache"],
+          "compression": { "algorithm": "zstd", "level": 3 }
+        }
+      }
+    },
+    {
+      "id": "docker-volumes-backup",
+      "name": "Docker Volumes Backup",
+      "description": "Backup all named Docker volumes daily",
+      "author": "BCK Team",
+      "version": "1.0",
+      "category": "containers",
+      "kind": "BackupPlan",
+      "downloads": 670,
+      "rating": 4.3,
+      "manifest": {
+        "apiVersion": "v1",
+        "kind": "BackupPlan",
+        "metadata": { "name": "docker-volumes-backup" },
+        "spec": {
+          "source": "/var/lib/docker/volumes",
+          "repository": "primary-repo",
+          "schedule": "0 0 4 * * *",
+          "retention": { "daily": 7 }
+        }
+      }
+    },
+    {
+      "id": "gfs-retention-policy",
+      "name": "GFS Retention Policy",
+      "description": "Grandfather-Father-Son retention: 7 daily, 4 weekly, 12 monthly",
+      "author": "BCK Team",
+      "version": "1.0",
+      "category": "retention",
+      "kind": "RetentionPolicy",
+      "downloads": 3400,
+      "rating": 4.7,
+      "manifest": {
+        "apiVersion": "v1",
+        "kind": "RetentionPolicy",
+        "metadata": { "name": "gfs-default" },
+        "spec": {
+          "rules": [
+            { "frequency": "daily", "keep": 7 },
+            { "frequency": "weekly", "keep": 4 },
+            { "frequency": "monthly", "keep": 12 },
+            { "frequency": "yearly", "keep": 3 }
+          ]
+        }
+      }
+    }
+  ],
+  "categories": ["database", "system", "containers", "retention", "compliance", "cloud"]
+}
