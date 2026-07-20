@@ -1,0 +1,19 @@
+[package]
+name = "bckd"
+version.workspace = true
+edition.workspace = true
+description = "BCK Enterprise Backup Daemon"
+
+[dependencies]
+bck-core = { path = "../core" }
+tokio = { workspace = true }
+tokio-stream = "0.1"
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"
+axum = "0.7"
+tonic = { workspace = true }

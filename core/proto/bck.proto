@@ -1,0 +1,443 @@
+syntax = "proto3";
+
+package bck;
+
+service BackupEngine {
+    rpc StartJob(JobConfig) returns (JobHandle);
+    rpc CancelJob(JobHandle) returns (Empty);
+    rpc StreamProgress(JobHandle) returns (stream ProgressReport);
+    rpc ListSnapshots(SnapshotQuery) returns (SnapshotList);
+    rpc ValidateConfig(JobConfig) returns (ValidationResult);
+    rpc Restore(RestoreConfig) returns (stream RestoreProgress);
+    rpc RestoreFile(FileRestoreRequest) returns (stream RestoreProgress);
+    rpc InstantRecovery(InstantRecoveryConfig) returns (stream RestoreProgress);
+    rpc GetStats(Empty) returns (EngineStats);
+    rpc CheckHealth(Empty) returns (HealthStatus);
+    rpc GetRepositoryStats(RepositoryRef) returns (RepositoryStats);
+}
+
+service Agent {
+    rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+    rpc StartBackup(AgentBackupConfig) returns (JobHandle);
+    rpc StartRestore(AgentRestoreConfig) returns (stream RestoreProgress);
+    rpc ExecuteScript(ScriptRequest) returns (ScriptResult);
+    rpc GetStatus(Empty) returns (AgentStatus);
+    rpc UpdateAgent(UpdateRequest) returns (stream UpdateProgress);
+}
+
+message Empty {}
+
+// === Core Types ===
+
+message BlockId {
+    string sha256 = 1;
+    uint32 size = 2;
+}
+
+message BackupBlock {
+    BlockId id = 1;
+    bytes compressed_data = 2;
+    bytes encrypted_data = 3;
+    EncryptionInfo encryption = 4;
+}
+
+message EncryptionInfo {
+    string algorithm = 1;
+    bytes nonce = 2;
+    bytes key_id = 3;
+}
+
+message CompressionInfo {
+    string algorithm = 1;
+    uint32 level = 2;
+    uint64 original_size = 3;
+    uint64 compressed_size = 4;
+}
+
+message FileBlock {
+    string relative_path = 1;
+    uint64 offset = 2;
+    uint32 size = 3;
+    BlockId block_id = 4;
+    FileMetadata metadata = 5;
+}
+
+message FileMetadata {
+    string path = 1;
+    uint64 size = 2;
+    uint64 modified_time = 3;
+    uint32 mode = 4;
+    string owner = 5;
+    string group = 6;
+    map<string, string> extended_attributes = 7;
+    repeated string acl = 8;
+}
+
+message Snapshot {
+    string id = 1;
+    string job_id = 2;
+    string repository_id = 3;
+    string snapshot_type = 4;
+    string parent_id = 5;
+    uint64 size_bytes = 6;
+    uint64 unique_bytes = 7;
+    uint64 compressed_bytes = 8;
+    double dedup_ratio = 9;
+    double compression_ratio = 10;
+    bool encrypted = 11;
+    string checksum = 12;
+    string consistency = 13;
+    bool app_consistent = 14;
+    string created_at = 15;
+    string manifest_path = 16;
+}
+
+// === Job Configuration ===
+
+message JobConfig {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string job_type = 4;       // vm / file / application / agent / nas / m365
+    string backup_type = 5;     // full / incremental / differential
+    Source source = 6;
+    Destination destination = 7;
+    Policy policy = 8;
+    bool app_aware = 9;
+    Credentials app_credentials = 10;
+    CompressionConfig compression = 11;
+    EncryptionConfig encryption = 12;
+    ThrottleConfig throttle = 13;
+    string pre_script = 14;
+    string post_script = 15;
+    repeated string tags = 16;
+}
+
+message Source {
+    string type = 1;           // hypervisor / agent / nas / cloud / filesystem
+    repeated string paths = 2;
+    repeated string vm_ids = 3;
+    string hypervisor_id = 4;
+    string agent_id = 5;
+    Credentials credentials = 6;
+}
+
+message Destination {
+    string repository_id = 1;
+    string storage_type = 2;   // local / s3 / azure / gcs / tape
+    string path = 3;
+    map<string, string> options = 4;
+}
+
+message Policy {
+    string retention_type = 1; // gfs / simple / forever
+    int32 daily = 2;
+    int32 weekly = 3;
+    int32 monthly = 4;
+    int32 yearly = 5;
+    bool object_lock = 6;
+    string object_lock_duration = 7;
+}
+
+message CompressionConfig {
+    string algorithm = 1;      // zstd / lz4 / none
+    uint32 level = 2;          // 1-19 for zstd, default 3
+}
+
+message EncryptionConfig {
+    bool enabled = 1;
+    string algorithm = 2;     // aes-256-gcm / chacha20
+    string key_source = 3;    // local / kms / vault
+    string key_id = 4;
+}
+
+message ThrottleConfig {
+    uint64 bandwidth_bps = 1;
+    uint32 iops = 2;
+    bool enabled = 3;
+    string schedule = 4;
+}
+
+message Credentials {
+    string username = 1;
+    string password = 2;
+    string domain = 3;
+    string auth_type = 4;     // password / certificate / oauth
+    bytes certificate = 5;
+}
+
+// === Job Control ===
+
+message JobHandle {
+    string job_id = 1;
+    string session_id = 2;
+    string status = 3;        // running / queued / cancelled
+    uint64 created_at = 4;
+}
+
+message ProgressReport {
+    string job_id = 1;
+    string session_id = 2;
+    double progress_pct = 3;
+    uint64 processed_bytes = 4;
+    uint64 total_bytes = 5;
+    uint64 transferred_bytes = 6;
+    uint64 files_processed = 7;
+    uint64 files_total = 8;
+    uint64 speed_bps = 9;
+    string current_item = 10;
+    string phase = 11;         // scanning / chunking / dedup / compress / encrypt / transfer
+    string status = 12;        // running / completed / failed
+    string error = 13;
+    repeated Warning warnings = 14;
+    uint32 elapsed_seconds = 15;
+    uint32 eta_seconds = 16;
+    string bottleneck = 17;    // source / network / target
+    double dedup_ratio = 18;
+    double compression_ratio = 19;
+}
+
+message Warning {
+    string code = 1;
+    string message = 2;
+    string item = 3;
+}
+
+// === Snapshots ===
+
+message SnapshotQuery {
+    string job_id = 1;
+    string repository_id = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+    string sort_by = 5;
+    string sort_order = 6;
+}
+
+message SnapshotList {
+    repeated Snapshot snapshots = 1;
+    int32 total = 2;
+}
+
+// === Validation ===
+
+message ValidationResult {
+    bool valid = 1;
+    repeated ValidationError errors = 2;
+    repeated ValidationWarning warnings = 3;
+}
+
+message ValidationError {
+    string field = 1;
+    string message = 2;
+    string code = 3;
+}
+
+message ValidationWarning {
+    string field = 1;
+    string message = 2;
+    string code = 3;
+}
+
+// === Restore ===
+
+message RestoreConfig {
+    string job_id = 1;
+    string snapshot_id = 2;
+    Source source = 3;
+    Destination destination = 4;
+    RestoreOptions options = 5;
+    string restore_type = 6;  // full / file-level / instant
+}
+
+message RestoreOptions {
+    bool overwrite = 1;
+    bool skip_existing = 2;
+    bool preserve_permissions = 3;
+    bool preserve_acl = 4;
+    repeated string include_patterns = 5;
+    repeated string exclude_patterns = 6;
+    Credentials credentials = 7;
+    string target_host = 8;
+    string target_datastore = 9;
+    string target_network = 10;
+    bool power_on = 11;
+}
+
+message RestoreProgress {
+    string job_id = 1;
+    string session_id = 2;
+    double progress_pct = 3;
+    uint64 restored_bytes = 4;
+    uint64 total_bytes = 5;
+    uint64 restored_files = 6;
+    uint64 total_files = 7;
+    uint64 speed_bps = 8;
+    string current_item = 9;
+    string phase = 10;
+    string status = 11;
+    string error = 12;
+    string target_info = 13;   // NFS path, VM name, etc.
+}
+
+message FileRestoreRequest {
+    string snapshot_id = 1;
+    repeated string files = 2;
+    string target_path = 3;
+    RestoreOptions options = 4;
+}
+
+message InstantRecoveryConfig {
+    string snapshot_id = 1;
+    string host_id = 2;
+    string datastore = 3;
+    string network = 4;
+    string vm_name = 5;
+    bool power_on = 6;
+    RestoreOptions options = 7;
+}
+
+// === Stats ===
+
+message EngineStats {
+    uint64 total_blocks = 1;
+    uint64 unique_blocks = 2;
+    uint64 total_bytes = 3;
+    uint64 unique_bytes = 4;
+    uint64 compressed_bytes = 5;
+    double dedup_ratio = 6;
+    double compression_ratio = 7;
+    uint32 active_jobs = 8;
+    uint32 queued_jobs = 9;
+    uint64 uptime_seconds = 10;
+    double memory_usage_mb = 11;
+    double cpu_usage_pct = 12;
+    repeated RepositoryStats repositories = 13;
+}
+
+message HealthStatus {
+    string status = 1;
+    string version = 2;
+    uint64 uptime = 3;
+    repeated ComponentHealth components = 4;
+}
+
+message ComponentHealth {
+    string name = 1;
+    string status = 2;
+    string message = 3;
+    uint64 last_check = 4;
+}
+
+message RepositoryRef {
+    string repository_id = 1;
+}
+
+message RepositoryStats {
+    string repository_id = 1;
+    string name = 2;
+    string type = 3;
+    uint64 capacity_bytes = 4;
+    uint64 used_bytes = 5;
+    uint64 free_bytes = 6;
+    uint64 total_blocks = 7;
+    uint64 unique_blocks = 8;
+    double dedup_ratio = 9;
+    double compression_ratio = 10;
+    string status = 11;
+    string last_checked = 12;
+}
+
+// === Agent ===
+
+message HeartbeatRequest {
+    string agent_id = 1;
+    string hostname = 2;
+    string os_type = 3;
+    string os_version = 4;
+    string agent_version = 5;
+    double cpu_usage = 6;
+    double memory_usage = 7;
+    uint64 disk_free_bytes = 8;
+    repeated string capabilities = 9;
+    string status = 10;
+}
+
+message HeartbeatResponse {
+    bool accepted = 1;
+    string server_time = 2;
+    bool update_available = 3;
+    string update_version = 4;
+    string update_url = 5;
+    repeated Command pending_commands = 6;
+}
+
+message Command {
+    string id = 1;
+    string type = 2;  // run_script / start_backup / start_restore / update
+    bytes payload = 3;
+}
+
+message AgentBackupConfig {
+    string agent_id = 1;
+    string session_id = 2;
+    repeated string paths = 3;
+    bool use_vss = 4;
+    bool use_journal = 5;
+    CompressionConfig compression = 6;
+    EncryptionConfig encryption = 7;
+    ThrottleConfig throttle = 8;
+}
+
+message AgentRestoreConfig {
+    string agent_id = 1;
+    string session_id = 2;
+    string snapshot_id = 3;
+    repeated string paths = 4;
+    string target_path = 5;
+    RestoreOptions options = 6;
+}
+
+message ScriptRequest {
+    string agent_id = 1;
+    string script_content = 2;
+    string interpreter = 3;  // powershell / bash / python
+    uint32 timeout = 4;
+}
+
+message ScriptResult {
+    int32 exit_code = 1;
+    string stdout = 2;
+    string stderr = 3;
+    bool timed_out = 4;
+}
+
+message AgentStatus {
+    string agent_id = 1;
+    string hostname = 2;
+    string status = 3;
+    string version = 4;
+    double cpu_usage = 5;
+    double memory_usage = 6;
+    uint64 disk_free = 7;
+    bool vss_available = 8;
+    repeated string running_jobs = 9;
+    string last_error = 10;
+    uint64 uptime_seconds = 11;
+}
+
+message UpdateRequest {
+    string agent_id = 1;
+    string target_version = 2;
+    string package_url = 3;
+    bytes package_checksum = 4;
+}
+
+message UpdateProgress {
+    double progress_pct = 1;
+    string phase = 2;
+    uint64 downloaded_bytes = 3;
+    uint64 total_bytes = 4;
+    string status = 5;
+    string error = 6;
+}

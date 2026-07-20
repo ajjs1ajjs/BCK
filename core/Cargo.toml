@@ -1,0 +1,85 @@
+[package]
+name = "bck-core"
+version.workspace = true
+edition.workspace = true
+description = "BCK Enterprise Backup Engine - Core Library"
+
+[dependencies]
+# Async
+tokio = { workspace = true }
+futures = { workspace = true }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+
+# Web server (Axum)
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace", "compression-gzip"] }
+hyper = "1"
+
+# gRPC
+tonic = { workspace = true }
+prost = { workspace = true }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "sqlite", "uuid", "chrono", "migrate"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = "1.3"
+
+# Compression
+zstd = { version = "0.13", features = ["zdict_builder"] }
+lz4 = "1.28"
+
+# Encryption
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+
+# Hashing
+sha2 = { workspace = true }
+blake3 = "1.5"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Storage
+aws-sdk-s3 = "1"
+aws-config = "1"
+azure_storage_blobs = "0.20"
+reqwest = { version = "0.12", features = ["stream"] }
+
+# Auth
+jsonwebtoken = "9"
+argon2 = "0.5"
+
+# Config
+toml = "0.8"
+dotenvy = "0.15"
+
+# Observability
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+
+# Utilities
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+clap = { workspace = true }
+hex = { workspace = true }
+bytes = "1"
+lru = "0.12"
+parking_lot = "0.12"
+dashmap = "6"
+rusqlite = { version = "0.32", features = ["bundled"] }
+async-trait = { workspace = true }
+base64 = "0.22"
+quick-xml = "0.36"
+
+[build-dependencies]
+tonic-build = "0.12"
+
+[lib]
+name = "bck_core"
+path = "src/lib.rs"

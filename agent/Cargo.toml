@@ -1,0 +1,24 @@
+[package]
+name = "bck-agent"
+version.workspace = true
+edition.workspace = true
+description = "BCK Enterprise Backup Agent"
+
+[dependencies]
+bck-core = { path = "../core" }
+tokio = { workspace = true }
+tokio-util = "0.7"
+tonic = { workspace = true }
+prost = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+reqwest = { version = "0.12", features = ["stream"] }
+sha2 = { workspace = true }
+hex = { workspace = true }
+hostname = "0.4"
