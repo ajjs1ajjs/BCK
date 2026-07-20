@@ -1,58 +1,55 @@
-<<<<<<< HEAD
-# BCK
-=======
 # BCK Enterprise — Backup & Disaster Recovery
 
-Повноцінна enterprise-система бекапів та аварійного відновлення (аналог Veeam / Nakivo), написана повністю на Rust.
+Enterprise-grade backup and disaster recovery system (Veeam / Nakivo alternative), built entirely in Rust.
 
-## Архітектура
+## Architecture
 
-| Компонент | Опис | Технологія |
-|-----------|------|-----------|
-| **bckd** | Головний демон: REST API + gRPC + scheduler | Rust (Axum + Tonic) |
-| **bck-agent** | Агент для захищених машин | Rust |
+| Component | Description | Technology |
+|-----------|-------------|-----------|
+| **bckd** | Main daemon: REST API + gRPC + scheduler | Rust (Axum + Tonic) |
+| **bck-agent** | Agent for protected machines | Rust |
 | **bck-proxy** | Backup proxy (SAN, NFS, HotAdd) | Rust |
-| **bck** | CLI для управління | Rust (clap) |
-| **web-ui** | Веб-інтерфейс управління | React + TypeScript |
-| **Database** | PostgreSQL (SQLite для single-node) | sqlx |
+| **bck** | Management CLI | Rust (clap) |
+| **web-ui** | Web management interface | React + TypeScript |
+| **Database** | PostgreSQL (SQLite for single-node) | sqlx |
 | **Storage** | Local FS, S3, Azure Blob, GCS, Tape | Rust |
 
-## Швидкий старт
+## Quick Start
 
 ```bash
-# Збірка
+# Build
 cargo build --release
 
-# Запуск демона (з SQLite)
+# Run daemon (SQLite standalone)
 ./target/release/bckd
 
-# Або з PostgreSQL + MinIO (docker)
+# Or with PostgreSQL + MinIO (Docker)
 docker compose up -d
 ```
 
-## Розробка
+## Development
 
 ```bash
-# Перевірка компіляції
+# Check compilation
 cargo check
 
-# Запуск тестів
+# Run tests
 cargo test
 
-# Запуск демона в dev режимі
+# Run daemon in dev mode
 RUST_LOG=debug cargo run -p bckd
 ```
 
 ## CLI
 
 ```bash
-# Створити задачу бекапу
+# Create backup job
 bck job create "Daily Backup" /data my-repo
 
-# Запустити
+# Run job
 bck job run <id>
 
-# Статус
+# Status
 bck status
 ```
 
@@ -71,7 +68,6 @@ GET    /api/v1/dashboard/stats
 POST   /api/v1/auth/login
 ```
 
-## Ліцензія
+## License
 
 MIT
->>>>>>> ee25c8a (Initial commit: BCK backup system)

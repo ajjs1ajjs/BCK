@@ -1,0 +1,23 @@
+[server]
+host = "127.0.0.1"
+port = 19440
+grpc_port = 19441
+web_ui_dir = ""
+
+[database]
+url = "sqlite://./data/test_bck.db?mode=rwc"
+pool_size = 2
+migrate = true
+
+[storage]
+default_path = "./data/test_backups"
+temp_path = "./data/test_tmp"
+
+[encryption]
+key_path = ""
+algorithm = "aes-256-gcm"
+
+[logging]
+level = "warn"
+json = false
+file = ""

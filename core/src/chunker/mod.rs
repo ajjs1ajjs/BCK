@@ -56,6 +56,15 @@ impl Chunker {
         }
 
         let mask = (avg_size as u32 - 1) as u64;
+        // Precompute 131^window_size mod 2^64 via repeated multiplication
+        let power = {
+            let mut p: u64 = 1;
+            for _ in 0..self.window_size {
+                p = p.wrapping_mul(131);
+            }
+            p
+        };
+
         let mut hash: u64 = 0;
 
         // Initialize hash with first window bytes
@@ -81,7 +90,7 @@ impl Chunker {
             };
 
             hash = hash.wrapping_mul(131).wrapping_add(entering as u64);
-            hash = hash.wrapping_sub(exiting as u64 * 131u64.wrapping_pow(self.window_size as u32));
+            hash = hash.wrapping_sub((exiting as u64).wrapping_mul(power));
 
             if (hash & mask) == 0 && i - start >= min_size {
                 return i + 1;
@@ -103,5 +112,66 @@ pub struct Chunk {
 impl Default for Chunker {
     fn default() -> Self {
         Self::new(ChunkSizeConfig::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ChunkSizeConfig;
+
+    fn test_chunker() -> Chunker {
+        Chunker::new(ChunkSizeConfig { min: 256, avg: 1024, max: 4096 })
+    }
+
+    #[test]
+    fn test_chunker_small_data() {
+        let chunker = test_chunker();
+        let data = b"hello world";
+        let chunks = chunker.chunk_data(data).unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].data, data);
+    }
+
+    #[test]
+    fn test_chunker_large_data() {
+        let chunker = test_chunker();
+        let data = vec![b'A'; 100_000];
+        let chunks = chunker.chunk_data(&data).unwrap();
+        assert!(chunks.len() > 1, "should produce multiple chunks");
+        let total: usize = chunks.iter().map(|c| c.data.len()).sum();
+        assert_eq!(total, data.len());
+    }
+
+    #[test]
+    fn test_chunker_deterministic() {
+        let chunker = test_chunker();
+        let data = vec![0u8; 50_000];
+        let chunks1 = chunker.chunk_data(&data).unwrap();
+        let chunks2 = chunker.chunk_data(&data).unwrap();
+        assert_eq!(chunks1.len(), chunks2.len());
+        for (a, b) in chunks1.iter().zip(chunks2.iter()) {
+            assert_eq!(a.offset, b.offset);
+            assert_eq!(a.size, b.size);
+        }
+    }
+
+    #[test]
+    fn test_chunker_boundary_respects_min_size() {
+        let chunker = test_chunker();
+        let data = vec![0u8; 10_000];
+        let chunks = chunker.chunk_data(&data).unwrap();
+        for (i, c) in chunks.iter().enumerate() {
+            if i < chunks.len() - 1 {
+                assert!(c.size >= 256, "chunk {} too small: {}", i, c.size);
+            }
+        }
+    }
+
+    #[test]
+    fn test_chunker_empty_data() {
+        let chunker = test_chunker();
+        let chunks = chunker.chunk_data(b"").unwrap();
+        assert!(chunks.is_empty());
     }
 }

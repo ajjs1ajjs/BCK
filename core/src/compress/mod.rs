@@ -71,3 +71,76 @@ pub fn create_compressor(algorithm: &CompressionAlgorithm) -> Box<dyn Compressor
         CompressionAlgorithm::None => Box::new(NoopCompressor),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::CompressionAlgorithm;
+
+    #[test]
+    fn test_zstd_roundtrip() {
+        let compressor = ZstdCompressor::new(3);
+        let data = b"Hello, BCK backup system!";
+        let compressed = compressor.compress(data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn test_zstd_large_data() {
+        let compressor = ZstdCompressor::new(1);
+        let data = vec![b'A'; 1024 * 1024];
+        let compressed = compressor.compress(&data).unwrap();
+        assert!(compressed.len() < data.len(), "compression should reduce size");
+    }
+
+    #[test]
+    fn test_lz4_roundtrip() {
+        let compressor = Lz4Compressor;
+        let data = b"BCK backup system LZ4 test data";
+        let compressed = compressor.compress(data).unwrap();
+        let decompressed = compressor.decompress(&compressed).unwrap();
+        assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn test_noop_roundtrip() {
+        let compressor = NoopCompressor;
+        let data = b"any data";
+        assert_eq!(compressor.compress(data).unwrap(), data);
+        assert_eq!(compressor.decompress(data).unwrap(), data);
+    }
+
+    #[test]
+    fn test_create_zstd() {
+        let algo = CompressionAlgorithm::Zstd { level: 3 };
+        let compressor = create_compressor(&algo);
+        assert_eq!(compressor.algorithm(), "zstd");
+        let data = b"test data";
+        let roundtrip = compressor.decompress(&compressor.compress(data).unwrap()).unwrap();
+        assert_eq!(roundtrip, data);
+    }
+
+    #[test]
+    fn test_create_lz4() {
+        let compressor = create_compressor(&CompressionAlgorithm::Lz4);
+        assert_eq!(compressor.algorithm(), "lz4");
+    }
+
+    #[test]
+    fn test_create_noop() {
+        let compressor = create_compressor(&CompressionAlgorithm::None);
+        assert_eq!(compressor.algorithm(), "none");
+    }
+
+    #[test]
+    fn test_zstd_multiple_levels() {
+        for level in [1, 3, 10] {
+            let c = ZstdCompressor::new(level);
+            let data = b"BCK test data for multiple compression levels";
+            let comp = c.compress(data).unwrap();
+            let decomp = c.decompress(&comp).unwrap();
+            assert_eq!(decomp, data, "failed at level {}", level);
+        }
+    }
+}

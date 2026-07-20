@@ -23,6 +23,13 @@ pub mod backup;
 pub mod proxy;
 pub mod agent;
 pub mod restore;
+pub mod cdp;
+pub mod dr;
+pub mod sobr;
+pub mod tape;
+pub mod m365;
+pub mod cloud;
+pub mod enterprise;
 
 pub use pipeline::BackupPipeline;
 pub use storage::StorageBackend;

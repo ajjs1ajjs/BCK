@@ -148,3 +148,79 @@ pub fn create_encryptor(algorithm: &EncryptionAlgorithm) -> Box<dyn Encryptor> {
         EncryptionAlgorithm::None => panic!("No encryptor for None algorithm"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_KEY: &[u8; 32] = b"BCK_TEST_KEY_32_BYTES_LONG____!!";
+
+    #[test]
+    fn test_aes256_roundtrip() {
+        let encryptor = Aes256GcmEncryptor;
+        let data = b"Hello, BCK backup system!";
+        let encrypted = encryptor.encrypt(data, TEST_KEY).unwrap();
+        assert_ne!(encrypted.ciphertext, data);
+        assert_eq!(encrypted.nonce.len(), 12);
+        assert_eq!(encrypted.algorithm, "aes-256-gcm");
+        let decrypted = encryptor.decrypt(&encrypted, TEST_KEY).unwrap();
+        assert_eq!(decrypted, data);
+    }
+
+    #[test]
+    fn test_chacha20_roundtrip() {
+        let encryptor = ChaCha20Encryptor;
+        let data = b"BCK ChaCha20 test data";
+        let encrypted = encryptor.encrypt(data, TEST_KEY).unwrap();
+        assert_ne!(encrypted.ciphertext, data);
+        assert_eq!(encrypted.algorithm, "chacha20-poly1305");
+        let decrypted = encryptor.decrypt(&encrypted, TEST_KEY).unwrap();
+        assert_eq!(decrypted, data);
+    }
+
+    #[test]
+    fn test_aes256_large_data() {
+        let encryptor = Aes256GcmEncryptor;
+        let data = vec![0xABu8; 1024 * 100];
+        let encrypted = encryptor.encrypt(&data, TEST_KEY).unwrap();
+        let decrypted = encryptor.decrypt(&encrypted, TEST_KEY).unwrap();
+        assert_eq!(decrypted, data);
+    }
+
+    #[test]
+    fn test_wrong_key_fails() {
+        let encryptor = Aes256GcmEncryptor;
+        let wrong_key = b"WRONG_KEY_32_BYTES_FOR_TEST____!";
+        let data = b"sensitive data";
+        let encrypted = encryptor.encrypt(data, TEST_KEY).unwrap();
+        let result = encryptor.decrypt(&encrypted, wrong_key);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tampered_ciphertext_fails() {
+        let encryptor = Aes256GcmEncryptor;
+        let data = b"important backup data";
+        let mut encrypted = encryptor.encrypt(data, TEST_KEY).unwrap();
+        encrypted.ciphertext[0] ^= 0xFF;
+        let result = encryptor.decrypt(&encrypted, TEST_KEY);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_key_check_consistency() {
+        let encryptor = Aes256GcmEncryptor;
+        let data = b"test";
+        let e1 = encryptor.encrypt(data, TEST_KEY).unwrap();
+        let e2 = encryptor.encrypt(data, TEST_KEY).unwrap();
+        assert_eq!(e1.key_check, e2.key_check);
+    }
+
+    #[test]
+    fn test_create_encryptors() {
+        let aes = create_encryptor(&EncryptionAlgorithm::Aes256Gcm);
+        assert_eq!(aes.algorithm(), "aes-256-gcm");
+        let chacha = create_encryptor(&EncryptionAlgorithm::ChaCha20Poly1305);
+        assert_eq!(chacha.algorithm(), "chacha20-poly1305");
+    }
+}
