@@ -95,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
         job_manager,
         scheduler: scheduler.clone(),
         jwt,
+        restore_tracker: bck_core::restore::tracker::RestoreTracker::new(),
     });
 
     // Start scheduler

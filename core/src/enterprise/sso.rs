@@ -52,14 +52,14 @@ pub struct LdapConfig {
 /// SSO Manager — handles OIDC, SAML, LDAP authentication
 pub struct SsoManager {
     providers: Arc<RwLock<HashMap<String, SsoProvider>>>,
-    ldap_configs: Arc<RwLock<Vec<LdapConfig>>>,
+    _ldap_configs: Arc<RwLock<Vec<LdapConfig>>>,
 }
 
 impl SsoManager {
     pub fn new() -> Self {
         Self {
             providers: Arc::new(RwLock::new(HashMap::new())),
-            ldap_configs: Arc::new(RwLock::new(Vec::new())),
+            _ldap_configs: Arc::new(RwLock::new(Vec::new())),
         }
     }
 

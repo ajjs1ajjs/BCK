@@ -12,6 +12,7 @@ use crate::auth::jwt::JwtManager;
 use crate::config::AppConfig;
 use crate::db::DbPool;
 use crate::job::JobManager;
+use crate::restore::tracker::RestoreTracker;
 use crate::scheduler::Scheduler;
 
 pub struct AppState {
@@ -20,6 +21,7 @@ pub struct AppState {
     pub job_manager: Arc<Mutex<JobManager>>,
     pub scheduler: Arc<Mutex<Scheduler>>,
     pub jwt: JwtManager,
+    pub restore_tracker: RestoreTracker,
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

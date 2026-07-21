@@ -5,7 +5,6 @@ pub mod audit;
 
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::server::AppState;
@@ -16,7 +15,7 @@ pub struct EnterpriseManager {
     reports: reports::ReportEngine,
     tenant: multitenant::TenantManager,
     audit: audit::AuditLogger,
-    state: Arc<AppState>,
+    _state: Arc<AppState>,
 }
 
 impl EnterpriseManager {
@@ -26,7 +25,7 @@ impl EnterpriseManager {
             reports: reports::ReportEngine::new(),
             tenant: multitenant::TenantManager::new(),
             audit: audit::AuditLogger::new(),
-            state,
+            _state: state,
         })
     }
 

@@ -1,18 +1,17 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use notify::event::EventKind;
+use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::PathBuf;
-use tokio::sync::mpsc;
-use tracing::info;
+use std::sync::mpsc;
+use tokio::sync::mpsc as tokio_mpsc;
+use tracing::{info, warn};
 
 use super::ChangeEvent;
 
 /// Cross-platform filesystem watcher for CDP
-/// Windows: ReadDirectoryChangesW
-/// Linux: inotify
-/// macOS: FSEvents
 pub struct FileWatcher {
     watch_paths: Vec<PathBuf>,
-    event_tx: mpsc::Sender<ChangeEvent>,
+    event_tx: tokio_mpsc::UnboundedSender<ChangeEvent>,
     exclude_patterns: Vec<String>,
 }
 
@@ -20,9 +19,9 @@ impl FileWatcher {
     pub fn new(
         paths: Vec<String>,
         exclude: Vec<String>,
-        buffer_size: usize,
+        _buffer_size: usize,
     ) -> Self {
-        let (tx, _rx) = mpsc::channel(buffer_size);
+        let (tx, _rx) = tokio_mpsc::unbounded_channel();
 
         Self {
             watch_paths: paths.into_iter().map(PathBuf::from).collect(),
@@ -31,31 +30,77 @@ impl FileWatcher {
         }
     }
 
-    /// Start watching filesystem for changes
-    pub async fn start_watching(&self) -> Result<()> {
+    /// Start watching filesystem for changes (blocking — spawn in tokio::task::spawn_blocking)
+    pub fn start_blocking(&self) -> Result<()> {
+        let (notify_tx, notify_rx) = mpsc::channel::<Result<Event, notify::Error>>();
+
+        let mut watcher = RecommendedWatcher::new(notify_tx, Config::default())
+            .map_err(|e| anyhow::anyhow!("Failed to create watcher: {:?}", e))?;
+
         for path in &self.watch_paths {
-            info!("Watching path for CDP: {:?}", path);
+            watcher.watch(path, RecursiveMode::Recursive)
+                .map_err(|e| anyhow::anyhow!("Failed to watch {}: {:?}", path.display(), e))?;
+            info!("CDP watching: {}", path.display());
+        }
 
-            // In production: use notify crate or platform-specific API
-            // On Windows: ReadDirectoryChangesW for real-time change notification
-            // On Linux: inotify via tokio::task::spawn_blocking
+        // Process events in a blocking loop
+        for event_result in notify_rx {
+            match event_result {
+                Ok(event) => {
+                    if let Err(e) = self.handle_event(&event) {
+                        warn!("CDP watcher event error: {}", e);
+                    }
+                }
+                Err(e) => warn!("CDP watcher error: {:?}", e),
+            }
+        }
 
-            self.spawn_watcher_for_path(path).await?;
+        Ok(())
+    }
+
+    fn handle_event(&self, event: &Event) -> Result<()> {
+        for path in &event.paths {
+            let path_str = path.to_string_lossy().to_string();
+            if self.should_exclude(&path_str) {
+                continue;
+            }
+
+            let change_type = match event.kind {
+                EventKind::Create(_) => super::ChangeType::Created,
+                EventKind::Modify(_) => super::ChangeType::Modified,
+                EventKind::Remove(_) => super::ChangeType::Deleted,
+                _ => continue,
+            };
+
+            let change = ChangeEvent {
+                path: path_str,
+                change_type,
+                timestamp: chrono::Utc::now().timestamp(),
+                size: 0,
+                checksum: String::new(),
+            };
+
+            let _ = self.event_tx.send(change);
         }
         Ok(())
     }
 
-    async fn spawn_watcher_for_path(&self, _path: &PathBuf) -> Result<()> {
-        // TODO: implement platform-specific watcher
-        //   Windows: use std::os::windows::fs::OpenOptions with FILE_LIST_DIRECTORY
-        //   Linux: use inotify syscall via tokio::task::spawn_blocking
-        //   Fallback: periodic scanning
-        Ok(())
-    }
+    /// Start watcher in background tokio task
+    pub async fn start_watching(&self) -> Result<()> {
+        let paths = self.watch_paths.clone();
+        let exclude = self.exclude_patterns.clone();
 
-    /// Track changed files for checkpoint creation
-    pub fn get_pending_changes(&self) -> HashMap<String, ChangeEvent> {
-        HashMap::new()
+        tokio::task::spawn_blocking(move || {
+            let watcher = FileWatcher::new(
+                paths.into_iter().map(|p| p.to_string_lossy().to_string()).collect(),
+                exclude,
+                1024,
+            );
+            let _ = watcher.start_blocking();
+        }).await
+            .map_err(|e| anyhow::anyhow!("Watcher task join error: {}", e))?;
+
+        Ok(())
     }
 
     fn should_exclude(&self, path: &str) -> bool {

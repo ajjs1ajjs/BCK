@@ -1,6 +1,7 @@
 pub mod instant;
 pub mod explorer;
 pub mod surebackup;
+pub mod tracker;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -189,5 +190,11 @@ impl RestoreOrchestrator {
         files.dedup();
 
         Ok(files)
+    }
+
+    pub fn count_blocks(&self, snapshot_id: &str) -> Result<usize> {
+        let manifest = self.index.load_manifest(snapshot_id)?
+            .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
+        Ok(manifest.blocks.len())
     }
 }
