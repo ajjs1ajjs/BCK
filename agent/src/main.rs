@@ -6,6 +6,9 @@ use tracing::{info, warn};
 
 use bck_core::agent::{AgentCapability};
 use bck_core::agent::discovery::discover_applications;
+use bck_core::pipeline::BackupPipeline;
+use bck_core::storage::{create_backend, StorageConfig};
+use bck_core::types::{ChunkSizeConfig, PipelineConfig};
 
 #[derive(Parser)]
 #[command(name = "bck-agent", about = "BCK Backup Agent")]
@@ -16,17 +19,24 @@ struct Cli {
     #[arg(short, long, default_value = "9441")]
     port: u16,
 
+    #[arg(long, default_value_t = 9440)]
+    api_port: u16,
+
     #[arg(short, long)]
     name: Option<String>,
 
     #[arg(long)]
     server_token: Option<String>,
+
+    #[arg(long, default_value = "./data/agent")]
+    work_dir: String,
 }
 
 struct AgentContext {
     agent_id: String,
     hostname: String,
     api_addr: String,
+    work_dir: String,
     _server_addr: String,
     _capabilities: Vec<AgentCapability>,
 }
@@ -44,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
 
     let agent_id = uuid::Uuid::new_v4().to_string();
     let server_addr = format!("http://{}:{}", cli.server, cli.port);
-    let api_addr = format!("http://{}:9440", cli.server);
+    let api_addr = format!("http://{}:{}", cli.server, cli.api_port);
 
     info!("Starting BCK Agent: {} (id: {})", hostname, agent_id);
     info!("Server: {}", server_addr);
@@ -76,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
         hostname: hostname.clone(),
         _server_addr: server_addr.clone(),
         api_addr: api_addr.clone(),
+        work_dir: cli.work_dir.clone(),
         _capabilities: capabilities,
     });
 
@@ -147,10 +158,163 @@ async fn run_heartbeat(ctx: Arc<AgentContext>) {
     }
 }
 
-async fn listen_for_commands(_ctx: Arc<AgentContext>) {
-    // For now, just wait. Command processing will use gRPC or polling.
-    info!("Listening for commands from server...");
-    tokio::signal::ctrl_c().await.ok();
+async fn listen_for_commands(ctx: Arc<AgentContext>) {
+    info!("Listening for commands from server (polling)...");
+    let client = reqwest::Client::new();
+    let mut interval = time::interval(Duration::from_secs(10));
+
+    loop {
+        interval.tick().await;
+
+        let tasks: Vec<serde_json::Value> = match client
+            .get(format!("{}/api/v1/agents/{}/tasks/pending", ctx.api_addr, ctx.agent_id))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => match resp.json().await {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!("Failed to decode pending tasks: {}", e);
+                    continue;
+                }
+            },
+            Ok(resp) => {
+                if resp.status().as_u16() != 404 {
+                    warn!("Poll tasks failed: {}", resp.status());
+                }
+                continue;
+            }
+            Err(e) => {
+                warn!("Poll tasks connection failed: {}", e);
+                continue;
+            }
+        };
+
+        for task in tasks {
+            let task_id = task["id"].as_str().unwrap_or("").to_string();
+            let task_type = task["task_type"].as_str().unwrap_or("").to_string();
+            let payload = task["payload"].clone();
+            info!("Received task {task_id} (type: {task_type})");
+
+            match task_type.as_str() {
+                "file_backup" => {
+                    let started = chrono::Utc::now().timestamp();
+                    let result = run_file_backup(&payload, &ctx.work_dir).await;
+                    match result {
+                        Ok(stats) => {
+                            info!("Task {task_id} completed: {:?}", stats);
+                            let r = serde_json::json!({
+                                "started_at": started,
+                                "completed_at": chrono::Utc::now().timestamp(),
+                                "bytes": stats.bytes,
+                                "files": stats.files,
+                                "blocks": stats.blocks,
+                            });
+                            report_task(ctx.clone(), client.clone(), task_id.clone(), "completed", r).await;
+                        }
+                        Err(e) => {
+                            warn!("Task {task_id} failed: {}", e);
+                            report_task(ctx.clone(), client.clone(), task_id.clone(), "failed",
+                                serde_json::json!({ "error": e.to_string() })).await;
+                        }
+                    }
+                }
+                other => {
+                    warn!("Unknown task type: {other}");
+                    report_task(ctx.clone(), client.clone(), task_id.clone(), "failed",
+                        serde_json::json!({ "error": format!("Unknown task type: {other}") })).await;
+                }
+            }
+        }
+    }
+}
+
+async fn report_task(
+    ctx: Arc<AgentContext>,
+    client: reqwest::Client,
+    task_id: String,
+    status: &str,
+    result: serde_json::Value,
+) {
+    let body = serde_json::json!({ "status": status, "result": result });
+    match client
+        .post(format!("{}/api/v1/agents/{}/tasks/{}/report", ctx.api_addr, ctx.agent_id, task_id))
+        .json(&body)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {}
+        Ok(resp) => warn!("Report failed: {}", resp.status()),
+        Err(e) => warn!("Report connection failed: {}", e),
+    }
+}
+
+#[derive(Debug)]
+struct AgentBackupStats {
+    bytes: u64,
+    files: u64,
+    blocks: u64,
+}
+
+async fn run_file_backup(payload: &serde_json::Value, work_dir_base: &str) -> anyhow::Result<AgentBackupStats> {
+    let source_path = payload["source_path"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("task payload missing source_path"))?;
+    let storage_cfg = payload["storage"].clone();
+
+    let backend_type = storage_cfg["type"].as_str().unwrap_or("local").to_string();
+    let path = storage_cfg["path"].as_str().map(|s| s.to_string());
+    let bucket = storage_cfg["bucket"].as_str().map(|s| s.to_string());
+    let region = storage_cfg["region"].as_str().map(|s| s.to_string());
+    let endpoint = storage_cfg["endpoint"].as_str().map(|s| s.to_string());
+    let access_key = storage_cfg["access_key"].as_str().map(|s| s.to_string());
+    let secret_key = storage_cfg["secret_key"].as_str().map(|s| s.to_string());
+    let container = storage_cfg["container"].as_str().map(|s| s.to_string());
+    let connection_string = storage_cfg["connection_string"].as_str().map(|s| s.to_string());
+    let account = storage_cfg["account"].as_str().map(|s| s.to_string());
+
+    let config = StorageConfig {
+        backend_type,
+        path,
+        bucket,
+        region,
+        endpoint,
+        access_key,
+        secret_key,
+        container,
+        connection_string,
+        account,
+    };
+
+    let storage = create_backend(config).await?;
+
+    let work_dir = std::path::PathBuf::from(work_dir_base).join(uuid::Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&work_dir)?;
+
+    let pipeline_config = PipelineConfig {
+        compression: bck_core::types::CompressionAlgorithm::Zstd { level: 3 },
+        encryption: bck_core::types::EncryptionAlgorithm::None,
+        encryption_key: None,
+        chunk_size: ChunkSizeConfig::default(),
+        throttle: None,
+    };
+
+    let mut pipeline = BackupPipeline::new(pipeline_config);
+    let index_path = work_dir.join("index");
+    std::fs::create_dir_all(&index_path)?;
+    let index_path_str = index_path.to_string_lossy().to_string();
+    pipeline = pipeline.with_dedup(&index_path_str)
+        .map_err(|e| anyhow::anyhow!("agent dedup index: {}", e))?;
+
+    let result = pipeline.run(source_path, storage.as_ref()).await?;
+
+    Ok(AgentBackupStats {
+        bytes: result.stats.total_bytes,
+        files: result.stats.files_processed,
+        blocks: result.blocks.len() as u64,
+    })
 }
 
 fn get_cpu_usage() -> f64 {

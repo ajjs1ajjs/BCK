@@ -157,6 +157,10 @@ export interface CreateRepoPayload {
   bucket?: string
   region?: string
   endpoint?: string
+  access_key?: string
+  secret_key?: string
+  container?: string
+  account?: string
 }
 
 export interface FileRestorePayload {

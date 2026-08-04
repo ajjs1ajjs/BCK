@@ -126,6 +126,18 @@ CREATE TABLE IF NOT EXISTS agents (
     created_at BIGINT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL REFERENCES agents (id) ON DELETE CASCADE,
+    task_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    payload TEXT NOT NULL DEFAULT '{}',
+    result TEXT,
+    created_at BIGINT NOT NULL,
+    started_at BIGINT,
+    completed_at BIGINT
+);
+
 CREATE TABLE IF NOT EXISTS proxies (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

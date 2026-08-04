@@ -684,6 +684,7 @@ impl JobManager {
             secret_key: cfg["secret_key"].as_str().map(|s| s.to_string()),
             container: cfg["container"].as_str().map(|s| s.to_string()),
             connection_string: cfg["connection_string"].as_str().map(|s| s.to_string()),
+            account: cfg["account"].as_str().map(|s| s.to_string()),
         };
         create_backend(storage_config).await
     }

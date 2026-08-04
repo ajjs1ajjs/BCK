@@ -1,0 +1,111 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            ext: ""
+          - os: windows-latest
+            target: windows
+            ext: ".exe"
+          - os: macos-latest
+            target: darwin
+            ext: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Setup Node (for web UI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build binaries
+        shell: bash
+        run: cargo build --release --workspace --bins
+
+      - name: Build web UI (linux only)
+        shell: bash
+        run: |
+          (cd web-ui && npm ci --silent && npm run build)
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Build web UI (windows)
+        shell: pwsh
+        run: |
+          Push-Location web-ui
+          try { npm ci --silent; npm run build | Out-Null } finally { Pop-Location }
+        if: matrix.os == 'windows-latest'
+
+      - name: Assemble archive (linux)
+        shell: bash
+        run: |
+          mkdir -p staging/bin staging/web-ui
+          cp target/release/bckd target/release/bck-agent target/release/bck-cli target/release/bck-proxy staging/bin/
+          cp -r web-ui/dist staging/web-ui/
+          tar -czf bck-linux-${{ matrix.ext == '' && 'x86_64' || matrix.target }}.tar.gz -C staging .
+          echo "ARCH=bck-linux-x86_64.tar.gz" >> $GITHUB_ENV
+        if: matrix.os == 'ubuntu-latest'
+
+      - name: Assemble archive (windows)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force staging/bin | Out-Null
+          Copy-Item target/release/bckd.exe, target/release/bck-agent.exe, target/release/bck-cli.exe, target/release/bck-proxy.exe staging/bin/
+          Copy-Item web-ui/dist staging/web-ui -Recurse
+          Compress-Archive -Path staging/bin, staging/web-ui -DestinationPath bck-windows-x86_64.zip
+        if: matrix.os == 'windows-latest'
+
+      - name: Assemble archive (darwin)
+        shell: bash
+        run: |
+          mkdir -p staging/bin
+          cp target/release/bckd target/release/bck-agent target/release/bck-cli target/release/bck-proxy staging/bin/
+          tar -czf bck-darwin-x86_64.tar.gz -C staging .
+        if: matrix.os == 'macos-latest'
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bck-${{ matrix.target }}
+          path: |
+            bck-*.tar.gz
+            bck-*.zip
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/bck-*.tar.gz, artifacts/**/bck-*.zip
+          generate_release_notes: true

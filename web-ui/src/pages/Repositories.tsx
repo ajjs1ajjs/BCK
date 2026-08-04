@@ -14,14 +14,17 @@ import StatusChip from '../components/StatusChip'
 import { formatBytes, prettyStatus } from '../utils'
 import { reposApi, type Repository } from '../api/client'
 
-const TYPES = ['local', 's3', 'azure', 'nfs']
+const TYPES = ['local', 's3', 'azure', 'gcs', 'nfs']
 
 export default function Repositories() {
   const [repos, setRepos] = useState<Repository[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: '', repo_type: 'local', path: '', bucket: '', region: '', endpoint: '' })
+  const [form, setForm] = useState({
+    name: '', repo_type: 'local', path: '', bucket: '', region: '', endpoint: '',
+    access_key: '', secret_key: '', container: '', account: '',
+  })
   const [confirmDelete, setConfirmDelete] = useState<Repository | null>(null)
 
   const load = useCallback(async () => {
@@ -51,9 +54,16 @@ export default function Repositories() {
         bucket: form.bucket || undefined,
         region: form.region || undefined,
         endpoint: form.endpoint || undefined,
+        access_key: form.access_key || undefined,
+        secret_key: form.secret_key || undefined,
+        container: form.container || undefined,
+        account: form.account || undefined,
       })
       setOpen(false)
-      setForm({ name: '', repo_type: 'local', path: '', bucket: '', region: '', endpoint: '' })
+      setForm({
+        name: '', repo_type: 'local', path: '', bucket: '', region: '', endpoint: '',
+        access_key: '', secret_key: '', container: '', account: '',
+      })
       load()
     } catch {
       setError('Failed to create repository')
@@ -163,10 +173,24 @@ export default function Repositories() {
                 <TextField label="Bucket" value={form.bucket} onChange={(e) => setForm({ ...form, bucket: e.target.value })} fullWidth />
                 <TextField label="Region" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} fullWidth />
                 <TextField label="Endpoint" value={form.endpoint} onChange={(e) => setForm({ ...form, endpoint: e.target.value })} fullWidth />
+                <TextField label="Access Key" value={form.access_key} onChange={(e) => setForm({ ...form, access_key: e.target.value })} fullWidth />
+                <TextField label="Secret Key" value={form.secret_key} onChange={(e) => setForm({ ...form, secret_key: e.target.value })} fullWidth type="password" />
               </>
             )}
             {form.repo_type === 'azure' && (
-              <TextField label="Container / connection string" value={form.bucket} onChange={(e) => setForm({ ...form, bucket: e.target.value })} fullWidth />
+              <>
+                <TextField label="Account name" value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })} fullWidth />
+                <TextField label="Access key" value={form.secret_key} onChange={(e) => setForm({ ...form, secret_key: e.target.value })} fullWidth type="password" />
+                <TextField label="Container" value={form.container} onChange={(e) => setForm({ ...form, container: e.target.value })} fullWidth />
+              </>
+            )}
+            {form.repo_type === 'gcs' && (
+              <>
+                <TextField label="Bucket" value={form.bucket} onChange={(e) => setForm({ ...form, bucket: e.target.value })} fullWidth />
+                <TextField label="Region" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} fullWidth placeholder="auto" />
+                <TextField label="HMAC Access Key" value={form.access_key} onChange={(e) => setForm({ ...form, access_key: e.target.value })} fullWidth />
+                <TextField label="HMAC Secret" value={form.secret_key} onChange={(e) => setForm({ ...form, secret_key: e.target.value })} fullWidth type="password" />
+              </>
             )}
             {form.repo_type === 'nfs' && (
               <>

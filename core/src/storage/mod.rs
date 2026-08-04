@@ -1,6 +1,7 @@
 pub mod local;
 pub mod s3;
 pub mod azure;
+pub mod gcs;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -36,6 +37,7 @@ pub struct StorageConfig {
     pub secret_key: Option<String>,
     pub container: Option<String>,
     pub connection_string: Option<String>,
+    pub account: Option<String>,
 }
 
 pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBackend>> {
@@ -49,6 +51,34 @@ pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBack
                 &config.bucket.unwrap_or_default(),
                 &config.region.unwrap_or_default(),
                 config.endpoint.as_deref(),
+                config.access_key.as_deref(),
+                config.secret_key.as_deref(),
+            ).await?;
+            Ok(Box::new(backend))
+        }
+        "azure" => {
+            let account = config.account.clone()
+                .or_else(|| config.bucket.clone())
+                .ok_or_else(|| anyhow::anyhow!("Azure storage requires an account name"))?;
+            let key = config.secret_key.as_deref()
+                .or_else(|| config.access_key.as_deref())
+                .ok_or_else(|| anyhow::anyhow!("Azure storage requires an access key"))?;
+            let container = config.container.clone()
+                .unwrap_or_else(|| "bck".into());
+            let backend = azure::AzureBlobStorage::new(
+                &account,
+                key,
+                &container,
+                config.connection_string.as_deref(),
+            ).await?;
+            Ok(Box::new(backend))
+        }
+        "gcs" | "google" | "google-cloud" => {
+            let bucket = config.bucket.ok_or_else(|| anyhow::anyhow!("GCS storage requires a bucket"))?;
+            let region = config.region.clone().unwrap_or_else(|| "auto".into());
+            let backend = gcs::GcsStorage::new(
+                &bucket,
+                &region,
                 config.access_key.as_deref(),
                 config.secret_key.as_deref(),
             ).await?;

@@ -348,6 +348,7 @@ fn build_storage(repo: &RepositoryModel) -> impl std::future::Future<Output = an
             secret_key: cfg["secret_key"].as_str().map(|s| s.to_string()),
             container: cfg["container"].as_str().map(|s| s.to_string()),
             connection_string: cfg["connection_string"].as_str().map(|s| s.to_string()),
+            account: cfg["account"].as_str().map(|s| s.to_string()),
         };
         crate::storage::create_backend(storage_config).await
     }

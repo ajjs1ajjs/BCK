@@ -47,6 +47,11 @@ pub struct CreateRepoRequest {
     pub bucket: Option<String>,
     pub region: Option<String>,
     pub endpoint: Option<String>,
+    pub access_key: Option<String>,
+    pub secret_key: Option<String>,
+    pub container: Option<String>,
+    pub connection_string: Option<String>,
+    pub account: Option<String>,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -83,6 +88,11 @@ async fn create_repository(
         "bucket": req.bucket,
         "region": req.region,
         "endpoint": req.endpoint,
+        "access_key": req.access_key,
+        "secret_key": req.secret_key,
+        "container": req.container,
+        "connection_string": req.connection_string,
+        "account": req.account,
     });
 
     // Validate that the storage backend can be created (creates dirs for local).
@@ -92,10 +102,11 @@ async fn create_repository(
         bucket: req.bucket.clone(),
         region: req.region.clone(),
         endpoint: req.endpoint.clone(),
-        access_key: None,
-        secret_key: None,
-        container: None,
-        connection_string: None,
+        access_key: req.access_key.clone(),
+        secret_key: req.secret_key.clone(),
+        container: req.container.clone(),
+        connection_string: req.connection_string.clone(),
+        account: req.account.clone(),
     };
     if let Err(e) = crate::storage::create_backend(storage_config).await {
         tracing::error!("repository storage init: {}", e);
