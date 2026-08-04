@@ -1,40 +1,207 @@
-use axum::{extract::{Path, State}, Json, http::StatusCode};
-use serde::Serialize;
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+    http::StatusCode,
+};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::db::models::snapshot::SnapshotModel;
+use crate::db::DbPool;
 use crate::server::AppState;
 
 #[derive(Serialize)]
 pub struct SnapshotResponse {
     pub id: String,
     pub job_id: String,
+    pub repository_id: String,
     pub snapshot_type: String,
+    pub parent_id: Option<String>,
     pub size_bytes: i64,
+    pub unique_bytes: i64,
+    pub compressed_bytes: i64,
+    pub checksum: String,
+    pub consistency: String,
+    pub app_consistent: bool,
     pub created_at: i64,
+}
+
+impl From<SnapshotModel> for SnapshotResponse {
+    fn from(s: SnapshotModel) -> Self {
+        Self {
+            id: s.id,
+            job_id: s.job_id,
+            repository_id: s.repository_id,
+            snapshot_type: s.snapshot_type,
+            parent_id: s.parent_id,
+            size_bytes: s.size_bytes,
+            unique_bytes: s.unique_bytes,
+            compressed_bytes: s.compressed_bytes,
+            checksum: s.checksum,
+            consistency: s.consistency,
+            app_consistent: s.app_consistent,
+            created_at: s.created_at,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SnapshotQueryParams {
+    pub job_id: Option<String>,
+    pub limit: Option<i64>,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/", axum::routing::get(list_snapshots))
-        .route("/{id}", axum::routing::get(get_snapshot).delete(delete_snapshot))
+        .route("/:id", axum::routing::get(get_snapshot).delete(delete_snapshot))
 }
 
 async fn list_snapshots(
-    State(_state): State<Arc<AppState>>,
-) -> Json<Vec<SnapshotResponse>> {
-    Json(Vec::new())
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SnapshotQueryParams>,
+) -> Result<Json<Vec<SnapshotResponse>>, StatusCode> {
+    let limit = params.limit.unwrap_or(100).min(1000);
+    let snapshots = fetch_snapshots(&state.db, params.job_id.as_deref(), limit).await
+        .map_err(|e| {
+            tracing::error!("list snapshots: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(snapshots.into_iter().map(SnapshotResponse::from).collect()))
 }
 
 async fn get_snapshot(
-    State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-) -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<SnapshotResponse>, StatusCode> {
+    let snapshot = fetch_snapshot(&state.db, &id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(SnapshotResponse::from(snapshot)))
 }
 
 async fn delete_snapshot(
-    State(_state): State<Arc<AppState>>,
-    Path(_id): Path<String>,
-) -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    let affected = match &state.db {
+        DbPool::Sqlite(pool) => {
+            sqlx::query("DELETE FROM snapshots WHERE id = ?1")
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .rows_affected()
+        }
+        DbPool::Postgres(pool) => {
+            sqlx::query("DELETE FROM snapshots WHERE id = $1")
+                .bind(&id)
+                .execute(pool)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .rows_affected()
+        }
+    };
+    if affected == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    crate::db::record_event(
+        &state.db,
+        "snapshot_deleted",
+        "snapshots",
+        &format!("Snapshot {} deleted", id),
+        None,
+        None,
+    ).await.ok();
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn fetch_snapshots(db: &DbPool, job_id: Option<&str>, limit: i64) -> anyhow::Result<Vec<SnapshotModel>> {
+    match db {
+        DbPool::Sqlite(pool) => {
+            let rows = match job_id {
+                Some(jid) => {
+                    sqlx::query_as::<_, SnapshotModel>(
+                        "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                                size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                                app_consistent, created_at
+                         FROM snapshots WHERE job_id = ?1 ORDER BY created_at DESC LIMIT ?2"
+                    )
+                    .bind(jid)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+                }
+                None => {
+                    sqlx::query_as::<_, SnapshotModel>(
+                        "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                                size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                                app_consistent, created_at
+                         FROM snapshots ORDER BY created_at DESC LIMIT ?1"
+                    )
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+                }
+            };
+            Ok(rows)
+        }
+        DbPool::Postgres(pool) => {
+            let rows = match job_id {
+                Some(jid) => {
+                    sqlx::query_as::<_, SnapshotModel>(
+                        "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                                size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                                app_consistent, created_at
+                         FROM snapshots WHERE job_id = $1 ORDER BY created_at DESC LIMIT $2"
+                    )
+                    .bind(jid)
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+                }
+                None => {
+                    sqlx::query_as::<_, SnapshotModel>(
+                        "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                                size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                                app_consistent, created_at
+                         FROM snapshots ORDER BY created_at DESC LIMIT $1"
+                    )
+                    .bind(limit)
+                    .fetch_all(pool)
+                    .await?
+                }
+            };
+            Ok(rows)
+        }
+    }
+}
+
+pub async fn fetch_snapshot(db: &DbPool, id: &str) -> anyhow::Result<Option<SnapshotModel>> {
+    match db {
+        DbPool::Sqlite(pool) => {
+            let row = sqlx::query_as::<_, SnapshotModel>(
+                "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                        size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                        app_consistent, created_at
+                 FROM snapshots WHERE id = ?1"
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+            Ok(row)
+        }
+        DbPool::Postgres(pool) => {
+            let row = sqlx::query_as::<_, SnapshotModel>(
+                "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                        size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                        app_consistent, created_at
+                 FROM snapshots WHERE id = $1"
+            )
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+            Ok(row)
+        }
+    }
 }

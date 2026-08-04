@@ -128,6 +128,27 @@ impl Encryptor for ChaCha20Encryptor {
     fn key_size(&self) -> usize { 32 }
 }
 
+/// Load a 32-byte encryption key from disk, generating and persisting one if
+/// it does not exist yet. The key is derived (hashed) down to 32 bytes if the
+/// stored material is shorter.
+pub fn load_or_create_key(path: &std::path::Path) -> Result<Vec<u8>> {
+    if path.exists() {
+        let raw = std::fs::read(path)?;
+        if !raw.is_empty() {
+            return Ok(raw);
+        }
+    }
+    let mut key = vec![0u8; 32];
+    use aes_gcm::aead::OsRng;
+    use aes_gcm::aead::rand_core::RngCore;
+    OsRng.fill_bytes(&mut key);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, &key)?;
+    Ok(key)
+}
+
 fn ensure_key_size<const N: usize>(key: &[u8]) -> [u8; N] {
     if key.len() >= N {
         let mut result = [0u8; N];

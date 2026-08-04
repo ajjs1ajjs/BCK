@@ -13,8 +13,10 @@ pub struct BackupJobModel {
     pub schedule: Option<String>,
     pub retention_config: String,
     pub compression: String,
+    #[sqlx(try_from = "i64")]
     pub encryption: bool,
     pub bandwidth_limit: Option<i64>,
+    #[sqlx(try_from = "i64")]
     pub enabled: bool,
     pub last_run_at: Option<i64>,
     pub next_run_at: Option<i64>,

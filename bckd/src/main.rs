@@ -78,6 +78,7 @@ async fn main() -> anyhow::Result<()> {
     if config.database.migrate {
         info!("Running database migrations...");
         db.migrate().await?;
+        seed_default_admin(&db).await;
     }
 
     // Initialize components
@@ -85,14 +86,14 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "bck-dev-secret-change-in-production".to_string());
     let jwt = JwtManager::new(jwt_secret.as_bytes());
 
-    let job_manager = Arc::new(Mutex::new(JobManager::new()));
+    let job_manager = Arc::new(Mutex::new(JobManager::new(db.clone(), config.clone())));
 
     let scheduler = Arc::new(Mutex::new(Scheduler::new(job_manager.clone())));
 
     let app_state = Arc::new(AppState {
         config: config.clone(),
         db,
-        job_manager,
+        job_manager: job_manager.clone(),
         scheduler: scheduler.clone(),
         jwt,
         restore_tracker: bck_core::restore::tracker::RestoreTracker::new(),
@@ -100,7 +101,15 @@ async fn main() -> anyhow::Result<()> {
 
     // Start scheduler
     {
+        let jm = job_manager.clone();
+        let jm_guard = jm.lock().await;
+        let jobs = jm_guard.load_job_models().await.unwrap_or_default();
+        drop(jm_guard);
+
         let sched = scheduler.lock().await;
+        for job in &jobs {
+            sched.add_job(job).await;
+        }
         sched.start().await;
     }
 
@@ -153,4 +162,69 @@ async fn serve_grpc(listener: tokio::net::TcpListener) -> anyhow::Result<()> {
         .await?;
 
     Ok(())
+}
+
+/// Create the default admin/admin user when no users exist yet.
+async fn seed_default_admin(db: &bck_core::db::DbPool) {
+    use bck_core::db::DbPool;
+
+    let count: i64 = match db {
+        DbPool::Sqlite(pool) => {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0)
+        }
+        DbPool::Postgres(pool) => {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0)
+        }
+    };
+
+    if count > 0 {
+        return;
+    }
+
+    let t = chrono::Utc::now().timestamp();
+    let id = "00000000-0000-0000-0000-000000000001";
+    let username = "admin";
+    let hash = bck_core::auth::hash_password("admin");
+
+    let seed_result = match db {
+        DbPool::Sqlite(pool) => {
+            sqlx::query(
+                "INSERT INTO users (id, username, password_hash, email, role, enabled, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'admin@bck.local', 'admin', 1, ?4, ?4)",
+            )
+            .bind(id)
+            .bind(username)
+            .bind(&hash)
+            .bind(t)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())
+            .map(|_| ())
+        }
+        DbPool::Postgres(pool) => {
+            sqlx::query(
+                "INSERT INTO users (id, username, password_hash, email, role, enabled, created_at, updated_at)
+                 VALUES ($1, $2, $3, 'admin@bck.local', 'admin', 1, $4, $4)",
+            )
+            .bind(id)
+            .bind(username)
+            .bind(&hash)
+            .bind(t)
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())
+            .map(|_| ())
+        }
+    };
+
+    match seed_result {
+        Ok(()) => info!("Seeded default admin user (admin/admin). Please change the password."),
+        Err(e) => warn!("Failed to seed default admin: {}", e),
+    }
 }

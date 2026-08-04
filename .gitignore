@@ -4,6 +4,9 @@ node_modules
 web-ui/dist
 .env
 data/
+backup-store/
+restored/
+restore*/
 *.swp
 *.swo
 .idea/

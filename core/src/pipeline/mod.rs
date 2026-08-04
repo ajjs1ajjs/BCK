@@ -1,19 +1,36 @@
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::mpsc;
 
-use crate::chunker::{Chunk, Chunker};
+use crate::chunker::Chunker;
 use crate::compress::{create_compressor, Compressor};
 use crate::dedup::DedupEngine;
-use crate::encrypt::Encryptor;
+use crate::encrypt::{create_encryptor, Encryptor};
 use crate::scanner::{create_scanner, FileScanner};
 use crate::storage::StorageBackend;
 use crate::stream::ProgressTracker;
 use crate::throttle::BandwidthLimiter;
 use crate::types::{
-    BackupStats, CompressionAlgorithm, EncryptionAlgorithm, FileBlock, FileMetadata,
-    PipelineConfig,
+    BackupStats, CompressionAlgorithm, EncryptionAlgorithm, FileBlock, PipelineConfig,
 };
+
+// Block encoding magic markers.
+// Layout of a stored block: [magic] ([nonce 12 bytes if encrypted]) [payload]
+pub const MAGIC_RAW: u8 = 0x00;
+pub const MAGIC_ZSTD: u8 = 0x01;
+pub const MAGIC_LZ4: u8 = 0x02;
+pub const MAGIC_RAW_AES: u8 = 0x31;
+pub const MAGIC_ZSTD_AES: u8 = 0x11;
+pub const MAGIC_LZ4_AES: u8 = 0x21;
+pub const MAGIC_RAW_CHACHA: u8 = 0x32;
+pub const MAGIC_ZSTD_CHACHA: u8 = 0x12;
+pub const MAGIC_LZ4_CHACHA: u8 = 0x22;
+
+pub const NONCE_LEN: usize = 12;
+
+#[derive(Debug)]
+pub struct BackupResult {
+    pub stats: BackupStats,
+    pub blocks: Vec<FileBlock>,
+}
 
 pub struct BackupPipeline {
     config: PipelineConfig,
@@ -21,6 +38,7 @@ pub struct BackupPipeline {
     chunker: Chunker,
     dedup: Option<DedupEngine>,
     compressor: Box<dyn Compressor>,
+    encryptor: Option<Box<dyn Encryptor>>,
     progress: Option<ProgressTracker>,
     throttler: Option<BandwidthLimiter>,
 }
@@ -35,12 +53,20 @@ impl BackupPipeline {
             CompressionAlgorithm::Lz4 => create_compressor(&CompressionAlgorithm::Lz4),
         };
 
+        let encryptor = if config.encryption != EncryptionAlgorithm::None
+            && config.encryption_key.is_some() {
+            Some(create_encryptor(&config.encryption))
+        } else {
+            None
+        };
+
         Self {
             config,
             scanner: create_scanner("local"),
             chunker: Chunker::new(chunk_size),
             dedup: None,
             compressor,
+            encryptor,
             progress: None,
             throttler,
         }
@@ -51,11 +77,31 @@ impl BackupPipeline {
         Ok(self)
     }
 
+    pub fn block_magic(&self) -> u8 {
+        block_magic(&self.config.compression, &self.config.encryption)
+    }
+
+    fn encode_block(&self, compressed: &[u8]) -> Result<Vec<u8>> {
+        let magic = self.block_magic();
+        let mut out = vec![magic];
+        match (&self.encryptor, &self.config.encryption_key) {
+            (Some(enc), Some(key)) => {
+                let encrypted = enc.encrypt(compressed, key)?;
+                out.extend_from_slice(&encrypted.nonce);
+                out.extend_from_slice(&encrypted.ciphertext);
+            }
+            _ => {
+                out.extend_from_slice(compressed);
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn run(
         &mut self,
         source_path: &str,
         storage: &dyn StorageBackend,
-    ) -> Result<BackupStats> {
+    ) -> Result<BackupResult> {
         let scan_result = self.scanner.scan(source_path).await?;
         let total_bytes = scan_result.total_size;
 
@@ -75,6 +121,8 @@ impl BackupPipeline {
             elapsed_seconds: 0,
         };
 
+        let mut blocks: Vec<FileBlock> = Vec::new();
+
         for file in &scan_result.files {
             let file_data = tokio::fs::read(&file.path).await?;
             let chunks = self.chunker.chunk_data(&file_data)?;
@@ -90,6 +138,16 @@ impl BackupPipeline {
                     },
                 };
 
+                // Record the block reference regardless of dedup so the
+                // manifest can be used for restore.
+                blocks.push(FileBlock {
+                    relative_path: file.relative_path.clone(),
+                    offset: chunk.offset,
+                    size: chunk.size,
+                    block_id: dedup_result.id.clone(),
+                    metadata: file.metadata.clone(),
+                });
+
                 if dedup_result.is_duplicate {
                     stats.blocks_deduped += 1;
                     continue;
@@ -99,11 +157,8 @@ impl BackupPipeline {
                 let compressed = self.compressor.compress(&dedup_result.data)?;
                 stats.compressed_bytes += compressed.len() as u64;
 
-                // Encrypt (if configured)
-                let final_data = match &self.config.encryption {
-                    EncryptionAlgorithm::None => compressed,
-                    _ => compressed, // TODO: integrate encryptor
-                };
+                // Encrypt + wrap with magic marker
+                let final_data = self.encode_block(&compressed)?;
 
                 // Write to storage
                 storage.write_block(&dedup_result.id.sha256, &final_data).await?;
@@ -130,7 +185,6 @@ impl BackupPipeline {
             }
         }
 
-        stats.unique_bytes = stats.blocks_unique as u64 * 8192; // estimate
         stats.dedup_ratio = if stats.blocks_unique > 0 {
             (stats.blocks_deduped as f64 + stats.blocks_unique as f64) / stats.blocks_unique as f64
         } else {
@@ -147,6 +201,67 @@ impl BackupPipeline {
             stats.speed_bps = progress.speed_bps();
         }
 
-        Ok(stats)
+        Ok(BackupResult { stats, blocks })
+    }
+}
+
+pub fn block_magic(compression: &CompressionAlgorithm, encryption: &EncryptionAlgorithm) -> u8 {
+    match (compression, encryption) {
+        (CompressionAlgorithm::None, EncryptionAlgorithm::None) => MAGIC_RAW,
+        (CompressionAlgorithm::Zstd { .. }, EncryptionAlgorithm::None) => MAGIC_ZSTD,
+        (CompressionAlgorithm::Lz4, EncryptionAlgorithm::None) => MAGIC_LZ4,
+        (CompressionAlgorithm::None, EncryptionAlgorithm::Aes256Gcm) => MAGIC_RAW_AES,
+        (CompressionAlgorithm::Zstd { .. }, EncryptionAlgorithm::Aes256Gcm) => MAGIC_ZSTD_AES,
+        (CompressionAlgorithm::Lz4, EncryptionAlgorithm::Aes256Gcm) => MAGIC_LZ4_AES,
+        (CompressionAlgorithm::None, EncryptionAlgorithm::ChaCha20Poly1305) => MAGIC_RAW_CHACHA,
+        (CompressionAlgorithm::Zstd { .. }, EncryptionAlgorithm::ChaCha20Poly1305) => MAGIC_ZSTD_CHACHA,
+        (CompressionAlgorithm::Lz4, EncryptionAlgorithm::ChaCha20Poly1305) => MAGIC_LZ4_CHACHA,
+    }
+}
+
+/// Reverses `encode_block`: decrypts (if needed) and decompresses a stored block.
+pub fn decode_block(data: &[u8], key: Option<&[u8]>) -> Result<Vec<u8>> {
+    if data.is_empty() {
+        anyhow::bail!("empty block data");
+    }
+    let magic = data[0];
+    let encrypted = matches!(
+        magic,
+        MAGIC_RAW_AES | MAGIC_ZSTD_AES | MAGIC_LZ4_AES | MAGIC_RAW_CHACHA | MAGIC_ZSTD_CHACHA | MAGIC_LZ4_CHACHA
+    );
+
+    let payload: Vec<u8> = if encrypted {
+        if data.len() < 1 + NONCE_LEN {
+            anyhow::bail!("encrypted block too short");
+        }
+        let key = key.ok_or_else(|| anyhow::anyhow!("encrypted block requires a key"))?;
+        let nonce = &data[1..1 + NONCE_LEN];
+        let ciphertext = &data[1 + NONCE_LEN..];
+
+        let algo = if matches!(magic, MAGIC_RAW_AES | MAGIC_ZSTD_AES | MAGIC_LZ4_AES) {
+            EncryptionAlgorithm::Aes256Gcm
+        } else {
+            EncryptionAlgorithm::ChaCha20Poly1305
+        };
+        let enc = create_encryptor(&algo);
+        let encrypted_data = crate::encrypt::EncryptedData {
+            ciphertext: ciphertext.to_vec(),
+            nonce: nonce.to_vec(),
+            algorithm: String::new(),
+            key_check: [0u8; 8],
+        };
+        enc.decrypt(&encrypted_data, key)?
+    } else {
+        data[1..].to_vec()
+    };
+
+    match magic {
+        MAGIC_ZSTD | MAGIC_ZSTD_AES | MAGIC_ZSTD_CHACHA => {
+            Ok(crate::compress::ZstdCompressor::new(3).decompress(&payload)?)
+        }
+        MAGIC_LZ4 | MAGIC_LZ4_AES | MAGIC_LZ4_CHACHA => {
+            Ok(crate::compress::Lz4Compressor.decompress(&payload)?)
+        }
+        _ => Ok(payload),
     }
 }

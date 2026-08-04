@@ -4,7 +4,7 @@ use chrono::Utc;
 
 use super::User;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
     pub username: String,

@@ -1,11 +1,11 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use tracing::{info, warn};
 
 use crate::backup::VmBackupResult;
 use crate::integrations::HypervisorConnector;
 use crate::pipeline::BackupPipeline;
 use crate::storage::StorageBackend;
-use crate::types::{BackupStats, CompressionAlgorithm, EncryptionAlgorithm, PipelineConfig};
+use crate::types::BackupStats;
 
 pub struct VmBackupJob<'a> {
     connector: &'a dyn HypervisorConnector,
@@ -19,8 +19,8 @@ impl<'a> VmBackupJob<'a> {
 
     pub async fn run(
         &self,
-        pipeline: &BackupPipeline,
-        storage: &dyn StorageBackend,
+        _pipeline: &BackupPipeline,
+        _storage: &dyn StorageBackend,
     ) -> Result<VmBackupResult> {
         // 1. Get VM info
         let vm = self.connector.get_vm(self.vm_ref).await?;

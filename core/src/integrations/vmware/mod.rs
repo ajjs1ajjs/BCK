@@ -10,6 +10,7 @@ use crate::integrations::{
     VmDiskInfo, VmInfo, VmNetworkInfo, VmSnapshot,
 };
 
+#[allow(dead_code)]
 pub struct VSphereConnector {
     host: String,
     port: u16,
@@ -300,8 +301,8 @@ impl HypervisorConnector for VSphereConnector {
         #[derive(Deserialize)]
         struct DiskBacking {
             #[serde(rename = "type")]
-            backing_type: Option<String>,
-            vmdk_file: Option<String>,
+            _backing_type: Option<String>,
+            _vmdk_file: Option<String>,
             change_id: Option<String>,
         }
 
@@ -341,6 +342,7 @@ impl VSphereConnector {
         #[derive(Deserialize)]
         struct DiskBacking {
             #[serde(rename = "type")]
+            #[allow(dead_code)]
             backing_type: Option<String>,
             vmdk_file: Option<String>,
             datastore: Option<String>,

@@ -1,12 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 use tokio::time;
 use clap::Parser;
-use tracing::{info, warn, error};
-use tonic::transport::Endpoint;
+use tracing::{info, warn};
 
-use bck_core::agent::{AgentCapability, AgentInfo, AgentStatus};
+use bck_core::agent::{AgentCapability};
 use bck_core::agent::discovery::discover_applications;
 
 #[derive(Parser)]
@@ -28,8 +26,9 @@ struct Cli {
 struct AgentContext {
     agent_id: String,
     hostname: String,
-    server_addr: String,
-    capabilities: Vec<AgentCapability>,
+    api_addr: String,
+    _server_addr: String,
+    _capabilities: Vec<AgentCapability>,
 }
 
 #[tokio::main]
@@ -45,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
 
     let agent_id = uuid::Uuid::new_v4().to_string();
     let server_addr = format!("http://{}:{}", cli.server, cli.port);
+    let api_addr = format!("http://{}:9440", cli.server);
 
     info!("Starting BCK Agent: {} (id: {})", hostname, agent_id);
     info!("Server: {}", server_addr);
@@ -74,8 +74,9 @@ async fn main() -> anyhow::Result<()> {
     let ctx = Arc::new(AgentContext {
         agent_id: agent_id.clone(),
         hostname: hostname.clone(),
-        server_addr: server_addr.clone(),
-        capabilities,
+        _server_addr: server_addr.clone(),
+        api_addr: api_addr.clone(),
+        _capabilities: capabilities,
     });
 
     // Connect to server and start heartbeat
@@ -126,7 +127,7 @@ async fn run_heartbeat(ctx: Arc<AgentContext>) {
         });
 
         match client
-            .post(format!("{}/api/v1/agents/heartbeat", "http://127.0.0.1:9440"))
+            .post(format!("{}/api/v1/agents/heartbeat", ctx.api_addr))
             .json(&heartbeat)
             .timeout(Duration::from_secs(10))
             .send()
@@ -146,7 +147,7 @@ async fn run_heartbeat(ctx: Arc<AgentContext>) {
     }
 }
 
-async fn listen_for_commands(ctx: Arc<AgentContext>) {
+async fn listen_for_commands(_ctx: Arc<AgentContext>) {
     // For now, just wait. Command processing will use gRPC or polling.
     info!("Listening for commands from server...");
     tokio::signal::ctrl_c().await.ok();

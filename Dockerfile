@@ -15,6 +15,7 @@ COPY --from=builder /app/target/release/bckd /usr/local/bin/bckd
 COPY --from=builder /app/target/release/bck /usr/local/bin/bck
 COPY --from=builder /app/target/release/bck-agent /usr/local/bin/bck-agent
 COPY --from=builder /app/target/release/bck-proxy /usr/local/bin/bck-proxy
+COPY config.toml /etc/bck/config.toml
 EXPOSE 9440 9441
 CMD ["bckd"]
 

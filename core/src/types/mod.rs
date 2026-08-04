@@ -82,7 +82,7 @@ pub enum CompressionAlgorithm {
     Lz4,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EncryptionAlgorithm {
     None,
     Aes256Gcm,
@@ -150,4 +150,41 @@ pub enum JobStatus {
     Completed,
     Failed(String),
     Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct EventModel {
+    pub id: i64,
+    pub event_type: String,
+    pub source: String,
+    pub message: String,
+    pub job_id: Option<String>,
+    pub session_id: Option<String>,
+    pub acknowledged: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EventInfo {
+    pub id: i64,
+    pub event_type: String,
+    pub source: String,
+    pub message: String,
+    pub job_id: Option<String>,
+    pub session_id: Option<String>,
+    pub created_at: i64,
+}
+
+impl From<EventModel> for EventInfo {
+    fn from(m: EventModel) -> Self {
+        Self {
+            id: m.id,
+            event_type: m.event_type,
+            source: m.source,
+            message: m.message,
+            job_id: m.job_id,
+            session_id: m.session_id,
+            created_at: m.created_at,
+        }
+    }
 }

@@ -155,7 +155,7 @@ impl AppBackupHandler for PostgresHandler {
     }
 
     async fn finalize(&self, _app: &DiscoveredApplication) -> Result<()> {
-        let script = "SELECT pg_stop_backup();";
+        let _script = "SELECT pg_stop_backup();";
         // Run psql to stop backup
         info!("PostgreSQL: finalizing backup");
         Ok(())
@@ -222,7 +222,7 @@ pub fn create_backup_handler(app_type: &AppType) -> Option<Box<dyn AppBackupHand
 }
 
 async fn run_psql(app: &DiscoveredApplication, sql: &str) -> Result<String> {
-    let service = app.service_name.as_deref().unwrap_or("postgresql");
+    let _service = app.service_name.as_deref().unwrap_or("postgresql");
 
     let output = tokio::process::Command::new("psql")
         .args(["-c", sql])

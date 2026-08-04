@@ -3,51 +3,26 @@ use axum::{
     Json,
     http::StatusCode,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
+use crate::job::JobView;
 use crate::server::AppState;
-use crate::types::{JobInfo, JobStatus, BackupStats};
-
-#[derive(Serialize)]
-pub struct JobResponse {
-    pub id: String,
-    pub name: String,
-    pub status: String,
-    pub progress: f64,
-    pub stats: Option<BackupStats>,
-    pub started_at: Option<i64>,
-    pub finished_at: Option<i64>,
-}
-
-impl From<JobInfo> for JobResponse {
-    fn from(job: JobInfo) -> Self {
-        Self {
-            id: job.id.to_string(),
-            name: job.name,
-            status: match job.status {
-                JobStatus::Pending => "pending".into(),
-                JobStatus::Running => "running".into(),
-                JobStatus::Completed => "completed".into(),
-                JobStatus::Failed(ref e) => format!("failed: {}", e),
-                JobStatus::Cancelled => "cancelled".into(),
-            },
-            progress: job.progress,
-            stats: job.stats,
-            started_at: job.started_at,
-            finished_at: job.finished_at,
-        }
-    }
-}
 
 #[derive(Deserialize)]
 pub struct CreateJobRequest {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_job_type")]
     pub job_type: String,
+    #[serde(default = "default_backup_type")]
     pub backup_type: String,
     pub source_path: String,
     pub repository_id: String,
+    #[serde(default)]
     pub schedule: Option<String>,
+    #[serde(default)]
     pub retention_days: Option<i32>,
 }
 
@@ -58,85 +33,150 @@ pub struct UpdateJobRequest {
     pub enabled: Option<bool>,
 }
 
+fn default_job_type() -> String {
+    "file".into()
+}
+fn default_backup_type() -> String {
+    "full".into()
+}
+
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/", axum::routing::get(list_jobs).post(create_job))
-        .route("/{id}", axum::routing::get(get_job).put(update_job).delete(delete_job))
-        .route("/{id}/run", axum::routing::post(run_job))
-        .route("/{id}/cancel", axum::routing::post(cancel_job))
+        .route("/:id", axum::routing::get(get_job).put(update_job).delete(delete_job))
+        .route("/:id/run", axum::routing::post(run_job))
+        .route("/:id/cancel", axum::routing::post(cancel_job))
 }
 
 async fn list_jobs(
     State(state): State<Arc<AppState>>,
-) -> Json<Vec<JobResponse>> {
+) -> Result<Json<Vec<JobView>>, StatusCode> {
     let jm = state.job_manager.lock().await;
-    let jobs = jm.list_jobs().await;
-    Json(jobs.into_iter().map(JobResponse::from).collect())
+    let jobs = jm.list_jobs().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(jobs))
 }
 
 async fn create_job(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateJobRequest>,
-) -> Result<Json<JobResponse>, StatusCode> {
+) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
-    let id = jm.register_job(&req.name).await;
+    let id = jm.register_job(
+        &req.name,
+        req.description.as_deref(),
+        &req.job_type,
+        &req.backup_type,
+        &req.source_path,
+        &req.repository_id,
+        req.schedule.as_deref(),
+        req.retention_days,
+    ).await.map_err(|e| {
+        tracing::error!("create job: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
+    drop(jm);
+
+    let jm = state.job_manager.lock().await;
     let job = jm.get_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(JobResponse::from(job)))
+    drop(jm);
+
+    if let Some(model) = state.job_manager.lock().await.load_job_models()
+        .await.ok().and_then(|jobs| jobs.into_iter().find(|j| j.id == id))
+    {
+        let sched = state.scheduler.lock().await;
+        sched.add_job(&model).await;
+    }
+
+    Ok(Json(job))
 }
 
 async fn get_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<JobResponse>, StatusCode> {
+) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
     let job = jm.get_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(JobResponse::from(job)))
+    Ok(Json(job))
 }
 
 async fn update_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(_req): Json<UpdateJobRequest>,
-) -> Result<Json<JobResponse>, StatusCode> {
+    Json(req): Json<UpdateJobRequest>,
+) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
+    let found = jm.update_job(&id, req.name.as_deref(), req.schedule.as_deref().map(Some), req.enabled).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !found {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let job = jm.get_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(JobResponse::from(job)))
+    drop(jm);
+
+    if let Some(model) = state.job_manager.lock().await.load_job_models()
+        .await.ok().and_then(|jobs| jobs.into_iter().find(|j| j.id == id))
+    {
+        let sched = state.scheduler.lock().await;
+        sched.update_job(&model).await;
+    }
+    Ok(Json(job))
 }
 
 async fn delete_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
     let jm = state.job_manager.lock().await;
-    match jm.cancel_job(&id).await {
-        Ok(_) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::NOT_FOUND,
+    let deleted = jm.delete_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !deleted {
+        return Err(StatusCode::NOT_FOUND);
     }
+    drop(jm);
+
+    let sched = state.scheduler.lock().await;
+    sched.remove_job(&id).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn run_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<JobResponse>, StatusCode> {
+) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
     jm.start_job(&id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+        .map_err(|e| {
+            tracing::error!("run job {}: {}", id, e);
+            if e.to_string().contains("already running") {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        })?;
     let job = jm.get_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(JobResponse::from(job)))
+    Ok(Json(job))
 }
 
 async fn cancel_job(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<JobResponse>, StatusCode> {
+) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
-    jm.cancel_job(&id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let found = jm.cancel_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !found {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let job = jm.get_job(&id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(JobResponse::from(job)))
+    Ok(Json(job))
 }

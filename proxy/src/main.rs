@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;

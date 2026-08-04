@@ -8,6 +8,7 @@ pub struct UserModel {
     pub password_hash: String,
     pub email: Option<String>,
     pub role: String,
+    #[sqlx(try_from = "i64")]
     pub enabled: bool,
     pub last_login: Option<i64>,
     pub created_at: i64,

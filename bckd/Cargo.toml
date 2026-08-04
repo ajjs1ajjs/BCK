@@ -17,3 +17,5 @@ serde_json = { workspace = true }
 toml = "0.8"
 axum = "0.7"
 tonic = { workspace = true }
+chrono = { workspace = true }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "sqlite"] }

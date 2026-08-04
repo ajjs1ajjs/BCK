@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,7 +7,6 @@ pub struct ProgressTracker {
     processed: Arc<AtomicU64>,
     total: u64,
     start_time: Instant,
-    last_report: Instant,
 }
 
 impl ProgressTracker {
@@ -17,7 +15,6 @@ impl ProgressTracker {
             processed: Arc::new(AtomicU64::new(0)),
             total,
             start_time: Instant::now(),
-            last_report: Instant::now(),
         }
     }
 

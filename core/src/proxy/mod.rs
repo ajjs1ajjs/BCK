@@ -124,11 +124,11 @@ impl BackupProxy for NfsProxy {
         Ok(mount_path)
     }
 
-    async fn unmount_datastore(&self, mount_path: &str) -> Result<()> {
+    async fn unmount_datastore(&self, _mount_path: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
             tokio::process::Command::new("umount")
-                .args([mount_path])
+                .args([_mount_path])
                 .output()
                 .await?;
         }

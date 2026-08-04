@@ -14,6 +14,7 @@ pub struct SnapshotModel {
     pub compressed_bytes: i64,
     pub checksum: String,
     pub consistency: String,
+    #[sqlx(try_from = "i64")]
     pub app_consistent: bool,
     pub created_at: i64,
 }

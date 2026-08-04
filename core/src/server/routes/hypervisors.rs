@@ -33,9 +33,9 @@ pub struct AddHypervisorRequest {
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/", axum::routing::get(list_hypervisors).post(add_hypervisor))
-        .route("/{id}", axum::routing::get(get_hypervisor).delete(delete_hypervisor))
-        .route("/{id}/test", axum::routing::post(test_hypervisor))
-        .route("/{id}/vms", axum::routing::get(list_vms))
+        .route("/:id", axum::routing::get(get_hypervisor).delete(delete_hypervisor))
+        .route("/:id/test", axum::routing::post(test_hypervisor))
+        .route("/:id/vms", axum::routing::get(list_vms))
 }
 
 async fn list_hypervisors(

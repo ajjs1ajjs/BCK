@@ -61,6 +61,7 @@ impl CloudBackupManager {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) trait CloudProviderConnector: Send + Sync {
     fn provider(&self) -> CloudProvider;
     fn region(&self) -> &str;

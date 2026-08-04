@@ -5,13 +5,13 @@ pub mod tracker;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::info;
 
-use crate::compress::Compressor;
-use crate::dedup::DedupEngine;
 use crate::index::BlockIndex;
 use crate::storage::StorageBackend;
+use crate::types::BackupManifest;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RestoreType {
@@ -55,14 +55,12 @@ pub enum RestoreStatus {
 
 pub struct RestoreOrchestrator {
     index: BlockIndex,
-    dedup: DedupEngine,
 }
 
 impl RestoreOrchestrator {
     pub fn new(index_path: &str) -> Result<Self> {
         let index = BlockIndex::new(index_path)?;
-        let dedup = DedupEngine::new(Some(index_path))?;
-        Ok(Self { index, dedup })
+        Ok(Self { index })
     }
 
     pub async fn restore_vm(
@@ -70,6 +68,7 @@ impl RestoreOrchestrator {
         snapshot_id: &str,
         target_datastore: &str,
         storage: &dyn StorageBackend,
+        key: Option<&[u8]>,
         hypervisor_connector: Option<&dyn crate::integrations::HypervisorConnector>,
     ) -> Result<RestoreSession> {
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -81,29 +80,18 @@ impl RestoreOrchestrator {
         let total_bytes = manifest.total_size;
         let mut processed: u64 = 0;
 
-        for block in &manifest.blocks {
-            // Read encrypted block from storage
-            let encrypted = storage.read_block(&block.block_id.sha256).await?;
-
-            // Decrypt (in production, use encrypt module)
-            let compressed = encrypted;
-
-            // Decompress
-            let data = crate::compress::ZstdCompressor::new(3)
-                .decompress(&compressed)?;
-
-            // Write to target location
-            let target_path = PathBuf::from(target_datastore).join(&block.relative_path);
+        let files = assemble_files(&manifest, storage, key).await?;
+        for (path, data) in &files {
+            let target_path = PathBuf::from(target_datastore).join(path);
             if let Some(parent) = target_path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            tokio::fs::write(&target_path, &data).await?;
-
+            tokio::fs::write(&target_path, data).await?;
             processed += data.len() as u64;
         }
 
         // Register VM on hypervisor if connector is provided
-        if let Some(connector) = hypervisor_connector {
+        if let Some(_connector) = hypervisor_connector {
             // TODO: register VM from restored files
             info!("VM registration would happen here");
         }
@@ -129,6 +117,7 @@ impl RestoreOrchestrator {
         files: &[String],
         target_path: &str,
         storage: &dyn StorageBackend,
+        key: Option<&[u8]>,
         overwrite: bool,
     ) -> Result<RestoreSession> {
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -137,19 +126,17 @@ impl RestoreOrchestrator {
         let manifest = self.index.load_manifest(snapshot_id)?
             .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
 
+        let all = assemble_files(&manifest, storage, key).await?;
         let mut processed = 0u64;
 
-        for block in &manifest.blocks {
+        for (path, data) in &all {
             // Check if this file is requested
-            let should_restore = files.is_empty() || files.iter().any(|f| block.relative_path.contains(f));
+            let should_restore = files.is_empty() || files.iter().any(|f| path.contains(f.as_str()));
             if !should_restore {
                 continue;
             }
 
-            let encrypted = storage.read_block(&block.block_id.sha256).await?;
-            let data = crate::compress::ZstdCompressor::new(3).decompress(&encrypted)?;
-
-            let target = PathBuf::from(target_path).join(&block.relative_path);
+            let target = PathBuf::from(target_path).join(path);
             if target.exists() && !overwrite {
                 info!("Skipping existing file: {:?}", target);
                 continue;
@@ -159,7 +146,7 @@ impl RestoreOrchestrator {
                 tokio::fs::create_dir_all(parent).await?;
             }
 
-            tokio::fs::write(&target, &data).await?;
+            tokio::fs::write(&target, data).await?;
             processed += data.len() as u64;
         }
 
@@ -197,4 +184,35 @@ impl RestoreOrchestrator {
             .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
         Ok(manifest.blocks.len())
     }
+}
+
+/// Reassembles whole files from their chunks. Chunks are grouped by relative
+/// path, ordered by offset, then concatenated. Each stored block is decoded
+/// (decompressed / decrypted) using the shared block magic format.
+async fn assemble_files(
+    manifest: &BackupManifest,
+    storage: &dyn StorageBackend,
+    key: Option<&[u8]>,
+) -> Result<HashMap<String, Vec<u8>>> {
+    use std::collections::BTreeMap;
+
+    let mut parts: HashMap<String, BTreeMap<u64, Vec<u8>>> = HashMap::new();
+    for block in &manifest.blocks {
+        let raw = storage.read_block(&block.block_id.sha256).await?;
+        let data = crate::pipeline::decode_block(&raw, key)?;
+        parts
+            .entry(block.relative_path.clone())
+            .or_default()
+            .insert(block.offset, data);
+    }
+
+    let mut files = HashMap::new();
+    for (path, ordered) in parts {
+        let mut buf = Vec::new();
+        for (_, mut part) in ordered {
+            buf.append(&mut part);
+        }
+        files.insert(path, buf);
+    }
+    Ok(files)
 }

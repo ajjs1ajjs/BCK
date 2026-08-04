@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::db::models::snapshot::SnapshotModel;
+use crate::db::models::repository::RepositoryModel;
 use crate::db::DbPool;
 use crate::restore::{RestoreSession, RestoreStatus, RestoreType};
 use crate::server::AppState;
@@ -60,10 +61,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/vm", axum::routing::post(restore_vm))
         .route("/file", axum::routing::post(restore_file))
         .route("/instant", axum::routing::post(instant_recovery))
-        .route("/instant/{id}/stop", axum::routing::post(stop_instant_recovery))
-        .route("/explore/{snapshot_id}", axum::routing::get(browse_snapshot))
+        .route("/instant/:id/stop", axum::routing::post(stop_instant_recovery))
+        .route("/explore/:snapshot_id", axum::routing::get(browse_snapshot))
         .route("/surebackup", axum::routing::post(start_surebackup))
-        .route("/session/{id}", axum::routing::get(get_session))
+        .route("/session/:id", axum::routing::get(get_session))
 }
 
 async fn restore_vm(
@@ -120,7 +121,7 @@ async fn restore_file(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FileRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
-    let _snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
+    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let session = RestoreSession {
@@ -130,7 +131,7 @@ async fn restore_file(
         status: RestoreStatus::Running,
         progress_pct: 0.0,
         bytes_processed: 0,
-        total_bytes: 0,
+        total_bytes: snapshot.size_bytes.max(0) as u64,
         target: req.target_path.clone(),
         started_at: chrono::Utc::now().timestamp(),
         finished_at: None,
@@ -226,8 +227,7 @@ async fn browse_snapshot(
     let prefix = params.get("prefix").map(|s| s.as_str()).unwrap_or("");
 
     // Load manifest from index
-    let index_path = state.config.storage.default_path.join("index.db");
-    let index_str = index_path.to_string_lossy().to_string();
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let explorer = crate::restore::explorer::GuestFileExplorer::new(&index_str)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -302,18 +302,100 @@ async fn lookup_snapshot(db: &DbPool, snapshot_id: &str) -> Result<SnapshotModel
     }
 }
 
+async fn lookup_repository(db: &DbPool, repo_id: &str) -> Result<RepositoryModel, anyhow::Error> {
+    match db {
+        DbPool::Sqlite(pool) => {
+            let row = sqlx::query_as::<_, RepositoryModel>(
+                "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
+                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                 FROM repositories WHERE id = ?1"
+            )
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Repository not found: {}", repo_id))?;
+            Ok(row)
+        }
+        DbPool::Postgres(pool) => {
+            let row = sqlx::query_as::<_, RepositoryModel>(
+                "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
+                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                 FROM repositories WHERE id = $1"
+            )
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Repository not found: {}", repo_id))?;
+            Ok(row)
+        }
+    }
+}
+
+fn build_storage(repo: &RepositoryModel) -> impl std::future::Future<Output = anyhow::Result<Box<dyn crate::storage::StorageBackend>>> + 'static {
+    let repo_type = repo.repo_type.clone();
+    let config_json = repo.config_json.clone();
+    async move {
+        let cfg: serde_json::Value = serde_json::from_str(&config_json)
+            .unwrap_or_else(|_| serde_json::json!({}));
+
+        let storage_config = crate::storage::StorageConfig {
+            backend_type: repo_type,
+            path: cfg["path"].as_str().map(|s| s.to_string()),
+            bucket: cfg["bucket"].as_str().map(|s| s.to_string()),
+            region: cfg["region"].as_str().map(|s| s.to_string()),
+            endpoint: cfg["endpoint"].as_str().map(|s| s.to_string()),
+            access_key: cfg["access_key"].as_str().map(|s| s.to_string()),
+            secret_key: cfg["secret_key"].as_str().map(|s| s.to_string()),
+            container: cfg["container"].as_str().map(|s| s.to_string()),
+            connection_string: cfg["connection_string"].as_str().map(|s| s.to_string()),
+        };
+        crate::storage::create_backend(storage_config).await
+    }
+}
+
+fn encryption_key(state: &AppState) -> Option<Vec<u8>> {
+    let key_path = state.config.encryption.key_path.clone()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| state.config.storage.default_path.join("encryption.key"));
+    if key_path.exists() {
+        std::fs::read(&key_path).ok()
+    } else {
+        None
+    }
+}
+
 async fn perform_vm_restore(
     state: &Arc<AppState>,
     req: &VmRestoreRequest,
 ) -> Result<u64, anyhow::Error> {
     use crate::restore::RestoreOrchestrator;
 
-    let index_path = state.config.storage.default_path.join("index.db");
-    let index_str = index_path.to_string_lossy().to_string();
+    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await?;
+    let repo = lookup_repository(&state.db, &snapshot.repository_id).await?;
+    let storage = build_storage(&repo).await?;
+    let key = encryption_key(state);
+
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let orchestrator = RestoreOrchestrator::new(&index_str)?;
 
-    let _count = orchestrator.count_blocks(&req.snapshot_id)?;
-    Ok(0)
+    let session = orchestrator.restore_vm(
+        &req.snapshot_id,
+        &req.target_datastore,
+        storage.as_ref(),
+        key.as_deref(),
+        None,
+    ).await?;
+
+    crate::db::record_event(
+        &state.db,
+        "restore_completed",
+        "restore",
+        &format!("VM restore completed: snapshot {}", req.snapshot_id),
+        None,
+        Some(&session.id),
+    ).await.ok();
+
+    Ok(session.bytes_processed)
 }
 
 async fn perform_file_restore(
@@ -322,18 +404,31 @@ async fn perform_file_restore(
 ) -> Result<u64, anyhow::Error> {
     use crate::restore::RestoreOrchestrator;
 
-    let index_path = state.config.storage.default_path.join("index.db");
-    let index_str = index_path.to_string_lossy().to_string();
+    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await?;
+    let repo = lookup_repository(&state.db, &snapshot.repository_id).await?;
+    let storage = build_storage(&repo).await?;
+    let key = encryption_key(state);
+
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let orchestrator = RestoreOrchestrator::new(&index_str)?;
 
-    let all_files = orchestrator.list_snapshot_files(&req.snapshot_id).await?;
-    let files_to_restore: Vec<&String> = if req.files.is_empty() {
-        all_files.iter().collect()
-    } else {
-        all_files.iter().filter(|f| {
-            req.files.iter().any(|pattern| f.contains(pattern))
-        }).collect()
-    };
+    let session = orchestrator.restore_file(
+        &req.snapshot_id,
+        &req.files,
+        &req.target_path,
+        storage.as_ref(),
+        key.as_deref(),
+        req.overwrite.unwrap_or(false),
+    ).await?;
 
-    Ok(files_to_restore.len() as u64)
+    crate::db::record_event(
+        &state.db,
+        "restore_completed",
+        "restore",
+        &format!("File restore completed: snapshot {} -> {}", req.snapshot_id, req.target_path),
+        None,
+        Some(&session.id),
+    ).await.ok();
+
+    Ok(session.bytes_processed)
 }

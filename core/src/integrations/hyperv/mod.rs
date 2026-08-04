@@ -1,13 +1,14 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::integrations::{
-    ChangedBlock, HypervisorConnector, HypervisorInfo, PowerState,
-    VmDiskInfo, VmInfo, VmNetworkInfo, VmSnapshot,
+    ChangedBlock, HypervisorConnector, PowerState,
+    VmInfo, VmSnapshot,
 };
 
 /// Hyper-V connector using WinRM / PowerShell
+#[allow(dead_code)]
 pub struct HyperVConnector {
     host: String,
     username: String,
@@ -194,7 +195,7 @@ Get-VM | ForEach-Object {
         &self,
         vm_ref: &str,
         disk_id: &str,
-        change_id: &str,
+        _change_id: &str,
     ) -> Result<Vec<ChangedBlock>> {
         // Hyper-V RCT (Resilient Change Tracking) via WMI
         // RCT data is accessed through the Hyper-V WMI provider:
@@ -251,10 +252,10 @@ if (\$rct -and \$rct.ChangeTrackingEnabled) {{
 
     async fn read_disk_blocks(
         &self,
-        vm_ref: &str,
+        _vm_ref: &str,
         disk_path: &str,
         offset: i64,
-        length: i64,
+        _length: i64,
     ) -> Result<Vec<u8>> {
         Err(anyhow!(
             "Direct disk block read not supported for Hyper-V. Disk: {} offset: {}",
