@@ -5,12 +5,14 @@ use tracing::{info, error};
 use uuid::Uuid;
 
 use anyhow::Result;
-use serde::Serialize;
+use chrono::Datelike;
+use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
 use crate::db::DbPool;
 use crate::db::models::job::BackupJobModel;
 use crate::db::models::repository::RepositoryModel;
+use crate::db::models::snapshot::SnapshotModel;
 use crate::index::BlockIndex;
 use crate::pipeline::BackupPipeline;
 use crate::storage::{create_backend, StorageConfig};
@@ -18,6 +20,20 @@ use crate::types::{
     BackupManifest, BackupStats, ChunkSizeConfig, CompressionAlgorithm, ConsistencyLevel,
     EncryptionAlgorithm, JobStatus, PipelineConfig, Snapshot, SnapshotType,
 };
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+struct RetentionConfig {
+    #[serde(default = "default_daily")]
+    daily: i64,
+    #[serde(default)]
+    weekly: i64,
+    #[serde(default)]
+    monthly: i64,
+}
+
+fn default_daily() -> i64 {
+    7
+}
 
 #[derive(Clone)]
 enum DbVal<'a> {
@@ -503,6 +519,9 @@ impl JobManager {
                     Some(&session_id),
                 ).await.ok();
                 info!("Job {} completed (snapshot {})", job.name, snapshot.id);
+                if let Err(e) = self.apply_retention(&job).await {
+                    error!("Job {} retention failed: {}", job.name, e);
+                }
             }
             Err(e) => {
                 let t = now();
@@ -728,6 +747,132 @@ impl JobManager {
             "UPDATE repositories SET used_bytes = used_bytes + ?, updated_at = ? WHERE id = ?",
             &[DbVal::Int(bytes as i64), DbVal::Int(now()), repo_id.into()],
         ).await
+    }
+
+    async fn load_job_snapshots(&self, job_id: &str) -> Result<Vec<SnapshotModel>> {
+        match &self.db {
+            DbPool::Sqlite(pool) => {
+                let rows = sqlx::query_as::<_, SnapshotModel>(
+                    "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                            size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                            app_consistent, created_at
+                     FROM snapshots WHERE job_id = ?1 ORDER BY created_at DESC"
+                )
+                .bind(job_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows)
+            }
+            DbPool::Postgres(pool) => {
+                let rows = sqlx::query_as::<_, SnapshotModel>(
+                    "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
+                            size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
+                            app_consistent, created_at
+                     FROM snapshots WHERE job_id = $1 ORDER BY created_at DESC"
+                )
+                .bind(job_id)
+                .fetch_all(pool)
+                .await?;
+                Ok(rows)
+            }
+        }
+    }
+
+    async fn delete_snapshot_row(&self, snapshot_id: &str) -> Result<()> {
+        match &self.db {
+            DbPool::Sqlite(pool) => {
+                sqlx::query("DELETE FROM snapshots WHERE id = ?1")
+                    .bind(snapshot_id)
+                    .execute(pool)
+                    .await?;
+            }
+            DbPool::Postgres(pool) => {
+                sqlx::query("DELETE FROM snapshots WHERE id = $1")
+                    .bind(snapshot_id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply GFS retention policy (daily / weekly / monthly) after a successful run.
+    /// Keeps the newest snapshot per day within the daily window, per ISO week within
+    /// the weekly window, and per month within the monthly window. Older copies are pruned.
+    async fn apply_retention(&self, job: &BackupJobModel) -> Result<()> {
+        let cfg: RetentionConfig = match serde_json::from_str(&job.retention_config) {
+            Ok(c) => c,
+            Err(_) => RetentionConfig { daily: 7, weekly: 4, monthly: 12 },
+        };
+
+        let snapshots = self.load_job_snapshots(&job.id).await?;
+        if snapshots.len() <= 1 {
+            return Ok(());
+        }
+
+        let now_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(now(), 0)
+            .unwrap_or_else(chrono::Utc::now);
+
+        let mut keep = std::collections::HashSet::new();
+        let mut day_seen: std::collections::HashSet<(i32, u32, u32)> = std::collections::HashSet::new();
+        let mut week_seen: std::collections::HashSet<(i32, u32)> = std::collections::HashSet::new();
+        let mut month_seen: std::collections::HashSet<(i32, u32)> = std::collections::HashSet::new();
+
+        for s in &snapshots {
+            let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(s.created_at, 0) else { continue };
+            let days_diff = (now_dt - dt).num_days();
+            let iso_week = dt.iso_week();
+            let day_key = (dt.year(), dt.month(), dt.day());
+            let week_key = (iso_week.year(), iso_week.week());
+            let month_key = (dt.year(), dt.month());
+
+            if days_diff >= 0 && days_diff < cfg.daily as i64 && day_seen.insert(day_key) {
+                keep.insert(s.id.clone());
+            }
+            if days_diff < 0 && day_seen.insert(day_key) {
+                keep.insert(s.id.clone());
+            }
+            if cfg.weekly > 0 && week_seen.insert(week_key) && week_seen.len() as i64 <= cfg.weekly {
+                keep.insert(s.id.clone());
+            }
+            if cfg.monthly > 0 && month_seen.insert(month_key) && month_seen.len() as i64 <= cfg.monthly {
+                keep.insert(s.id.clone());
+            }
+        }
+
+        // Always keep the most recent snapshot.
+        if let Some(newest) = snapshots.first() {
+            keep.insert(newest.id.clone());
+        }
+
+        let removed = snapshots
+            .into_iter()
+            .filter(|s| !keep.contains(&s.id))
+            .collect::<Vec<_>>();
+
+        if removed.is_empty() {
+            return Ok(());
+        }
+
+        info!(
+            "Retention {}: pruning {} old snapshots (keep {})",
+            job.name,
+            removed.len(),
+            keep.len()
+        );
+
+        for s in &removed {
+            self.delete_snapshot_row(&s.id).await?;
+            crate::db::record_event(
+                &self.db,
+                "snapshot_pruned",
+                "retention",
+                &format!("Retention pruned snapshot {} ({})", s.id, s.snapshot_type),
+                Some(&job.id),
+                Some(s.session_id.as_str()),
+            ).await.ok();
+        }
+        Ok(())
     }
 
     async fn update_job_last_run(&self, job_id: &str, t: i64) -> Result<()> {
