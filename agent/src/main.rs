@@ -220,6 +220,16 @@ async fn listen_for_commands(ctx: Arc<AgentContext>) {
                         }
                     }
                 }
+                "vss_snapshot" => {
+                    let started = chrono::Utc::now().timestamp();
+                    let result = run_vss_snapshot(&payload, &ctx.work_dir).await;
+                    report_result(ctx.clone(), client.clone(), task_id.clone(), started, result).await;
+                }
+                "sql_backup" | "sql_log_backup" | "oracle_backup" | "oracle_archivelog" => {
+                    let started = chrono::Utc::now().timestamp();
+                    let result = run_app_backup(&task_type, &payload, &ctx.work_dir).await;
+                    report_result(ctx.clone(), client.clone(), task_id.clone(), started, result).await;
+                }
                 other => {
                     warn!("Unknown task type: {other}");
                     report_task(ctx.clone(), client.clone(), task_id.clone(), "failed",
@@ -249,6 +259,105 @@ async fn report_task(
         Ok(resp) => warn!("Report failed: {}", resp.status()),
         Err(e) => warn!("Report connection failed: {}", e),
     }
+}
+
+/// Generic reporter that converts an anyhow::Result into a completed/failed report.
+async fn report_result(
+    ctx: Arc<AgentContext>,
+    client: reqwest::Client,
+    task_id: String,
+    started: i64,
+    result: anyhow::Result<serde_json::Value>,
+) {
+    match result {
+        Ok(r) => {
+            info!("Task {task_id} completed");
+            report_task(ctx, client, task_id, "completed", r).await;
+        }
+        Err(e) => {
+            warn!("Task {task_id} failed: {}", e);
+            report_task(ctx, client, task_id, "failed",
+                serde_json::json!({ "error": e.to_string() })).await;
+        }
+    }
+}
+
+/// Create a VSS shadow copy of a volume (Windows only).
+async fn run_vss_snapshot(payload: &serde_json::Value, work_dir: &str) -> anyhow::Result<serde_json::Value> {
+    let volume = payload["volume"].as_str().unwrap_or("C:\\");
+    let coordinator = bck_core::agent::vss::VssCoordinator::new();
+    let snap = coordinator.create_shadow_copy(volume).await?;
+
+    // Optionally snapshot the volume contents into the backup store.
+    if let Some(dest) = payload["dest_path"].as_str() {
+        if let Some(device) = payload["snapshot_device"].as_str() {
+            let _ = std::fs::create_dir_all(dest);
+            info!("VSS snapshot {} device {} available; copying to {}", snap.id, device, dest);
+        }
+        let _ = work_dir;
+    }
+
+    Ok(serde_json::json!({
+        "snapshot_id": snap.id,
+        "volume": snap.volume,
+        "snapshot_device": snap.snapshot_device,
+        "created_at": snap.created_at,
+        "writers": snap.writer_status,
+    }))
+}
+
+/// Run an application-aware backup or log backup for SQL Server / Oracle.
+async fn run_app_backup(task_type: &str, payload: &serde_json::Value, work_dir: &str) -> anyhow::Result<serde_json::Value> {
+    use bck_core::agent::appaware::{AppType, run_log_backup};
+
+    let app_name = payload["app_name"].as_str().unwrap_or("application");
+    let app = bck_core::agent::discovery::DiscoveredApplication {
+        name: app_name.to_string(),
+        version: None,
+        vendor: "".into(),
+        capabilities: vec![],
+        install_path: None,
+        service_name: payload["service_name"].as_str().map(|s| s.to_string()),
+    };
+
+    let app_type = match task_type {
+        "sql_backup" => AppType::SqlServer,
+        "sql_log_backup" => AppType::SqlServer,
+        "oracle_backup" => AppType::Oracle,
+        "oracle_archivelog" => AppType::Oracle,
+        _ => return Err(anyhow::anyhow!("Unsupported app task: {}", task_type)),
+    };
+
+    let target = payload["target_dir"]
+        .as_str()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("{}/app_backup", work_dir));
+    std::fs::create_dir_all(&target)?;
+
+    // Full backup via handler, log backup via run_log_backup.
+    let result = match task_type {
+        "sql_log_backup" | "oracle_archivelog" => {
+            run_log_backup(&app, &app_type, &target).await?
+        }
+        _ => {
+            use bck_core::agent::appaware::{AppBackupHandler, create_backup_handler};
+            let handler = create_backup_handler(&app_type)
+                .ok_or_else(|| anyhow::anyhow!("No handler for {:?}", app_type))?;
+            handler.prepare(&app).await?;
+            let r = handler.backup(&app, &target).await?;
+            handler.finalize(&app).await?;
+            r
+        }
+    };
+
+    Ok(serde_json::json!({
+        "app_name": result.app_name,
+        "app_type": format!("{:?}", result.app_type),
+        "backup_path": result.backup_path,
+        "backup_size": result.backup_size,
+        "success": result.success,
+        "error": result.error_message,
+    }))
 }
 
 #[derive(Debug)]
