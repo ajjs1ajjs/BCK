@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         scheduler: scheduler.clone(),
         jwt,
         restore_tracker: bck_core::restore::tracker::RestoreTracker::new(),
+        instant_recovery: bck_core::restore::instant::InstantRecoveryRegistry::new(),
     });
 
     // Start scheduler

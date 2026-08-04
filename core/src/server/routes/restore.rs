@@ -170,8 +170,13 @@ async fn instant_recovery(
     State(state): State<Arc<AppState>>,
     Json(req): Json<InstantRecoveryRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
-    let _snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
+    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
+    let repo = lookup_repository(&state.db, &snapshot.repository_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let storage = build_storage(&repo).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
 
     let protocol = match req.protocol.to_lowercase().as_str() {
         "nfs" => RestoreType::InstantNfs,
@@ -194,7 +199,35 @@ async fn instant_recovery(
     };
 
     let resp = session_to_response(&session);
+    let sid = session.id.clone();
+    let snap_id = req.snapshot_id.clone();
+    let vm_name = req.vm_name.clone();
+    let listen = req.target_host.clone();
     state.restore_tracker.create(session).await;
+
+    // Start the actual NFS/iSCSI server in the background.
+    let registry = state.instant_recovery.clone();
+    let index_str2 = index_str.clone();
+    tokio::spawn(async move {
+        let result = match req.protocol.to_lowercase().as_str() {
+            "nfs" => registry.start_nfs(&index_str2, storage, &snap_id, &vm_name, "", &listen).await,
+            _ => registry.start_iscsi(&index_str2, storage, &snap_id, &vm_name, "", &listen).await,
+        };
+        match result {
+            Ok(_) => {
+                state.restore_tracker.update(&sid, |s| {
+                    s.progress_pct = 100.0;
+                }).await;
+            }
+            Err(e) => {
+                state.restore_tracker.update(&sid, |s| {
+                    s.status = RestoreStatus::Failed(e.to_string());
+                    s.finished_at = Some(chrono::Utc::now().timestamp());
+                }).await;
+            }
+        }
+    });
+
     Ok(Json(resp))
 }
 
@@ -205,6 +238,8 @@ async fn stop_instant_recovery(
     let session = state.restore_tracker.get(&id).await;
     match session {
         Some(s) if matches!(s.restore_type, RestoreType::InstantNfs | RestoreType::InstantIscsi) => {
+            // Stop the actual server and mark the session cancelled.
+            let _ = state.instant_recovery.stop_session(&id).await;
             state.restore_tracker.update(&id, |s| {
                 s.status = RestoreStatus::Cancelled;
                 s.finished_at = Some(chrono::Utc::now().timestamp());
