@@ -109,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
         )?,
         dr: bck_core::dr::DrOrchestrator::new(),
         tenants: bck_core::enterprise::multitenant::TenantManager::new(),
+        restore_requests: bck_core::restore::requests::RestoreRequestManager::new(),
     });
 
     // Start scheduler

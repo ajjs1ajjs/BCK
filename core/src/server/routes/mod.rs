@@ -15,6 +15,7 @@ pub mod tape;
 pub mod cdp;
 pub mod dr;
 pub mod tenants;
+pub mod portal;
 
 #[cfg(test)]
 pub mod testutil;
@@ -58,6 +59,7 @@ pub fn protected_api_routes(state: Arc<AppState>) -> Router {
         .nest("/cdp", cdp::router())
         .nest("/dr", dr::router())
         .nest("/tenants", tenants::router())
+        .nest("/portal", portal::router())
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::server::middleware::auth::auth_middleware))
         .with_state(state)
 }

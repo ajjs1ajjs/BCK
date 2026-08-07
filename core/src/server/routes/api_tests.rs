@@ -6,8 +6,48 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use crate::server::routes::{cdp, cloud, dr, m365, sobr, tape, tenants};
+use crate::server::routes::{cdp, cloud, dr, m365, portal, sobr, tape, tenants};
 use crate::server::routes::testutil::{read_json, test_state};
+use crate::auth::jwt::Claims;
+
+fn admin_claims() -> Claims {
+    Claims {
+        sub: "user-admin".into(),
+        username: "admin".into(),
+        role: "admin".into(),
+        exp: usize::MAX,
+        iat: 0,
+    }
+}
+
+fn viewer_claims() -> Claims {
+    Claims {
+        sub: "user-viewer".into(),
+        username: "viewer".into(),
+        role: "viewer".into(),
+        exp: usize::MAX,
+        iat: 0,
+    }
+}
+
+/// `oneshot` variant that attaches a `Claims` extension (bypasses JWT, as the
+/// auth middleware has already run).
+async fn oneshot_with_claims(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<&str>,
+    claims: &Claims,
+) -> axum::response::Response {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
+    let body = body.map(|s| Body::from(s.to_string())).unwrap_or_else(Body::empty);
+    let mut req = builder.body(body).unwrap();
+    req.extensions_mut().insert(claims.clone());
+    app.oneshot(req).await.unwrap()
+}
 
 async fn oneshot(
     app: axum::Router,
@@ -335,4 +375,129 @@ async fn tenant_lifecycle() {
     // Missing tenant operations are rejected.
     let resp = oneshot(app.clone(), "POST", "/missing/suspend", None).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn portal_restore_request_lifecycle() {
+    let state = test_state(&format!("{}\\portal.db", temp_dir("portal"))).await;
+    let app = portal::router().with_state(state.clone());
+
+    // Self-service /me endpoint.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/me", None, &admin_claims()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let me: serde_json::Value = read_json(resp).await;
+    assert_eq!(me["username"], "admin");
+    assert_eq!(me["can_approve"], true);
+
+    // A viewer cannot approve.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/me", None, &viewer_claims()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let me: serde_json::Value = read_json(resp).await;
+    assert_eq!(me["can_approve"], false);
+
+    // Submit a restore request.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        "/restore-requests",
+        Some(r#"{"snapshot_id":"snap-1","files":["/etc/hosts"],"target_path":"/tmp/restore","reason":"test"}"#),
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let request: serde_json::Value = read_json(resp).await;
+    let id = request["id"].as_str().unwrap().to_string();
+    assert_eq!(request["status"], "Pending");
+    assert_eq!(request["user_id"], "user-admin");
+
+    // Missing required fields are rejected.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        "/restore-requests",
+        Some(r#"{"snapshot_id":"","target_path":""}"#),
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The submitter sees their own request.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/restore-requests", None, &admin_claims()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mine: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(mine.len(), 1);
+
+    // A different user sees none.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/restore-requests", None, &viewer_claims()).await;
+    let mine: Vec<serde_json::Value> = read_json(resp).await;
+    assert!(mine.is_empty());
+
+    // A viewer is forbidden from the admin endpoints.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/admin/restore-requests", None, &viewer_claims()).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // The admin lists all pending requests.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/admin/restore-requests", None, &admin_claims()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let all: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(all.len(), 1);
+
+    // Approve it.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/admin/restore-requests/{}/approve", id),
+        Some(r#"{"note":"ok"}"#),
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Approving again is rejected (not pending anymore).
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/admin/restore-requests/{}/approve", id),
+        Some(r#"{"note":"again"}"#),
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Complete it.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/admin/restore-requests/{}/complete", id),
+        None,
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Submit, then cancel a second request.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        "/restore-requests",
+        Some(r#"{"snapshot_id":"snap-2","files":[],"target_path":"/tmp/restore2"}"#),
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let second: serde_json::Value = read_json(resp).await;
+    let id2 = second["id"].as_str().unwrap().to_string();
+
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/restore-requests/{}/cancel", id2),
+        None,
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // A request that is not pending cannot be cancelled.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/restore-requests/{}/cancel", id),
+        None,
+        &admin_claims(),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

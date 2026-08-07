@@ -11,6 +11,7 @@ import M365 from './pages/M365'
 import Tape from './pages/Tape'
 import Dr from './pages/Dr'
 import Tenants from './pages/Tenants'
+import SelfService from './pages/SelfService'
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import { getToken } from './api/client'
@@ -39,6 +40,7 @@ function App() {
         <Route path="/tape" element={<Tape />} />
         <Route path="/dr" element={<Dr />} />
         <Route path="/tenants" element={<Tenants />} />
+        <Route path="/portal" element={<SelfService />} />
         <Route path="/admin" element={<Admin />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -514,6 +514,44 @@ export const tenantsApi = {
   updateSettings: (id: string, settings: TenantSettings) => api.put<Tenant>(`/tenants/${id}/settings`, settings),
 }
 
+export type RestoreRequestStatus = 'Pending' | 'Approved' | 'Rejected' | 'Cancelled' | 'Completed'
+
+export interface RestoreRequest {
+  id: string
+  user_id: string
+  username: string
+  snapshot_id: string
+  files: string[]
+  target_path: string
+  reason: string
+  status: RestoreRequestStatus
+  requested_at: number
+  decided_at?: number | null
+  decided_by?: string | null
+  decision_note?: string | null
+}
+
+export interface PortalMe {
+  user_id: string
+  username: string
+  role: string
+  can_approve: boolean
+}
+
+export const portalApi = {
+  me: () => api.get<PortalMe>('/portal/me'),
+  myRequests: () => api.get<RestoreRequest[]>('/portal/restore-requests'),
+  submit: (payload: { snapshot_id: string; files: string[]; target_path: string; reason: string }) =>
+    api.post<RestoreRequest>('/portal/restore-requests', payload),
+  cancel: (id: string) => api.post(`/portal/restore-requests/${id}/cancel`),
+  allRequests: () => api.get<RestoreRequest[]>('/portal/admin/restore-requests'),
+  approve: (id: string, note: string) =>
+    api.post(`/portal/admin/restore-requests/${id}/approve`, { note }),
+  reject: (id: string, note: string) =>
+    api.post(`/portal/admin/restore-requests/${id}/reject`, { note }),
+  complete: (id: string) => api.post(`/portal/admin/restore-requests/${id}/complete`),
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let bin = ''
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])

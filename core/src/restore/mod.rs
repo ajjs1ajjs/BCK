@@ -2,6 +2,7 @@ pub mod instant;
 pub mod explorer;
 pub mod surebackup;
 pub mod tracker;
+pub mod requests;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};

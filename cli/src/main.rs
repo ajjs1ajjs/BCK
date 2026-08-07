@@ -90,6 +90,9 @@ enum Commands {
     /// Multi-tenancy management
     #[command(subcommand)]
     Tenant(TenantCmd),
+    /// Self-service restore portal
+    #[command(subcommand)]
+    Portal(PortalCmd),
 }
 
 #[derive(Subcommand)]
@@ -287,6 +290,42 @@ enum TenantCmd {
         #[arg(long, default_value = "local, s3")]
         allowed_storage: String,
     },
+}
+
+#[derive(Subcommand)]
+enum PortalCmd {
+    /// Show the current user's portal profile
+    Me,
+    /// List the current user's restore requests
+    MyRequests,
+    /// Submit a restore request for approval
+    Submit {
+        snapshot_id: String,
+        #[arg(long)]
+        target_path: String,
+        #[arg(long)]
+        files: Option<String>,
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// Cancel a pending restore request
+    Cancel { id: String },
+    /// List all restore requests (admin / operator)
+    Requests,
+    /// Approve a pending restore request
+    Approve {
+        id: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Reject a pending restore request
+    Reject {
+        id: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Mark an approved request as completed
+    Complete { id: String },
 }
 
 struct Api {
@@ -680,6 +719,55 @@ async fn main() -> Result<()> {
                     "allowed_storage": storage,
                 }))).await?;
                 print_json(&resp);
+            }
+        },
+        Commands::Portal(cmd) => match cmd {
+            PortalCmd::Me => {
+                let resp = api.get("/api/v1/portal/me").await?;
+                print_json(&resp);
+            }
+            PortalCmd::MyRequests => {
+                let resp = api.get("/api/v1/portal/restore-requests").await?;
+                print_json(&resp);
+            }
+            PortalCmd::Submit { snapshot_id, target_path, files, reason } => {
+                let files: Vec<String> = files
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let resp = api.send("POST", "/api/v1/portal/restore-requests", Some(json!({
+                    "snapshot_id": snapshot_id,
+                    "target_path": target_path,
+                    "files": files,
+                    "reason": reason.unwrap_or_default(),
+                }))).await?;
+                print_json(&resp);
+            }
+            PortalCmd::Cancel { id } => {
+                api.send("POST", &format!("/api/v1/portal/restore-requests/{}/cancel", id), None).await?;
+                println!("Restore request cancelled: {}", id);
+            }
+            PortalCmd::Requests => {
+                let resp = api.get("/api/v1/portal/admin/restore-requests").await?;
+                print_json(&resp);
+            }
+            PortalCmd::Approve { id, note } => {
+                let resp = api.send("POST", &format!("/api/v1/portal/admin/restore-requests/{}/approve", id), Some(json!({
+                    "note": note.unwrap_or_default(),
+                }))).await?;
+                print_json(&resp);
+            }
+            PortalCmd::Reject { id, note } => {
+                let resp = api.send("POST", &format!("/api/v1/portal/admin/restore-requests/{}/reject", id), Some(json!({
+                    "note": note.unwrap_or_default(),
+                }))).await?;
+                print_json(&resp);
+            }
+            PortalCmd::Complete { id } => {
+                api.send("POST", &format!("/api/v1/portal/admin/restore-requests/{}/complete", id), None).await?;
+                println!("Restore request completed: {}", id);
             }
         },
     }

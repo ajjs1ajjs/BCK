@@ -21,6 +21,7 @@ use crate::enterprise::sso::SsoManager;
 use crate::job::JobManager;
 use crate::m365::M365BackupManager;
 use crate::restore::surebackup::SureBackupEngine;
+use crate::restore::requests::RestoreRequestManager;
 use crate::restore::tracker::RestoreTracker;
 use crate::scheduler::Scheduler;
 use crate::sobr::SobrManager;
@@ -43,6 +44,7 @@ pub struct AppState {
     pub cdp: CdpEngine,
     pub dr: DrOrchestrator,
     pub tenants: TenantManager,
+    pub restore_requests: RestoreRequestManager,
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

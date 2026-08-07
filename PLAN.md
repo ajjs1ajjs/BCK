@@ -104,7 +104,7 @@ E:\Code\BCK\
 - [x] SSO (OIDC + LDAP) з HTTP routes
 - [x] Reports / SLA / CSV
 - [x] Audit log
-- [ ] Self-Service portal
+- [x] Self-Service portal (RestoreRequest manager → REST /api/v1/portal, Web UI сторінка, CLI `bck portal`)
 - [x] Multi-tenancy (TenantManager → REST /api/v1/tenants, Web UI сторінка, CLI `bck tenant`)
 - [x] Розширення CLI на нові фічі (cloud, sobr, m365, dr)
 
