@@ -34,7 +34,7 @@ E:\Code\BCK\
 |-----------|--------|--------|
 | Core engine | ✅ | scanner → chunker (XXH3) → dedup (SHA-256) → compress (LZ4/Zstd/noop) → encrypt (AES-256/ChaCha20) |
 | Storage | ✅ | Local FS, S3 (SigV4, MinIO path-style), Azure Blob, GCS |
-| REST API | 🟡 | jobs, repos, snapshots, restore, dashboard, auth, agents, hypervisors, events, **sso** |
+| REST API | 🟡 | jobs, repos, snapshots, restore, dashboard, auth, agents, hypervisors, events, **sso, sobr, cloud, m365, tape, cdp, dr** |
 | gRPC | ✅ | Tonic + Prost, `BackupEngine` сервіс стартує в bckd |
 | Database | ✅ | SQLite (rusqlite) default + PostgreSQL (sqlx) |
 | Scheduler | ✅ | cron-подібні розклади |
@@ -89,7 +89,7 @@ E:\Code\BCK\
 - [x] Tape LTFS
 - [x] M365: mailbox / OneDrive / SharePoint
 - [x] SOBR: тіри + lifecycle (move/archive/seal/retention)
-- [ ] REST API для SOBR / CDP / DR / Tape / M365
+- [x] REST API для SOBR / CDP / DR / Tape / M365
 - [ ] Web UI сторінки
 
 ### Phase 5 — Cloud 🟡
@@ -97,7 +97,7 @@ E:\Code\BCK\
 - [x] Azure: VM, managed disks, SQL (ARM + OAuth2)
 - [x] GCP: GCE images, disk snapshots, Cloud SQL
 - [x] K8s: PVC + manifest backup
-- [ ] REST API для керування cloud accounts
+- [x] REST API для керування cloud accounts
 - [ ] Cloud restore через Web UI
 
 ### Phase 6 — Polish 🟡

@@ -100,6 +100,14 @@ async fn main() -> anyhow::Result<()> {
         instant_recovery: bck_core::restore::instant::InstantRecoveryRegistry::new(),
         surebackup: bck_core::restore::surebackup::SureBackupEngine::new(),
         sso: bck_core::enterprise::sso::SsoManager::new(),
+        sobr: bck_core::sobr::SobrManager::new(),
+        cloud: bck_core::cloud::CloudBackupManager::new(),
+        m365: bck_core::m365::M365BackupManager::new(),
+        tape: bck_core::tape::TapeManager::new(),
+        cdp: bck_core::cdp::CdpEngine::new(
+            &config.storage.default_path.to_string_lossy(),
+        )?,
+        dr: bck_core::dr::DrOrchestrator::new(),
     });
 
     // Start scheduler

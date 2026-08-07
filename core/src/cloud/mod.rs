@@ -11,6 +11,7 @@ use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudAccount {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub provider: CloudProvider,
@@ -79,6 +80,25 @@ impl CloudBackupManager {
 
     pub async fn list_accounts(&self) -> Vec<CloudAccount> {
         self.accounts.read().await.clone()
+    }
+
+    /// Get a single account by id.
+    pub async fn get_account(&self, id: &str) -> Option<CloudAccount> {
+        self.accounts
+            .read()
+            .await
+            .iter()
+            .find(|a| a.id == id)
+            .cloned()
+    }
+
+    /// Remove an account by id. Returns true if it existed.
+    pub async fn remove_account(&self, id: &str) -> bool {
+        let mut accounts = self.accounts.write().await;
+        let before = accounts.len();
+        accounts.retain(|a| a.id != id);
+        info!("Cloud account removed: {}", id);
+        accounts.len() != before
     }
 }
 

@@ -1,0 +1,260 @@
+//! End-to-end route tests for the Phase 4-6 API modules (SOBR, Cloud, M365,
+//! Tape, CDP, DR). Routers are exercised directly with a shared test state,
+//! matching the existing hypervisors route test pattern.
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use tower::ServiceExt;
+
+use crate::server::routes::{cdp, cloud, dr, m365, sobr, tape};
+use crate::server::routes::testutil::{read_json, test_state};
+
+async fn oneshot(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<&str>,
+) -> axum::response::Response {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
+    let body = body.map(|s| Body::from(s.to_string())).unwrap_or_else(Body::empty);
+    app.oneshot(builder.body(body).unwrap()).await.unwrap()
+}
+
+fn temp_dir(tag: &str) -> String {
+    let dir = std::env::temp_dir().join(format!("bck-api-{}-{}", tag, uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.to_string_lossy().into_owned()
+}
+
+#[tokio::test]
+async fn sobr_tiers_and_policies() {
+    let state = test_state(&format!("{}\\sobr.db", temp_dir("sobr"))).await;
+    let app = sobr::router().with_state(state.clone());
+
+    // No tiers/policies initially.
+    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tiers: Vec<serde_json::Value> = read_json(resp).await;
+    assert!(tiers.is_empty());
+
+    // Add a performance tier.
+    let resp = oneshot(app.clone(), "POST", "/tiers", Some(
+        r#"{"name":"Perf","tier_type":"Performance","backend":"local",
+            "backend_config":{"backend_type":"local","path":"C:/tmp/perf"},
+            "capacity_bytes":1000000,"used_bytes":0,"status":"Online","priority":1}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Add a capacity tier.
+    let resp = oneshot(app.clone(), "POST", "/tiers", Some(
+        r#"{"name":"Cap","tier_type":"Capacity","backend":"local",
+            "backend_config":{"backend_type":"local","path":"C:/tmp/cap"},
+            "capacity_bytes":1000000,"used_bytes":0,"status":"Online","priority":2}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Create a policy and execute it (no snapshots -> moves 0 bytes).
+    let resp = oneshot(app.clone(), "POST", "/policies", Some(
+        r#"{"name":"test","performance_tier_id":"p","capacity_tier_id":"c",
+            "archive_tier_id":null,"capacity_move_days":30,"archive_move_days":null,
+            "seal_days":null,"retention_days":null}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let policy: serde_json::Value = read_json(resp).await;
+    let pid = policy["id"].as_str().unwrap().to_string();
+
+    let resp = oneshot(app.clone(), "GET", "/policies", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policies: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(policies.len(), 1);
+    assert_eq!(policies[0]["id"], pid);
+
+    // Executing a policy with a tier id that is not registered -> BAD_REQUEST.
+    let resp = oneshot(app.clone(), "POST", &format!("/policies/{}/execute", pid), None).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn cloud_accounts_crud() {
+    let state = test_state(&format!("{}\\cloud.db", temp_dir("cloud"))).await;
+    let app = cloud::router().with_state(state.clone());
+
+    let resp = oneshot(app.clone(), "POST", "/", Some(
+        r#"{"name":"prod-aws","provider":"Aws","auth_type":"access_key","region":"eu-central-1",
+            "status":"Disconnected","access_key":"AKIA","secret_key":"secret"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let account: serde_json::Value = read_json(resp).await;
+    let id = account["id"].as_str().unwrap().to_string();
+
+    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let accounts: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(accounts.len(), 1);
+
+    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(app.clone(), "DELETE", &format!("/{}", id), None).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn m365_tenant_and_job() {
+    let state = test_state(&format!("{}\\m365.db", temp_dir("m365"))).await;
+    let app = m365::router().with_state(state.clone());
+
+    let resp = oneshot(app.clone(), "POST", "/tenants", Some(
+        r#"{"name":"contoso","tenant_id":"tenant-1","auth_type":"AppOnly",
+            "client_id":"client-1","encrypted_secret":"secret","status":"Disconnected"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let tenant: serde_json::Value = read_json(resp).await;
+    assert!(tenant["id"].as_str().is_some());
+
+    let resp = oneshot(app.clone(), "GET", "/tenants", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tenants: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(tenants.len(), 1);
+
+    // Starting a job for a missing tenant is rejected.
+    let resp = oneshot(app.clone(), "POST", "/jobs", Some(
+        r#"{"tenant_id":"nope","backup_type":"Mailbox"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn tape_drive_media_roundtrip() {
+    let dir = temp_dir("tape");
+    let state = test_state(&format!("{}\\tape.db", dir)).await;
+    let app = tape::router().with_state(state.clone());
+
+    let resp = oneshot(app.clone(), "POST", "/drives", Some(
+        r#"{"name":"Drive0","device_path":"/dev/sg1","drive_type":"LTO-9",
+            "loaded_media":null,"status":"Online","capacity_bytes":10000,"used_bytes":0}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let drive: serde_json::Value = read_json(resp).await;
+    let drive_id = drive["id"].as_str().unwrap().to_string();
+
+    let tape_path = format!("{}\\BK0001L9.ltfs", dir);
+    let format_body = format!(
+        r#"{{"device_path":"{}","barcode":"BK0001L9","capacity_bytes":10000}}"#,
+        tape_path.replace('\\', "\\\\"),
+    );
+    let resp = oneshot(app.clone(), "POST", "/media/format", Some(&format_body)).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let media: serde_json::Value = read_json(resp).await;
+    let media_id = media["id"].as_str().unwrap().to_string();
+
+    let load_body = format!(r#"{{"media_id":"{}"}}"#, media_id);
+    let resp = oneshot(app.clone(), "POST", &format!("/drives/{}/load", drive_id), Some(&load_body)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Write base64 data.
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"block-data");
+    let write_body = format!(r#"{{"name":"vm.vmdk","data_base64":"{}"}}"#, b64);
+    let resp = oneshot(app.clone(), "POST", &format!("/drives/{}/write", drive_id), Some(&write_body)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let written: serde_json::Value = read_json(resp).await;
+    assert_eq!(written["bytes_written"], 10);
+
+    // Read it back.
+    let resp = oneshot(app.clone(), "GET", &format!("/drives/{}/read?name=vm.vmdk", drive_id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let read: serde_json::Value = read_json(resp).await;
+    assert_eq!(read["data_base64"], b64);
+
+    // Media list reflects the write.
+    let resp = oneshot(app.clone(), "GET", "/media", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let media_list: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(media_list.len(), 1);
+    assert_eq!(media_list[0]["used_bytes"], 10);
+}
+
+#[tokio::test]
+async fn cdp_policy_and_protection() {
+    let dir = temp_dir("cdp");
+    let state = test_state(&format!("{}\\cdp.db", dir)).await;
+    let app = cdp::router().with_state(state.clone());
+
+    let resp = oneshot(app.clone(), "POST", "/policies", Some(
+        r#"{"name":"app-log","paths":["C:/tmp/logs"],"rpo_seconds":60,
+            "min_interval_seconds":5,"retention_days":7,"compression":"zstd",
+            "encryption":false,"exclude_patterns":[]}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let policy: serde_json::Value = read_json(resp).await;
+    let pid = policy["id"].as_str().unwrap().to_string();
+
+    let resp = oneshot(app.clone(), "GET", "/policies", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let policies: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(policies.len(), 1);
+
+    // Start protection for the policy.
+    let resp = oneshot(app.clone(), "POST", &format!("/policies/{}/start", pid), None).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let session: serde_json::Value = read_json(resp).await;
+    let sid = session["id"].as_str().unwrap().to_string();
+
+    let resp = oneshot(app.clone(), "GET", "/sessions", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let sessions: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["id"], sid);
+
+    let resp = oneshot(app.clone(), "POST", &format!("/sessions/{}/stop", sid), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(app.clone(), "GET", "/stats", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn dr_sites_plans_and_test() {
+    let state = test_state(&format!("{}\\dr.db", temp_dir("dr"))).await;
+    let app = dr::router().with_state(state.clone());
+
+    let resp = oneshot(app.clone(), "POST", "/sites", Some(
+        r#"{"name":"primary","dr_type":"Vmware","endpoint":"https://vc1.local",
+            "credentials_id":"","storage_id":"","is_primary":true,"status":"Online"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let site: serde_json::Value = read_json(resp).await;
+    assert!(site["id"].as_str().is_some());
+
+    let resp = oneshot(app.clone(), "POST", "/plans", Some(
+        r#"{"name":"plan-a","source_site":"src","target_site":"dst","vms":["vm-1"],
+            "replication_policy":{"rpo_seconds":300,"rto_seconds":600,"compression":"zstd",
+            "encryption":true,"bandwidth_throttle_mbps":100},"failover_order":["vm-1"],
+            "auto_commit":true,"test_mode":false}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let plan: serde_json::Value = read_json(resp).await;
+    let pid = plan["id"].as_str().unwrap().to_string();
+
+    let resp = oneshot(app.clone(), "GET", "/plans", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let plans: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(plans.len(), 1);
+
+    let resp = oneshot(app.clone(), "GET", "/status", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Non-destructive test failover succeeds.
+    let resp = oneshot(app.clone(), "POST", &format!("/plans/{}/test", pid), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Failover for a missing plan is rejected.
+    let resp = oneshot(app.clone(), "POST", "/plans/missing/failover", None).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}

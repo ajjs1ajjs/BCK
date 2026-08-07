@@ -10,6 +10,7 @@ use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CdpPolicy {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub paths: Vec<String>,
@@ -232,6 +233,11 @@ impl CdpEngine {
             info!("CDP protection stopped: session={}", session_id);
         }
         Ok(())
+    }
+
+    /// List all CDP policies
+    pub async fn list_policies(&self) -> Vec<CdpPolicy> {
+        self.policies.read().await.clone()
     }
 
     /// List active CDP sessions

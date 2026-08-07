@@ -16,6 +16,7 @@ use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct M365Tenant {
+    #[serde(default)]
     pub id: String,
     pub tenant_id: String,
     pub name: String,

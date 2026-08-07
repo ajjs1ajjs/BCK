@@ -13,6 +13,7 @@ use self::ltfs::LtfsManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TapeDrive {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub device_path: String,
@@ -36,6 +37,7 @@ pub enum DriveStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TapeMedia {
+    #[serde(default)]
     pub id: String,
     pub barcode: String,
     pub capacity_bytes: u64,

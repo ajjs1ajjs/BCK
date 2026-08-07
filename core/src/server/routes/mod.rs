@@ -8,6 +8,18 @@ pub mod hypervisors;
 pub mod agents;
 pub mod events;
 pub mod sso;
+pub mod sobr;
+pub mod cloud;
+pub mod m365;
+pub mod tape;
+pub mod cdp;
+pub mod dr;
+
+#[cfg(test)]
+pub mod testutil;
+
+#[cfg(test)]
+mod api_tests;
 
 use axum::Router;
 use std::sync::Arc;
@@ -38,6 +50,12 @@ pub fn protected_api_routes(state: Arc<AppState>) -> Router {
         .nest("/events", events::router())
         .nest("/agents", agents::router())
         .nest("/auth/sso", sso::protected_router())
+        .nest("/sobr", sobr::router())
+        .nest("/cloud", cloud::router())
+        .nest("/m365", m365::router())
+        .nest("/tape", tape::router())
+        .nest("/cdp", cdp::router())
+        .nest("/dr", dr::router())
         .route_layer(axum::middleware::from_fn_with_state(state.clone(), crate::server::middleware::auth::auth_middleware))
         .with_state(state)
 }

@@ -11,13 +11,19 @@ use tower_http::compression::CompressionLayer;
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::auth::jwt::JwtManager;
+use crate::cdp::CdpEngine;
+use crate::cloud::CloudBackupManager;
 use crate::config::AppConfig;
 use crate::db::DbPool;
+use crate::dr::DrOrchestrator;
 use crate::enterprise::sso::SsoManager;
 use crate::job::JobManager;
+use crate::m365::M365BackupManager;
 use crate::restore::surebackup::SureBackupEngine;
 use crate::restore::tracker::RestoreTracker;
 use crate::scheduler::Scheduler;
+use crate::sobr::SobrManager;
+use crate::tape::TapeManager;
 
 pub struct AppState {
     pub config: AppConfig,
@@ -29,6 +35,12 @@ pub struct AppState {
     pub instant_recovery: crate::restore::instant::InstantRecoveryRegistry,
     pub surebackup: SureBackupEngine,
     pub sso: SsoManager,
+    pub sobr: SobrManager,
+    pub cloud: CloudBackupManager,
+    pub m365: M365BackupManager,
+    pub tape: TapeManager,
+    pub cdp: CdpEngine,
+    pub dr: DrOrchestrator,
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

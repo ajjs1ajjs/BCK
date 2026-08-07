@@ -10,6 +10,7 @@ use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrPlan {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub source_site: String,
@@ -43,6 +44,7 @@ pub enum DrStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrSite {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub dr_type: SiteType,

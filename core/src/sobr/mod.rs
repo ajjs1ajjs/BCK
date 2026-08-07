@@ -23,6 +23,7 @@ pub struct SobrManager {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageTier {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub tier_type: TierType,
@@ -51,6 +52,7 @@ pub enum TierStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SobrPolicy {
+    #[serde(default)]
     pub id: String,
     pub name: String,
     pub performance_tier_id: String,

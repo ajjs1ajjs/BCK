@@ -550,52 +550,11 @@ async fn update_hypervisor_status(db: &DbPool, id: &str, status: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::jwt::JwtManager;
-    use crate::config::AppConfig;
-    use crate::job::JobManager;
-    use crate::scheduler::Scheduler;
     use axum::body::Body;
     use axum::http::{Request, StatusCode as HttpStatus};
     use tower::ServiceExt;
 
-    async fn test_state(db_path: &str) -> Arc<AppState> {
-        let url = format!("sqlite://{}?mode=rwc", db_path.replace('\\', "/"));
-        let config = AppConfig {
-            database: crate::config::DatabaseConfig {
-                url: url.clone(),
-                pool_size: 2,
-                migrate: true,
-            },
-            storage: crate::config::StorageConfig {
-                default_path: std::path::PathBuf::from(db_path).join("backups"),
-                temp_path: std::path::PathBuf::from(db_path).join("tmp"),
-            },
-            ..AppConfig::default()
-        };
-
-        let db = crate::db::DbPool::connect(&url, config.database.pool_size)
-            .await
-            .unwrap();
-        db.migrate().await.unwrap();
-        let job_manager = Arc::new(tokio::sync::Mutex::new(JobManager::new(db.clone(), config.clone())));
-        let scheduler = Arc::new(tokio::sync::Mutex::new(Scheduler::new(job_manager.clone())));
-        Arc::new(AppState {
-            config,
-            db,
-            job_manager,
-            scheduler,
-            jwt: JwtManager::new(b"test-secret"),
-            restore_tracker: crate::restore::tracker::RestoreTracker::new(),
-            instant_recovery: crate::restore::instant::InstantRecoveryRegistry::new(),
-            surebackup: crate::restore::surebackup::SureBackupEngine::new(),
-            sso: crate::enterprise::sso::SsoManager::new(),
-        })
-    }
-
-    async fn read_json<T: serde::de::DeserializeOwned>(resp: axum::response::Response) -> T {
-        let bytes = axum::body::to_bytes(resp.into_body(), 4 * 1024 * 1024).await.unwrap();
-        serde_json::from_slice(&bytes).unwrap()
-    }
+    use crate::server::routes::testutil::{read_json, test_state};
 
     #[tokio::test]
     async fn hypervisor_crud_roundtrip() {
