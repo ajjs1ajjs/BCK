@@ -70,6 +70,8 @@ impl RestoreOrchestrator {
         storage: &dyn StorageBackend,
         key: Option<&[u8]>,
         hypervisor_connector: Option<&dyn crate::integrations::HypervisorConnector>,
+        vm_name: &str,
+        power_on: bool,
     ) -> Result<RestoreSession> {
         let session_id = uuid::Uuid::new_v4().to_string();
         info!("Starting VM restore: snapshot={}, target={}", snapshot_id, target_datastore);
@@ -90,10 +92,24 @@ impl RestoreOrchestrator {
             processed += data.len() as u64;
         }
 
-        // Register VM on hypervisor if connector is provided
-        if let Some(_connector) = hypervisor_connector {
-            // TODO: register VM from restored files
-            info!("VM registration would happen here");
+        // Register VM on the hypervisor if a connector was provided.
+        if let Some(connector) = hypervisor_connector {
+            let disk_files: Vec<String> = files.keys()
+                .filter(|p| {
+                    let lower = p.to_lowercase();
+                    lower.ends_with(".vhd") || lower.ends_with(".vhdx")
+                        || lower.ends_with(".vmdk") || lower.ends_with(".vmx")
+                })
+                .cloned()
+                .collect();
+            if disk_files.is_empty() {
+                info!("No virtual disk/config files in snapshot {} — skipping VM registration", snapshot_id);
+            } else {
+                let vm_ref = connector
+                    .register_vm(vm_name, &disk_files, target_datastore, power_on)
+                    .await?;
+                info!("Registered restored VM '{}' on hypervisor as {}", vm_name, vm_ref);
+            }
         }
 
         Ok(RestoreSession {

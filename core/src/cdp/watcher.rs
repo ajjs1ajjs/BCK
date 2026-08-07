@@ -9,6 +9,7 @@ use tracing::{info, warn};
 use super::ChangeEvent;
 
 /// Cross-platform filesystem watcher for CDP
+#[derive(Clone)]
 pub struct FileWatcher {
     watch_paths: Vec<PathBuf>,
     event_tx: tokio_mpsc::UnboundedSender<ChangeEvent>,
@@ -16,16 +17,16 @@ pub struct FileWatcher {
 }
 
 impl FileWatcher {
+    /// Create a watcher that emits change events into `event_tx`.
     pub fn new(
         paths: Vec<String>,
         exclude: Vec<String>,
         _buffer_size: usize,
+        event_tx: tokio_mpsc::UnboundedSender<ChangeEvent>,
     ) -> Self {
-        let (tx, _rx) = tokio_mpsc::unbounded_channel();
-
         Self {
             watch_paths: paths.into_iter().map(PathBuf::from).collect(),
-            event_tx: tx,
+            event_tx,
             exclude_patterns: exclude,
         }
     }
@@ -85,22 +86,22 @@ impl FileWatcher {
         Ok(())
     }
 
-    /// Start watcher in background tokio task
-    pub async fn start_watching(&self) -> Result<()> {
-        let paths = self.watch_paths.clone();
-        let exclude = self.exclude_patterns.clone();
+    /// Start watcher in background tokio task; returns the change event stream
+    pub async fn start_watching(&self) -> Result<tokio_mpsc::UnboundedReceiver<ChangeEvent>> {
+        let (tx, rx) = tokio_mpsc::unbounded_channel::<ChangeEvent>();
+
+        let watcher = FileWatcher {
+            watch_paths: self.watch_paths.clone(),
+            event_tx: tx,
+            exclude_patterns: self.exclude_patterns.clone(),
+        };
 
         tokio::task::spawn_blocking(move || {
-            let watcher = FileWatcher::new(
-                paths.into_iter().map(|p| p.to_string_lossy().to_string()).collect(),
-                exclude,
-                1024,
-            );
             let _ = watcher.start_blocking();
         }).await
             .map_err(|e| anyhow::anyhow!("Watcher task join error: {}", e))?;
 
-        Ok(())
+        Ok(rx)
     }
 
     fn should_exclude(&self, path: &str) -> bool {

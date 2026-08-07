@@ -5,6 +5,7 @@ pub mod gcs;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::Deserialize;
 
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
@@ -27,6 +28,7 @@ pub struct StorageStats {
     pub total_blocks: u64,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct StorageConfig {
     pub backend_type: String,
     pub path: Option<String>,

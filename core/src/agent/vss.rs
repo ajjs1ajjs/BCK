@@ -89,11 +89,31 @@ $result | ConvertTo-Json -Compress
 
     pub async fn freeze_applications(&self) -> Result<()> {
         info!("Freezing applications via VSS...");
+
+        let writers = self.get_writer_status().await?;
+
+        let failed: Vec<String> = writers
+            .iter()
+            .filter(|w| w.status == "Failed")
+            .map(|w| w.name.clone())
+            .collect();
+        if !failed.is_empty() {
+            return Err(anyhow!(
+                "VSS writer(s) in Failed state: {}",
+                failed.join(", ")
+            ));
+        }
+
+        let stable = writers.iter().filter(|w| w.status == "Stable").count();
+        info!("VSS writers stable: {} ({} total)", stable, writers.len());
         Ok(())
     }
 
     pub async fn thaw_applications(&self) -> Result<()> {
-        info!("Thawing applications...");
+        // Thaw is implicit: when the shadow copy is removed the VSS service
+        // automatically releases writers; there is no explicit thaw API call
+        // to execute on top of that lifecycle.
+        info!("Thawing applications... (implicit on shadow copy removal)");
         Ok(())
     }
 

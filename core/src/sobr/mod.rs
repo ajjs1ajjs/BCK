@@ -5,7 +5,10 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
+
+use crate::sobr::policy::DataLifecycleEngine;
+use crate::sobr::tier::TierBackend;
 
 /// SOBR (Scale-Out Backup Repository) — multi-tier storage management
 ///
@@ -59,6 +62,8 @@ pub struct SobrPolicy {
     pub archive_move_days: Option<u32>,
     /// Seal backup after N days (read-only)
     pub seal_days: Option<u32>,
+    /// Delete backups older than N days (retention)
+    pub retention_days: Option<u32>,
 }
 
 impl SobrManager {
@@ -105,37 +110,47 @@ impl SobrManager {
             .ok_or_else(|| anyhow::anyhow!("No available performance tier"))
     }
 
-    /// Execute data movement for a policy against the given snapshots.
-    /// Returns the lifecycle plan that was produced.
+    /// Execute data movement according to a policy. Registers the policy's
+    /// tier backends on the lifecycle engine, then performs age-based movement,
+    /// archival, sealing, and retention. Returns total bytes moved.
     pub async fn execute_data_movement(
         &self,
         policy_id: &str,
-        snapshots: Vec<crate::sobr::policy::LifecycleSnapshot>,
-    ) -> Result<crate::sobr::policy::LifecyclePlan> {
-        let policies = self.policies.read().await;
-        let policy = policies.iter().find(|p| p.id == policy_id)
-            .ok_or_else(|| anyhow::anyhow!("Policy not found: {}", policy_id))?;
+        engine: &DataLifecycleEngine,
+    ) -> Result<u64> {
+        let policy = self.get_policy(policy_id).await?;
 
-        let engine = crate::sobr::policy::DataLifecycleEngine::new();
-        let plan = engine.evaluate(
-            &snapshots,
-            policy.capacity_move_days,
-            policy.archive_move_days,
-            policy.seal_days,
-            0,
-        );
-        info!("SOBR movement for {}: {} to capacity, {} to archive, {} sealed",
-            policy.name, plan.move_to_capacity.len(), plan.move_to_archive.len(), plan.seal.len());
+        let perf = self.resolve_tier(&policy.performance_tier_id).await?;
+        let cap = self.resolve_tier(&policy.capacity_tier_id).await?;
+        engine.register_tier_backend(TierBackend::from_tier(&perf).await?).await?;
+        engine.register_tier_backend(TierBackend::from_tier(&cap).await?).await?;
 
-        // Move capacity-tier blocks to the capacity tier backend.
-        if let Some(cap) = policies_read_capacity_tier(self, &policy).await {
-            let _ = cap;
-            info!("Capacity tier available for movement");
-        } else {
-            warn!("SOBR policy {} has no capacity tier; skipping movement", policy.name);
+        if let Some(archive_id) = &policy.archive_tier_id {
+            let archive = self.resolve_tier(archive_id).await?;
+            engine.register_tier_backend(TierBackend::from_tier(&archive).await?).await?;
         }
 
-        Ok(plan)
+        info!("SOBR executing policy {}: {} tiers", policy.name, if policy.archive_tier_id.is_some() { 3 } else { 2 });
+        let moved = engine.execute_policy(&policy).await?;
+        Ok(moved)
+    }
+
+    async fn get_policy(&self, policy_id: &str) -> Result<SobrPolicy> {
+        let policies = self.policies.read().await;
+        policies
+            .iter()
+            .find(|p| p.id == policy_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("SOBR policy not found: {}", policy_id))
+    }
+
+    async fn resolve_tier(&self, tier_id: &str) -> Result<StorageTier> {
+        let tiers = self.tiers.read().await;
+        tiers
+            .iter()
+            .find(|t| t.id == tier_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("SOBR tier not found: {}", tier_id))
     }
 
     /// Get tier usage statistics
@@ -147,10 +162,4 @@ impl SobrManager {
     pub async fn list_policies(&self) -> Vec<SobrPolicy> {
         self.policies.read().await.clone()
     }
-}
-
-async fn policies_read_capacity_tier(mgr: &SobrManager, policy: &SobrPolicy) -> Option<StorageTier> {
-    mgr.tiers.read().await.iter()
-        .find(|t| t.id == policy.capacity_tier_id)
-        .cloned()
 }

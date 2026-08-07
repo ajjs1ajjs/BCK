@@ -3,11 +3,16 @@ pub mod mailbox;
 pub mod onedrive;
 pub mod sharepoint;
 
-use anyhow::Result;
+use crate::m365::graph::{BackupStats, GraphClient};
+use crate::m365::mailbox::{sanitize_filename, MailboxBackup};
+use crate::m365::onedrive::OneDriveBackup;
+use crate::m365::sharepoint::SharePointBackup;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct M365Tenant {
@@ -44,7 +49,6 @@ pub struct M365BackupJob {
     pub bytes_processed: u64,
     pub started_at: i64,
     pub completed_at: Option<i64>,
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,103 +85,64 @@ impl M365BackupManager {
         Ok(tenant)
     }
 
-    /// Start backup for a tenant (background task enumerates and stores items
-    /// through Microsoft Graph into a local target directory).
+    /// Start backup for a tenant
     pub async fn start_backup(
         &self,
         tenant_id: &str,
         backup_type: M365BackupType,
-        target_dir: &str,
     ) -> Result<M365BackupJob> {
         let job = M365BackupJob {
             id: uuid::Uuid::new_v4().to_string(),
             tenant_id: tenant_id.to_string(),
-            backup_type,
+            backup_type: backup_type.clone(),
             status: "running".into(),
             items_processed: 0,
             bytes_processed: 0,
             started_at: chrono::Utc::now().timestamp(),
             completed_at: None,
-            error: None,
         };
 
-        std::fs::create_dir_all(target_dir)?;
-        let job_id = job.id.clone();
-        let backup_type = job.backup_type.clone();
-        let target_dir_owned = target_dir.to_string();
-        let tenant_id_owned = tenant_id.to_string();
-        self.active_jobs.write().await.push(job.clone());
-        info!("M365 backup started: tenant={}, type={:?}", tenant_id, job.backup_type);
+        let tenants = self.tenants.read().await;
+        let tenant = tenants
+            .iter()
+            .find(|t| t.tenant_id == tenant_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("M365 tenant not found: {}", tenant_id))?;
+        drop(tenants);
 
-        let tenants = self.tenants.clone();
+        self.active_jobs.write().await.push(job.clone());
+        info!(
+            "M365 backup started: tenant={}, type={:?}",
+            tenant_id, job.backup_type
+        );
+
         let jobs = self.active_jobs.clone();
+        let job_id = job.id.clone();
+
         tokio::spawn(async move {
-            let tenant = {
-                let t = tenants.read().await;
-                t.iter().find(|t| t.id == tenant_id_owned).cloned()
-            };
-            let result: Result<u64> = async {
-                let tenant = tenant.ok_or_else(|| anyhow::anyhow!("Tenant not found: {}", tenant_id_owned))?;
-                let secret = std::env::var("BCK_M365_SECRET").unwrap_or_default();
-                let graph = graph::GraphClient::new(&tenant.tenant_id, &tenant.client_id, &secret);
-                graph.authenticate(&tenant.tenant_id, &tenant.client_id, &secret).await?;
-                match backup_type {
-                    M365BackupType::Mailbox => {
-                        let msgs: Vec<graph::GraphItem> = graph.get_all("/me/messages?$select=id,subject,size&$top=50").await?;
-                        let mut count = 0u64;
-                        for m in msgs.iter().take(100) {
-                            count += 1;
-                        }
-                        let meta = format!("mailbox:{}", msgs.len());
-                        std::fs::write(std::path::Path::new(&target_dir_owned).join("mailbox.index"), meta)?;
-                        Ok(count)
-                    }
-                    M365BackupType::OneDrive => {
-                        let items: Vec<graph::GraphItem> = graph.get_all("/me/drive/root/children?$select=id,name,size").await?;
-                        let mut bytes = 0u64;
-                        for it in &items {
-                            bytes += it.size_bytes.unwrap_or(0);
-                        }
-                        let meta = format!("onedrive:{}:{}", items.len(), bytes);
-                        std::fs::write(std::path::Path::new(&target_dir_owned).join("onedrive.index"), meta)?;
-                        Ok(items.len() as u64)
-                    }
-                    M365BackupType::SharePoint => {
-                        let sites: Vec<graph::GraphItem> = graph.get_all("/sites?$select=id,displayName").await?;
-                        let meta = format!("sharepoint:{}", sites.len());
-                        std::fs::write(std::path::Path::new(&target_dir_owned).join("sharepoint.index"), meta)?;
-                        Ok(sites.len() as u64)
-                    }
-                    M365BackupType::All => {
-                        let msgs: Vec<graph::GraphItem> = graph.get_all("/me/messages?$select=id,size").await?;
-                        let items: Vec<graph::GraphItem> = graph.get_all("/me/drive/root/children?$select=id,size").await?;
-                        let mut bytes = 0u64;
-                        for it in msgs.iter().chain(items.iter()) {
-                            bytes += it.size_bytes.unwrap_or(0);
-                        }
-                        let meta = format!("all:{}:{}", msgs.len() + items.len(), bytes);
-                        std::fs::write(std::path::Path::new(&target_dir_owned).join("all.index"), meta)?;
-                        Ok((msgs.len() + items.len()) as u64)
-                    }
-                }
-            }
-            .await;
+            // NOTE: tenant.encrypted_secret is used as the plaintext client secret for now.
+            // Decryption-at-rest (KMS) is handled later.
+            let graph = GraphClient::new(
+                tenant.tenant_id.clone(),
+                tenant.client_id.clone(),
+                tenant.encrypted_secret.clone(),
+            );
+            let backup_dir = std::env::temp_dir().join("bck-m365").join(&job_id);
+            let result = run_backup(&graph, backup_type, &backup_dir).await;
 
             let mut jobs = jobs.write().await;
             if let Some(j) = jobs.iter_mut().find(|j| j.id == job_id) {
                 match result {
-                    Ok(items) => {
+                    Ok(stats) => {
                         j.status = "completed".into();
-                        j.items_processed = items;
-                        j.completed_at = Some(chrono::Utc::now().timestamp());
+                        j.items_processed = stats.items;
+                        j.bytes_processed = stats.bytes;
                     }
                     Err(e) => {
-                        j.status = "failed".into();
-                        j.error = Some(e.to_string());
-                        j.completed_at = Some(chrono::Utc::now().timestamp());
-                        warn!("M365 backup failed: {}", e);
+                        j.status = format!("failed: {}", e);
                     }
                 }
+                j.completed_at = Some(chrono::Utc::now().timestamp());
             }
         });
 
@@ -193,4 +158,81 @@ impl M365BackupManager {
     pub async fn list_jobs(&self) -> Vec<M365BackupJob> {
         self.active_jobs.read().await.clone()
     }
+}
+
+impl Default for M365BackupManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+async fn run_backup(
+    graph: &GraphClient,
+    backup_type: M365BackupType,
+    backup_dir: &Path,
+) -> Result<BackupStats> {
+    match backup_type {
+        M365BackupType::Mailbox => run_mailbox_backup(graph, backup_dir).await,
+        M365BackupType::OneDrive => run_onedrive_backup(graph, backup_dir).await,
+        M365BackupType::SharePoint => run_sharepoint_backup(graph, backup_dir).await,
+        M365BackupType::All => {
+            let mut total = BackupStats::default();
+            for stats in [
+                run_mailbox_backup(graph, backup_dir).await,
+                run_onedrive_backup(graph, backup_dir).await,
+                run_sharepoint_backup(graph, backup_dir).await,
+            ] {
+                let stats = stats?;
+                total.items += stats.items;
+                total.bytes += stats.bytes;
+            }
+            Ok(total)
+        }
+    }
+}
+
+async fn run_mailbox_backup(graph: &GraphClient, backup_dir: &Path) -> Result<BackupStats> {
+    let mb = MailboxBackup::new(graph.clone());
+    let mailboxes = mb.list_mailboxes().await?;
+    let mut total = BackupStats::default();
+    for m in &mailboxes {
+        let dir = backup_dir
+            .join("mailbox")
+            .join(sanitize_filename(&m.id));
+        let stats = mb.backup_mailbox(&m.id, &dir).await?;
+        total.items += stats.items;
+        total.bytes += stats.bytes;
+    }
+    Ok(total)
+}
+
+async fn run_onedrive_backup(graph: &GraphClient, backup_dir: &Path) -> Result<BackupStats> {
+    let mb = MailboxBackup::new(graph.clone());
+    let od = OneDriveBackup::new(graph.clone());
+    let mailboxes = mb.list_mailboxes().await?;
+    let mut total = BackupStats::default();
+    for m in &mailboxes {
+        let dir = backup_dir
+            .join("onedrive")
+            .join(sanitize_filename(&m.id));
+        let stats = od.backup_drive(&m.id, &dir).await?;
+        total.items += stats.items;
+        total.bytes += stats.bytes;
+    }
+    Ok(total)
+}
+
+async fn run_sharepoint_backup(graph: &GraphClient, backup_dir: &Path) -> Result<BackupStats> {
+    let sp = SharePointBackup::new(graph.clone());
+    let sites = sp.list_sites().await?;
+    let mut total = BackupStats::default();
+    for s in &sites {
+        let dir = backup_dir
+            .join("sharepoint")
+            .join(sanitize_filename(&s.id));
+        let stats = sp.backup_site(&s.id, &dir).await?;
+        total.items += stats.items;
+        total.bytes += stats.bytes;
+    }
+    Ok(total)
 }

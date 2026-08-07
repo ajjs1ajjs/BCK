@@ -98,6 +98,8 @@ async fn main() -> anyhow::Result<()> {
         jwt,
         restore_tracker: bck_core::restore::tracker::RestoreTracker::new(),
         instant_recovery: bck_core::restore::instant::InstantRecoveryRegistry::new(),
+        surebackup: bck_core::restore::surebackup::SureBackupEngine::new(),
+        sso: bck_core::enterprise::sso::SsoManager::new(),
     });
 
     // Start scheduler

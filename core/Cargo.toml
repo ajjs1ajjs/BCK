@@ -45,6 +45,9 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # Storage
 aws-sdk-s3 = "1"
 aws-config = "1"
+aws-sigv4 = "1"
+aws-credential-types = "1"
+aws-smithy-types = "1"
 azure_storage_blobs = "0.20"
 azure_storage = "0.20"
 reqwest = { version = "0.12", features = ["stream", "json"] }
@@ -52,6 +55,7 @@ reqwest = { version = "0.12", features = ["stream", "json"] }
 # Auth
 jsonwebtoken = "9"
 argon2 = "0.5"
+ldap3 = { version = "0.11", default-features = false, features = ["sync", "tls-rustls"] }
 
 # Config
 toml = "0.8"

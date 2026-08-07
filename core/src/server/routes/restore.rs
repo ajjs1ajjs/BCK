@@ -1,7 +1,9 @@
 use axum::{
     extract::{Path, State, Query},
     Json,
+    body::Body,
     http::StatusCode,
+    response::Response,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,6 +22,7 @@ pub struct VmRestoreRequest {
     pub target_host: Option<String>,
     pub vm_name: Option<String>,
     pub power_on: bool,
+    pub hypervisor_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -63,7 +66,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/instant", axum::routing::post(instant_recovery))
         .route("/instant/:id/stop", axum::routing::post(stop_instant_recovery))
         .route("/explore/:snapshot_id", axum::routing::get(browse_snapshot))
+        .route("/explore/:snapshot_id/file", axum::routing::get(download_file))
         .route("/surebackup", axum::routing::post(start_surebackup))
+        .route("/surebackup", axum::routing::get(list_surebackup))
+        .route("/surebackup/:id", axum::routing::get(get_surebackup))
         .route("/session/:id", axum::routing::get(get_session))
 }
 
@@ -259,14 +265,17 @@ async fn browse_snapshot(
     let _snapshot = lookup_snapshot(&state.db, &snapshot_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let prefix = params.get("prefix").map(|s| s.as_str()).unwrap_or("");
+    let dir = params.get("dir")
+        .or_else(|| params.get("prefix"))
+        .cloned()
+        .unwrap_or_else(|| "/".to_string());
 
     // Load manifest from index
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let explorer = crate::restore::explorer::GuestFileExplorer::new(&index_str)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let files = explorer.list_files(&snapshot_id, prefix).await
+    let files = explorer.list_directory(&snapshot_id, &dir).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let entries: Vec<serde_json::Value> = files.into_iter().map(|f| {
@@ -282,10 +291,149 @@ async fn browse_snapshot(
     Ok(Json(entries))
 }
 
+/// Download (or preview) a single file from a snapshot, reassembled from the
+/// block store on the fly.
+async fn download_file(
+    State(state): State<Arc<AppState>>,
+    Path(snapshot_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Response, StatusCode> {
+    let path = params.get("path").ok_or(StatusCode::BAD_REQUEST)?;
+    let snapshot = lookup_snapshot(&state.db, &snapshot_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let repo = lookup_repository(&state.db, &snapshot.repository_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let storage = build_storage(&repo).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let key = encryption_key(&state);
+
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
+    let explorer = crate::restore::explorer::GuestFileExplorer::new(&index_str)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let data = explorer.extract_file(&snapshot_id, path, storage.as_ref(), key.as_deref())
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    let response = Response::builder()
+        .header("Content-Type", "application/octet-stream")
+        .header("Content-Length", data.len().to_string())
+        .body(Body::from(data))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(response)
+}
+
+#[derive(Deserialize)]
+pub struct SureBackupRequest {
+    pub snapshot_id: String,
+    pub vm_name: String,
+    pub target_host: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SureBackupResponse {
+    pub job_id: String,
+    pub status: String,
+}
+
 async fn start_surebackup(
-    State(_state): State<Arc<AppState>>,
-) -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<SureBackupRequest>,
+) -> Result<Json<SureBackupResponse>, StatusCode> {
+    use crate::restore::surebackup::{SureBackupStatus, TestResult};
+
+    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let repo = lookup_repository(&state.db, &snapshot.repository_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let storage = build_storage(&repo).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let job = state.surebackup.start_verification(&req.snapshot_id, &req.vm_name).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let jid = job.id.clone();
+    let jid_task = jid.clone();
+
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
+    let listen = req.target_host.clone().unwrap_or_default();
+    let state = state.clone();
+
+    // Drive the verification in the background:
+    //  1. start instant recovery (isolated lab) for the snapshot
+    //  2. run network + heartbeat tests against the recovered target
+    //  3. stop the recovery session and mark the job complete
+    tokio::spawn(async move {
+        let _ = state.surebackup.update_job(&jid_task, |j| {
+            j.status = SureBackupStatus::CreatingLab;
+        }).await;
+
+        let session = state.instant_recovery
+            .start_nfs(&index_str, storage, &req.snapshot_id, &req.vm_name, "", &listen)
+            .await;
+
+        let session = match session {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = state.surebackup.update_job(&jid_task, |j| {
+                    j.status = SureBackupStatus::Failed(e.to_string());
+                    j.completed_at = Some(chrono::Utc::now().timestamp());
+                }).await;
+                return;
+            }
+        };
+
+        let _ = state.surebackup.update_job(&jid_task, |j| {
+            j.status = SureBackupStatus::BootingVm;
+        }).await;
+
+        // Give the recovery server a moment to accept connections.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        let target_ip = session.target_host.clone();
+        let mut results: Vec<TestResult> = Vec::new();
+        for test in ["ping", "heartbeat"] {
+            let result = state.surebackup.run_test(&target_ip, test).await
+                .unwrap_or_else(|e| TestResult {
+                    test_name: test.to_string(),
+                    status: "error".into(),
+                    message: e.to_string(),
+                    duration_seconds: 0,
+                });
+            results.push(result);
+        }
+
+        let _ = state.surebackup.update_job(&jid_task, |j| {
+            j.status = SureBackupStatus::RunningTests;
+            j.test_results = results;
+        }).await;
+
+        let _ = state.instant_recovery.stop_session(&session.id).await;
+
+        let _ = state.surebackup.update_job(&jid_task, |j| {
+            j.status = SureBackupStatus::Completed;
+            j.completed_at = Some(chrono::Utc::now().timestamp());
+        }).await;
+    });
+
+    Ok(Json(SureBackupResponse {
+        job_id: jid.clone(),
+        status: "pending".into(),
+    }))
+}
+
+async fn get_surebackup(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::restore::surebackup::SureBackupJob>, StatusCode> {
+    state.surebackup.get_job(&id).await
+        .ok_or(StatusCode::NOT_FOUND)
+        .map(Json)
+}
+
+async fn list_surebackup(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<crate::restore::surebackup::SureBackupJob>>, StatusCode> {
+    Ok(Json(state.surebackup.get_status().await))
 }
 
 async fn get_session(
@@ -411,6 +559,19 @@ async fn perform_vm_restore(
     let storage = build_storage(&repo).await?;
     let key = encryption_key(state);
 
+    // Optional: build a hypervisor connector so the restored VM can be
+    // re-registered on the source hypervisor.
+    let connector: Option<Box<dyn crate::integrations::HypervisorConnector>> = match &req.hypervisor_id {
+        Some(hv_id) => {
+            let hv = super::hypervisors::fetch_hypervisor(&state.db, hv_id).await?
+                .ok_or_else(|| anyhow::anyhow!("Hypervisor not found: {}", hv_id))?;
+            Some(super::hypervisors::connector_from_model(&hv)?)
+        }
+        None => None,
+    };
+    let vm_name = req.vm_name.clone()
+        .unwrap_or_else(|| format!("bck-restore-{}", &req.snapshot_id[..req.snapshot_id.len().min(12)]));
+
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let orchestrator = RestoreOrchestrator::new(&index_str)?;
 
@@ -419,7 +580,9 @@ async fn perform_vm_restore(
         &req.target_datastore,
         storage.as_ref(),
         key.as_deref(),
-        None,
+        connector.as_deref(),
+        &vm_name,
+        req.power_on,
     ).await?;
 
     crate::db::record_event(

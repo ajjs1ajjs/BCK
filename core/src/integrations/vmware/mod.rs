@@ -4,6 +4,7 @@ use base64::Engine;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
+use tracing::info;
 
 use crate::integrations::{
     ChangedBlock, HypervisorConnector, PowerState,
@@ -228,6 +229,26 @@ impl HypervisorConnector for VSphereConnector {
         })
     }
 
+    async fn power_on(&self, vm_ref: &str) -> Result<()> {
+        self.ensure_session().await?;
+        self.post_json::<serde_json::Value>(
+            &format!("/vcenter/vm/{}/power/start", vm_ref),
+            &serde_json::json!({}),
+        ).await?;
+        info!("vSphere VM powered on: {}", vm_ref);
+        Ok(())
+    }
+
+    async fn power_off(&self, vm_ref: &str, force: bool) -> Result<()> {
+        self.ensure_session().await?;
+        self.post_json::<serde_json::Value>(
+            &format!("/vcenter/vm/{}/power/stop", vm_ref),
+            &serde_json::json!({ "action": "stop", "force": force }),
+        ).await?;
+        info!("vSphere VM powered off (force={}): {}", force, vm_ref);
+        Ok(())
+    }
+
     async fn create_snapshot(
         &self,
         vm_ref: &str,
@@ -324,6 +345,71 @@ impl HypervisorConnector for VSphereConnector {
             "Direct disk block read not supported. Use backup proxy. Disk: {} offset: {} len: {}",
             disk_path, offset, length
         ))
+    }
+
+    async fn register_vm(
+        &self,
+        vm_name: &str,
+        disk_files: &[String],
+        datastore: &str,
+        power_on: bool,
+    ) -> Result<String> {
+        self.ensure_session().await?;
+
+        let vmx = disk_files.iter()
+            .find(|p| p.to_lowercase().ends_with(".vmx"))
+            .cloned()
+            .ok_or_else(|| anyhow!("No .vmx file found among restored files for VM registration"))?;
+
+        // Convert the local path into a datastore path: [datastore] folder/name.vmx
+        let local = std::path::Path::new(&vmx);
+        let file_name = local.file_name().map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "restored.vmx".to_string());
+        let folder = local.parent()
+            .and_then(|p| p.file_name())
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let vmx_path = if folder.is_empty() {
+            format!("[{}] {}", datastore, file_name)
+        } else {
+            format!("[{}] {}/{}", datastore, folder, file_name)
+        };
+
+        #[derive(Serialize)]
+        struct RegisterSpec {
+            name: String,
+            path: String,
+            placement: Placement,
+        }
+        #[derive(Serialize)]
+        struct Placement {
+            power_on: bool,
+        }
+        #[derive(Serialize)]
+        struct RegisterReq {
+            spec: RegisterSpec,
+        }
+
+        let req = RegisterReq {
+            spec: RegisterSpec {
+                name: vm_name.to_string(),
+                path: vmx_path,
+                placement: Placement { power_on },
+            },
+        };
+
+        #[derive(Deserialize)]
+        struct RegisterResp {
+            value: String,
+        }
+
+        let resp: RegisterResp = self.post_json("/vcenter/vm?action=register", &req).await?;
+        Ok(resp.value)
+    }
+
+    async fn unregister_vm(&self, vm_ref: &str) -> Result<()> {
+        self.ensure_session().await?;
+        self.delete(&format!("/vcenter/vm/{}", vm_ref)).await
     }
 }
 

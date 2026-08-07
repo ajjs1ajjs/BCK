@@ -165,9 +165,60 @@ impl DrOrchestrator {
     pub async fn test_failover(&self, plan_id: &str) -> Result<()> {
         *self.status.write().await = DrStatus::TestInProgress;
         info!("DR test failover started: plan={}", plan_id);
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+        let plans = self.plans.read().await;
+        let plan = plans.iter()
+            .find(|p| p.id == plan_id)
+            .cloned();
+        drop(plans);
+
+        let Some(plan) = plan else {
+            *self.status.write().await = DrStatus::Error(format!("plan not found: {}", plan_id));
+            return Err(anyhow::anyhow!("DR plan not found: {}", plan_id));
+        };
+
+        // Non-destructive validation pass: log the failover order.
+        let vm_order = if plan.failover_order.is_empty() {
+            plan.vms.clone()
+        } else {
+            plan.failover_order.iter()
+                .filter(|name| plan.vms.contains(name))
+                .cloned()
+                .chain(plan.vms.iter().filter(|v| !plan.failover_order.contains(v)).cloned())
+                .collect()
+        };
+        info!(
+            "DR test failover: plan={} source={} target={} order={:?}",
+            plan.name, plan.source_site, plan.target_site, vm_order
+        );
+
+        // Verify the target site endpoint is reachable (non-fatal).
+        let target = {
+            let sites = self.sites.read().await;
+            sites.iter().find(|s| s.id == plan.target_site).cloned()
+        };
+
+        if let Some(target) = target {
+            let site = site::SiteConnector::new();
+            match site.test_connection(&target.endpoint).await {
+                Ok(true) => info!("DR test failover: target site {} reachable", target.name),
+                Ok(false) => info!("DR test failover: target site {} unreachable (non-fatal)", target.name),
+                Err(e) => info!("DR test failover: target site {} check failed (non-fatal): {}", target.name, e),
+            }
+        } else {
+            info!("DR test failover: target site {} not registered; skipping reachability check", plan.target_site);
+        }
+
+        // Build the failover engine (degrades to logging when no connector).
+        let failover = failover::FailoverEngine::new();
+        if !failover.has_connector() {
+            info!("DR test failover: no hypervisor connector configured; running in planning mode");
+        } else {
+            info!("DR test failover: hypervisor connector available; validating VM references");
+        }
+
         *self.status.write().await = DrStatus::Idle;
-        info!("DR test failover completed: plan={}", plan_id);
+        info!("DR test failover completed: plan={}", plan.name);
         Ok(())
     }
 

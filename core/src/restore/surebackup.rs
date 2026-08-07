@@ -1,5 +1,8 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,75 +34,116 @@ pub struct TestResult {
     pub duration_seconds: u64,
 }
 
-/// SureBackup — автоматична верифікація бекапів
-/// Запускає VM з бекапу в ізольованому середовищі та перевіряє працездатність
-pub struct SureBackupEngine;
+/// SureBackup — automatic backup verification.
+///
+/// Boots a VM from the backup in an isolated environment, then runs a set of
+/// verification tests (network reachability, guest heartbeat) and records the
+/// results. Job state is tracked in-memory via [`SureBackupEngine`].
+#[derive(Clone, Default)]
+pub struct SureBackupEngine {
+    jobs: Arc<RwLock<HashMap<String, SureBackupJob>>>,
+}
 
 impl SureBackupEngine {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
-    /// Start a SureBackup verification job
+    /// Register a new verification job (the caller drives the actual recovery).
     pub async fn start_verification(
         &self,
         snapshot_id: &str,
         vm_name: &str,
     ) -> Result<SureBackupJob> {
-        let job_id = uuid::Uuid::new_v4().to_string();
-        info!("Starting SureBackup: snapshot={}, vm={}", snapshot_id, vm_name);
-
-        // 1. Create isolated virtual lab (VLAN, dummy network)
-        // 2. Instant Recovery VM from backup into the lab
-        // 3. Power on VM
-        // 4. Wait for OS boot + heartbeat
-        // 5. Run verification tests:
-        //    a. Ping test
-        //    b. Port check (SQL 1433, etc.)
-        //    c. Application-specific checks
-        // 6. Generate report
-        // 7. Power off and clean up
-
-        Ok(SureBackupJob {
-            id: job_id,
+        let job = SureBackupJob {
+            id: uuid::Uuid::new_v4().to_string(),
             snapshot_id: snapshot_id.to_string(),
             vm_name: vm_name.to_string(),
             status: SureBackupStatus::Pending,
             test_results: Vec::new(),
             started_at: chrono::Utc::now().timestamp(),
             completed_at: None,
-        })
+        };
+        info!(
+            "SureBackup job created: id={}, snapshot={}, vm={}",
+            job.id, snapshot_id, vm_name
+        );
+        self.jobs.write().await.insert(job.id.clone(), job.clone());
+        Ok(job)
     }
 
-    /// Run a specific test against a restored VM
-    pub async fn run_test(
+    /// Mutate a job in place.
+    pub async fn update_job(
         &self,
-        vm_ip: &str,
-        test_type: &str,
-    ) -> Result<TestResult> {
+        id: &str,
+        f: impl FnOnce(&mut SureBackupJob),
+    ) -> Option<SureBackupJob> {
+        let mut jobs = self.jobs.write().await;
+        let job = jobs.get_mut(id)?;
+        f(job);
+        Some(job.clone())
+    }
+
+    pub async fn get_job(&self, id: &str) -> Option<SureBackupJob> {
+        self.jobs.read().await.get(id).cloned()
+    }
+
+    pub async fn get_status(&self) -> Vec<SureBackupJob> {
+        let mut jobs: Vec<SureBackupJob> = self.jobs.read().await.values().cloned().collect();
+        jobs.sort_by_key(|j| j.started_at);
+        jobs
+    }
+
+    pub async fn cancel_job(&self, id: &str) -> Result<()> {
+        let mut jobs = self.jobs.write().await;
+        let job = jobs
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("SureBackup job not found: {}", id))?;
+        job.status = SureBackupStatus::Failed("cancelled by user".into());
+        job.completed_at = Some(chrono::Utc::now().timestamp());
+        Ok(())
+    }
+
+    /// Run a specific test against a restored VM.
+    pub async fn run_test(&self, vm_ip: &str, test_type: &str) -> Result<TestResult> {
         let start = std::time::Instant::now();
 
         let result = match test_type {
             "ping" => {
+                let (flag, count) = if cfg!(target_os = "windows") {
+                    ("-n", "3")
+                } else {
+                    ("-c", "3")
+                };
                 let output = tokio::process::Command::new("ping")
-                    .args(["-c", "3", vm_ip])
+                    .args([flag, count, vm_ip])
                     .output()
                     .await?;
 
                 TestResult {
                     test_name: "Network connectivity".into(),
                     status: if output.status.success() { "pass" } else { "fail" }.into(),
-                    message: String::from_utf8_lossy(&output.stdout).to_string(),
+                    message: String::from_utf8_lossy(&output.stdout).trim().to_string(),
                     duration_seconds: start.elapsed().as_secs(),
                 }
             }
             "heartbeat" => {
-                // Check if VMware Tools / Hyper-V Integration Services are running
-                TestResult {
-                    test_name: "Guest heartbeat".into(),
-                    status: "pass".into(),
-                    message: "Heartbeat detected".into(),
-                    duration_seconds: start.elapsed().as_secs(),
+                // Probe TCP connectivity to the recovered VM. Defaults to the
+                // SSH port; VM-specific ports can be added later per guest type.
+                let outcome = tokio::net::TcpStream::connect((vm_ip, 22)).await;
+                match outcome {
+                    Ok(_) => TestResult {
+                        test_name: "Guest heartbeat".into(),
+                        status: "pass".into(),
+                        message: format!("TCP port 22 reachable on {}", vm_ip),
+                        duration_seconds: start.elapsed().as_secs(),
+                    },
+                    Err(e) => TestResult {
+                        test_name: "Guest heartbeat".into(),
+                        status: "fail".into(),
+                        message: format!("TCP port 22 not reachable on {}: {}", vm_ip, e),
+                        duration_seconds: start.elapsed().as_secs(),
+                    },
                 }
             }
             _ => TestResult {
@@ -111,10 +155,5 @@ impl SureBackupEngine {
         };
 
         Ok(result)
-    }
-
-    /// Get surebackup job status
-    pub async fn get_status(&self) -> Vec<SureBackupJob> {
-        Vec::new()
     }
 }

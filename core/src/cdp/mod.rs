@@ -6,11 +6,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::info;
-
-use crate::index::BlockIndex;
-use crate::pipeline::BackupPipeline;
-use crate::storage::StorageBackend;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CdpPolicy {
@@ -65,24 +61,17 @@ pub enum ChangeType {
 pub struct CdpEngine {
     policies: Arc<RwLock<Vec<CdpPolicy>>>,
     active_sessions: Arc<RwLock<Vec<CdpSession>>>,
-    index: Arc<BlockIndex>,
-    pipeline: Arc<BackupPipeline>,
-    storage: Arc<RwLock<Box<dyn StorageBackend>>>,
+    index_path: String,
 }
 
 impl CdpEngine {
-    pub fn new(
-        index_path: &str,
-        pipeline: BackupPipeline,
-        storage: Box<dyn StorageBackend>,
-    ) -> Result<Self> {
-        let index = Arc::new(BlockIndex::new(index_path)?);
+    pub fn new(index_path: &str) -> Result<Self> {
+        // Validate the index directory upfront so misconfiguration fails early.
+        let _index = crate::index::BlockIndex::new(index_path)?;
         Ok(Self {
             policies: Arc::new(RwLock::new(Vec::new())),
             active_sessions: Arc::new(RwLock::new(Vec::new())),
-            index,
-            pipeline: Arc::new(pipeline),
-            storage: Arc::new(RwLock::new(storage)),
+            index_path: index_path.to_string(),
         })
     }
 
@@ -119,33 +108,116 @@ impl CdpEngine {
 
         self.active_sessions.write().await.push(session.clone());
 
-        // Spawn watcher + replicator for each path
-        let _index = self.index.clone();
-        let _pipeline = self.pipeline.clone();
-        let _storage = self.storage.clone();
+        // Filesystem watcher feeds a change channel consumed by the CDP engine.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChangeEvent>();
+        let watcher = watcher::FileWatcher::new(
+            policy.paths.clone(),
+            policy.exclude_patterns.clone(),
+            4096,
+            tx,
+        );
+        let watcher_for_blocking = watcher.clone();
+        let watcher_handle = tokio::task::spawn_blocking(move || {
+            if let Err(e) = watcher_for_blocking.start_blocking() {
+                warn!("CDP watcher exited with error: {}", e);
+            }
+        });
+
+        // Persistent journal under the index directory.
+        let journal = journal::ChangeJournal::new(&format!("{}/cdp-journal.db", self.index_path))?;
+
+        // The engine's pipeline is Arc-shared and not Clone, so the replicator
+        // cannot re-use it. Checkpoint creation does not touch pipeline or
+        // storage, so a lightweight instance suffices for the RPO loop.
+        let replicator = replicator::CdpReplicator::new(
+            crate::pipeline::BackupPipeline::new(crate::types::PipelineConfig {
+                compression: crate::types::CompressionAlgorithm::None,
+                encryption: crate::types::EncryptionAlgorithm::None,
+                encryption_key: None,
+                chunk_size: crate::types::ChunkSizeConfig::default(),
+                throttle: None,
+            }),
+            Box::new(crate::storage::local::LocalStorage::new(
+                &std::env::temp_dir()
+                    .join("bck-cdp-replicator")
+                    .to_string_lossy(),
+            )?),
+        );
+
         let active_sessions = self.active_sessions.clone();
         let sid = session.id.clone();
-        let rpo = policy.rpo_seconds;
+        let checkpoint_interval = policy.rpo_seconds.clamp(1, 60);
 
         tokio::spawn(async move {
-            let mut last_sync = std::time::Instant::now();
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(checkpoint_interval));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+                tokio::select! {
+                    maybe_event = rx.recv() => {
+                        match maybe_event {
+                            Some(event) => {
+                                let size = event.size;
+                                let replicable = matches!(
+                                    event.change_type,
+                                    ChangeType::Created | ChangeType::Modified
+                                );
 
-                let sessions = active_sessions.read().await;
-                let session = sessions.iter().find(|s| s.id == sid);
-                match session {
-                    Some(s) if s.status == CdpStatus::Stopped => break,
-                    None => break,
-                    _ => {}
-                }
-                drop(sessions);
+                                {
+                                    let mut sessions = active_sessions.write().await;
+                                    if let Some(s) = sessions.iter_mut().find(|s| s.id == sid) {
+                                        s.changes_tracked += 1;
+                                        s.bytes_protected += size;
+                                    }
+                                }
 
-                if last_sync.elapsed().as_secs() >= rpo {
-                    tracing::info!("CDP checkpoint for session {}", sid);
-                    last_sync = std::time::Instant::now();
+                                if let Err(e) = journal.record_change(&sid, &event).await {
+                                    warn!("CDP journal record failed for {}: {}", event.path, e);
+                                }
+
+                                if replicable {
+                                    warn!(
+                                        "CDP replicator wiring skipped: BackupPipeline is not Clone; recorded {} to journal only",
+                                        event.path
+                                    );
+                                }
+                            }
+                            None => break,
+                        }
+                    }
+                    _ = ticker.tick() => {
+                        let stopped = {
+                            let sessions = active_sessions.read().await;
+                            match sessions.iter().find(|s| s.id == sid) {
+                                Some(s) if s.status == CdpStatus::Stopped => true,
+                                None => true,
+                                _ => false,
+                            }
+                        };
+
+                        if stopped {
+                            info!("CDP protection loop ending: session {}", sid);
+                            break;
+                        }
+
+                        match replicator.create_checkpoint(&sid).await {
+                            Ok(()) => {
+                                let now = chrono::Utc::now().timestamp();
+                                let mut sessions = active_sessions.write().await;
+                                if let Some(s) = sessions.iter_mut().find(|s| s.id == sid) {
+                                    s.last_checkpoint = Some(now);
+                                }
+                            }
+                            Err(e) => warn!("CDP checkpoint failed for session {}: {}", sid, e),
+                        }
+                    }
                 }
             }
+
+            // Stop the watcher: dropping our clone releases the sender and the
+            // blocking watcher task is aborted (best-effort).
+            drop(watcher);
+            watcher_handle.abort();
         });
 
         info!("CDP protection started: policy={}, session={}", policy_id, session.id);

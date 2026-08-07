@@ -1,6 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use tracing::info;
 
 /// Backup Proxy transport modes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,11 +69,17 @@ pub struct ProxyStats {
 /// NFS-based backup proxy
 pub struct NfsProxy {
     config: ProxyConfig,
+    bytes_processed: AtomicU64,
+    tasks: AtomicU32,
 }
 
 impl NfsProxy {
     pub fn new(config: ProxyConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            bytes_processed: AtomicU64::new(0),
+            tasks: AtomicU32::new(0),
+        }
     }
 
     fn nfs_mount_path(&self, datastore: &str) -> String {
@@ -79,9 +87,27 @@ impl NfsProxy {
     }
 }
 
+/// Decrements the in-flight task counter on drop (including error returns).
+struct TaskGuard<'a>(&'a AtomicU32);
+
+impl TaskGuard<'_> {
+    fn enter<'a>(counter: &'a AtomicU32) -> TaskGuard<'a> {
+        counter.fetch_add(1, Ordering::SeqCst);
+        TaskGuard(counter)
+    }
+}
+
+impl Drop for TaskGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 #[async_trait]
 impl BackupProxy for NfsProxy {
     async fn read_blocks(&self, request: &BlockReadRequest) -> Result<Vec<u8>> {
+        let _guard = TaskGuard::enter(&self.tasks);
+
         let mount_path = self.nfs_mount_path(&request.datastore);
         let full_path = format!("{}/{}", mount_path, request.disk_path);
 
@@ -99,6 +125,8 @@ impl BackupProxy for NfsProxy {
         let mut buffer = vec![0u8; request.length as usize];
         let n = file.read_exact(&mut buffer).await?;
         buffer.truncate(n);
+
+        self.bytes_processed.fetch_add(n as u64, Ordering::SeqCst);
 
         Ok(buffer)
     }
@@ -124,21 +152,66 @@ impl BackupProxy for NfsProxy {
         Ok(mount_path)
     }
 
-    async fn unmount_datastore(&self, _mount_path: &str) -> Result<()> {
+    async fn unmount_datastore(&self, mount_path: &str) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            tokio::process::Command::new("umount")
-                .args([_mount_path])
+            let output = tokio::process::Command::new("umount")
+                .args([mount_path])
                 .output()
                 .await?;
+            if !output.status.success() {
+                anyhow::bail!("NFS unmount failed: {}", String::from_utf8_lossy(&output.stderr));
+            }
+
+            // Best-effort: verify the mount point was removed.
+            if let Ok(meta) = std::fs::metadata(mount_path) {
+                if meta.is_dir() {
+                    let _ = std::fs::remove_dir(mount_path);
+                }
+            }
         }
 
+        info!("Datastore unmounted: {}", mount_path);
         Ok(())
     }
 
     async fn test_connection(&self) -> Result<()> {
-        // Test NFS connectivity
-        Ok(())
+        let addr = format!("{}:{}", self.config.host, self.config.port);
+        let connect = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            tokio::net::TcpStream::connect(&addr),
+        );
+
+        match connect.await {
+            Ok(Ok(_stream)) => {
+                info!("NFS proxy connection OK: {}", addr);
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("TCP connect to {} failed: {}", addr, e);
+
+                // Best-effort fallback: query the NFS export list via showmount.
+                #[cfg(target_os = "linux")]
+                {
+                    if let Ok(output) = tokio::process::Command::new("showmount")
+                        .args(["-e", &self.config.host])
+                        .output()
+                        .await
+                    {
+                        if output.status.success() {
+                            info!("showmount -e {} succeeded", self.config.host);
+                            return Ok(());
+                        }
+                    }
+                }
+
+                Err(anyhow::anyhow!("Failed to connect to NFS proxy at {}: {}", addr, e))
+            }
+            Err(_) => Err(anyhow::anyhow!(
+                "Connection to NFS proxy at {} timed out after 5s",
+                addr
+            )),
+        }
     }
 
     async fn get_stats(&self) -> Result<ProxyStats> {
@@ -146,8 +219,8 @@ impl BackupProxy for NfsProxy {
             name: self.config.name.clone(),
             cpu_load: 0.0,
             memory_used_mb: 0,
-            active_tasks: 0,
-            bytes_processed: 0,
+            active_tasks: self.tasks.load(Ordering::SeqCst),
+            bytes_processed: self.bytes_processed.load(Ordering::SeqCst),
             throughput_bps: 0,
             errors_count: 0,
         })

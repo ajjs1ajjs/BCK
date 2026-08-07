@@ -83,6 +83,12 @@ pub trait HypervisorConnector: Send + Sync {
     /// Get VM by reference
     async fn get_vm(&self, mo_ref: &str) -> Result<VmInfo, anyhow::Error>;
 
+    /// Power on a VM by reference
+    async fn power_on(&self, vm_ref: &str) -> Result<(), anyhow::Error>;
+
+    /// Power off a VM by reference. `force` requests a hard power-off.
+    async fn power_off(&self, vm_ref: &str, force: bool) -> Result<(), anyhow::Error>;
+
     /// Create a VM snapshot
     async fn create_snapshot(
         &self,
@@ -115,4 +121,19 @@ pub trait HypervisorConnector: Send + Sync {
         offset: i64,
         length: i64,
     ) -> Result<Vec<u8>, anyhow::Error>;
+
+    /// Register a restored VM on the hypervisor from its restored disk/config
+    /// files. `disk_files` are the local paths that were assembled from the
+    /// backup; `datastore` is the staging directory the files live in. Returns
+    /// the hypervisor VM id/ref on success.
+    async fn register_vm(
+        &self,
+        vm_name: &str,
+        disk_files: &[String],
+        datastore: &str,
+        power_on: bool,
+    ) -> Result<String, anyhow::Error>;
+
+    /// Remove a registered VM (cleanup after surebackup verification).
+    async fn unregister_vm(&self, vm_ref: &str) -> Result<(), anyhow::Error>;
 }

@@ -126,6 +126,57 @@ impl BlockIndex {
         Ok(())
     }
 
+    pub fn list_all_snapshots(&self) -> Result<Vec<Snapshot>> {
+        let conn = self.db.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, job_id, repository_id, snapshot_type, parent_id, size_bytes,
+             unique_bytes, compressed_bytes, checksum, created_at, manifest_path
+             FROM snapshots ORDER BY created_at DESC",
+        )?;
+
+        let snapshots = stmt.query_map([], |row| {
+            Ok(Snapshot {
+                id: row.get(0)?,
+                job_id: row.get(1)?,
+                repository_id: row.get(2)?,
+                snapshot_type: crate::types::SnapshotType::Full, // simplified
+                parent_id: row.get(4)?,
+                size_bytes: row.get(5)?,
+                unique_bytes: row.get(6)?,
+                compressed_bytes: row.get(7)?,
+                checksum: row.get(8)?,
+                consistency: crate::types::ConsistencyLevel::Consistent,
+                app_consistent: false,
+                created_at: row.get(9)?,
+                manifest_path: row.get(10)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+        Ok(snapshots)
+    }
+
+    /// Backdate (or re-stamp) a snapshot's creation time, e.g. when importing
+    /// historical metadata into the index.
+    pub fn set_snapshot_created_at(&self, snapshot_id: &str, created_at: i64) -> Result<()> {
+        let conn = self.db.lock().unwrap();
+        conn.execute(
+            "UPDATE snapshots SET created_at = ?1 WHERE id = ?2",
+            rusqlite::params![created_at, snapshot_id],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a snapshot and its manifest. Blocks themselves are NOT removed;
+    /// callers must reconcile block refcounts (see `remove_block`).
+    pub fn delete_snapshot(&self, snapshot_id: &str) -> Result<()> {
+        let conn = self.db.lock().unwrap();
+        conn.execute("DELETE FROM manifests WHERE snapshot_id = ?1", [snapshot_id])?;
+        conn.execute("DELETE FROM snapshots WHERE id = ?1", [snapshot_id])?;
+        Ok(())
+    }
+
     pub fn list_snapshots(&self, job_id: &str, limit: i64, offset: i64) -> Result<Vec<Snapshot>> {
         let conn = self.db.lock().unwrap();
         let mut stmt = conn.prepare(

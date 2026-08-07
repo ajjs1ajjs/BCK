@@ -17,6 +17,27 @@ pub struct CloudAccount {
     pub auth_type: String,
     pub region: String,
     pub status: AccountStatus,
+    /// AWS static access key
+    #[serde(default)]
+    pub access_key: Option<String>,
+    /// AWS static secret key
+    #[serde(default)]
+    pub secret_key: Option<String>,
+    /// AWS session token (for temporary credentials)
+    #[serde(default)]
+    pub session_token: Option<String>,
+    /// Azure AD tenant id
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    /// Azure AD application (client) id
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Azure AD application client secret
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// GCP project id
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

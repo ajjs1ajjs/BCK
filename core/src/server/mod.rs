@@ -13,7 +13,9 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::auth::jwt::JwtManager;
 use crate::config::AppConfig;
 use crate::db::DbPool;
+use crate::enterprise::sso::SsoManager;
 use crate::job::JobManager;
+use crate::restore::surebackup::SureBackupEngine;
 use crate::restore::tracker::RestoreTracker;
 use crate::scheduler::Scheduler;
 
@@ -25,6 +27,8 @@ pub struct AppState {
     pub jwt: JwtManager,
     pub restore_tracker: RestoreTracker,
     pub instant_recovery: crate::restore::instant::InstantRecoveryRegistry,
+    pub surebackup: SureBackupEngine,
+    pub sso: SsoManager,
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {
