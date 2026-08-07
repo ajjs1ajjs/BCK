@@ -146,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
                 warn!("API server error: {}", e);
             }
         }
-        result = serve_grpc(grpc_listener) => {
+        result = serve_grpc(grpc_listener, app_state.clone()) => {
             if let Err(e) = result {
                 warn!("gRPC server error: {}", e);
             }
@@ -163,15 +163,19 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn serve_grpc(listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck_core::server::AppState>) -> anyhow::Result<()> {
     use bck_core::api::grpc::bck_proto::backup_engine_server::BackupEngineServer;
-    use bck_core::api::grpc::BackupEngineImpl;
+    use bck_core::api::grpc::bck_proto::sobr_service_server::SobrServiceServer;
+    use bck_core::api::grpc::bck_proto::cloud_service_server::CloudServiceServer;
+    use bck_core::api::grpc::bck_proto::m365_service_server::M365ServiceServer;
+    use bck_core::api::grpc::{BackupEngineImpl, SobrServiceService, CloudServiceService, M365ServiceService};
     use tonic::transport::Server;
 
-    let engine = BackupEngineImpl::new();
-
     Server::builder()
-        .add_service(BackupEngineServer::new(engine))
+        .add_service(BackupEngineServer::new(BackupEngineImpl::new(state.clone())))
+        .add_service(SobrServiceServer::new(SobrServiceService::new(state.clone())))
+        .add_service(CloudServiceServer::new(CloudServiceService::new(state.clone())))
+        .add_service(M365ServiceServer::new(M365ServiceService::new(state.clone())))
         .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
         .await?;
 

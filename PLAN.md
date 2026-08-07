@@ -34,13 +34,13 @@ E:\Code\BCK\
 |-----------|--------|--------|
 | Core engine | ✅ | scanner → chunker (XXH3) → dedup (SHA-256) → compress (LZ4/Zstd/noop) → encrypt (AES-256/ChaCha20) |
 | Storage | ✅ | Local FS, S3 (SigV4, MinIO path-style), Azure Blob, GCS |
-| REST API | 🟡 | jobs, repos, snapshots, restore, dashboard, auth, agents, hypervisors, events, **sso, sobr, cloud, m365, tape, cdp, dr** |
-| gRPC | ✅ | Tonic + Prost, `BackupEngine` сервіс стартує в bckd |
+| REST API | ✅ | jobs, repos, snapshots, restore, dashboard, auth, agents, hypervisors, events, **sso, sobr, cloud, m365, tape, cdp, dr** |
+| gRPC | ✅ | Tonic + Prost; `BackupEngine` (реальний: start/cancel jobs, list snapshots, stats, health, restore), **SOBR / Cloud / M365 сервіси** |
 | Database | ✅ | SQLite (rusqlite) default + PostgreSQL (sqlx) |
 | Scheduler | ✅ | cron-подібні розклади |
 | Auth | ✅ | JWT + Argon2; SSO OIDC (authorize/callback) + LDAP |
-| CLI | 🟡 | jobs, repos, snapshots, restore, status, logs, **cloud, sobr, m365, dr** |
-| Web UI | 🟡 | 12 сторінок (Admin, Dashboard, Jobs, Login, Repositories, Restore, Snapshots, **SOBR, Cloud, M365, Tape, DR**); SSO — секція в Admin |
+| CLI | ✅ | jobs, repos, snapshots, restore, status, logs, **cloud, sobr, m365, dr, hypervisor, portal, tenant** |
+| Web UI | ✅ | 13 сторінок (Admin, Dashboard, Jobs, Login, Repositories, Restore, Snapshots, **SOBR, Cloud, M365, Tape, DR, Hypervisors**); SSO — секція в Admin |
 | Instant Recovery | ✅ | реальні NFSv3 + iSCSI сервери |
 | Restore Explorer | ✅ | перегляд снапшотів + витяг файлів |
 | SureBackup | ✅ | валідація відновлення ВМ (register/unregister VM) |
@@ -83,7 +83,7 @@ E:\Code\BCK\
 - [x] Instant Recovery (NFSv3, iSCSI)
 - [x] SureBackup engine + інтеграція в демон
 
-### Phase 4 — Enterprise 🟡
+### Phase 4 — Enterprise ✅
 - [x] CDP: watcher + replicator + checkpoints
 - [x] DR: реплікація, failover, тест failover
 - [x] Tape LTFS
@@ -92,7 +92,7 @@ E:\Code\BCK\
 - [x] REST API для SOBR / CDP / DR / Tape / M365
 - [x] Web UI сторінки
 
-### Phase 5 — Cloud 🟡
+### Phase 5 — Cloud ✅
 - [x] AWS: EC2 AMI, EBS snapshots, RDS snapshots/restore
 - [x] Azure: VM, managed disks, SQL (ARM + OAuth2)
 - [x] GCP: GCE images, disk snapshots, Cloud SQL
@@ -100,7 +100,7 @@ E:\Code\BCK\
 - [x] REST API для керування cloud accounts
 - [x] Cloud restore через Web UI (CloudRestoreManager → REST /api/v1/cloud/{id}/restore, Web UI секція, CLI `bck cloud restore`)
 
-### Phase 6 — Polish 🟡
+### Phase 6 — Polish ✅
 - [x] SSO (OIDC + LDAP) з HTTP routes
 - [x] Reports / SLA / CSV
 - [x] Audit log
@@ -110,8 +110,7 @@ E:\Code\BCK\
 
 ## Наступні пріоритетні кроки
 
-1. **REST роути** для `sobr`, `cloud`, `m365`, `tape`, `cdp`, `dr` у `core/src/server/routes/`
-   (усі модулі готові в core — треба лише обгорнути в Axum handlers).
+1. **gRPC**: реалізувати реальні RPC для SOBR / Cloud / M365 та підключити `BackupEngine` до AppState (job manager, DB). ✅
 2. **Web UI**: сторінки SOBR, Cloud accounts, M365, DR, SSO + роутинг/навігація. ✅
 3. **CLI**: підкоманди `bck cloud`, `bck sobr`, `bck m365`, `bck dr`. ✅
 4. **Очищення warnings** (~12): unused imports у `restore/instant/*` та `agent`. ✅
@@ -119,15 +118,13 @@ E:\Code\BCK\
 ## Відомі технічні борги
 
 - ~12 compiler warnings (`unused_imports` / `unused_variables`) у `core/src/restore/instant/`, `agent/src/main.rs`. → cleaned, 0 warnings
-- gRPC реалізує базовий `BackupEngine`; розширити сервіс новими RPC (sobr, cloud, m365).
-- Web UI не покриває Phase 4–6 фічі. → покрито (SOBR, Cloud, M365, Tape, DR, SSO в Admin)
-- CLI не покриває Phase 4–6 фічі.
 - VMware register/unregister — перевірити на реальному vCenter.
 
 ## Тести
 
-- **146 тест** у `bck-core` (всі проходять), бінарники — без тестів.
+- **152 тест** у `bck-core` (всі проходять), бінарники — без тестів.
 - SOBR lifecycle покритий (move, archive, seal, retention, shared blocks).
 - Instant recovery (NFS/iSCSI/xdr), cloud XML parsing, M365 Graph, Hyper-V RCT — покриті.
 - VM backup job покритий (unit: `backup::vm` блоки → storage; route: `POST .../vms/:ref/backup` + 404).
 - Instant Recovery для VM покритий (unit: register/unregister VM на hypervisor; route: 404/400/GET list).
+- gRPC покритий (6 unit-тестів: StartJob→JobManager, ListSnapshots, Health, SOBR tier, Cloud account, M365 tenant).

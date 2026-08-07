@@ -25,6 +25,31 @@ service Agent {
     rpc UpdateAgent(UpdateRequest) returns (stream UpdateProgress);
 }
 
+service SobrService {
+    rpc ListTiers(Empty) returns (SobrTierList);
+    rpc AddTier(SobrTier) returns (SobrTier);
+    rpc ListPolicies(Empty) returns (SobrPolicyList);
+    rpc CreatePolicy(SobrPolicy) returns (SobrPolicy);
+    rpc GetTierStats(Empty) returns (SobrTierList);
+}
+
+service CloudService {
+    rpc ListAccounts(Empty) returns (CloudAccountList);
+    rpc RegisterAccount(CloudAccount) returns (CloudAccount);
+    rpc RemoveAccount(AccountRef) returns (Empty);
+    rpc GetAccount(AccountRef) returns (CloudAccount);
+    rpc ListRestorableKinds(AccountRef) returns (RestorableKindList);
+    rpc SubmitRestore(RestoreRequest) returns (CloudRestore);
+    rpc ListRestores(RestoreQuery) returns (CloudRestoreList);
+}
+
+service M365Service {
+    rpc ListTenants(Empty) returns (M365TenantList);
+    rpc RegisterTenant(M365Tenant) returns (M365Tenant);
+    rpc ListBackupJobs(Empty) returns (M365BackupJobList);
+    rpc StartBackup(M365StartRequest) returns (M365BackupJob);
+}
+
 message Empty {}
 
 // === Core Types ===
@@ -440,4 +465,128 @@ message UpdateProgress {
     uint64 total_bytes = 4;
     string status = 5;
     string error = 6;
+}
+
+// === SOBR ===
+
+message SobrTier {
+    string id = 1;
+    string name = 2;
+    string tier_type = 3;   // performance / capacity / archive
+    string backend = 4;
+    uint64 capacity_bytes = 5;
+    uint64 used_bytes = 6;
+    string status = 7;      // online / offline / full / degraded
+    uint32 priority = 8;
+}
+
+message SobrTierList {
+    repeated SobrTier tiers = 1;
+}
+
+message SobrPolicy {
+    string id = 1;
+    string name = 2;
+    string performance_tier_id = 3;
+    string capacity_tier_id = 4;
+    string archive_tier_id = 5;
+    uint32 capacity_move_days = 6;
+    uint32 archive_move_days = 7;
+    uint32 seal_days = 8;
+    uint32 retention_days = 9;
+}
+
+message SobrPolicyList {
+    repeated SobrPolicy policies = 1;
+}
+
+// === Cloud ===
+
+message CloudAccount {
+    string id = 1;
+    string name = 2;
+    string provider = 3;    // aws / azure / gcp
+    string auth_type = 4;
+    string region = 5;
+    string status = 6;
+}
+
+message CloudAccountList {
+    repeated CloudAccount accounts = 1;
+}
+
+message AccountRef {
+    string id = 1;
+}
+
+message RestorableKind {
+    string resource_type = 1;
+    string label = 2;
+}
+
+message RestorableKindList {
+    repeated RestorableKind kinds = 1;
+}
+
+message RestoreRequest {
+    string account_id = 1;
+    string resource_type = 2;
+    string resource_id = 3;
+    string target_name = 4;
+    map<string, string> params = 5;
+}
+
+message CloudRestore {
+    string id = 1;
+    string account_id = 2;
+    string resource_type = 3;
+    string resource_id = 4;
+    string target_name = 5;
+    string status = 6;
+    int64 requested_at = 7;
+    int64 completed_at = 8;
+    string result = 9;
+    string error = 10;
+}
+
+message RestoreQuery {
+    string account_id = 1;
+}
+
+message CloudRestoreList {
+    repeated CloudRestore restores = 1;
+}
+
+// === M365 ===
+
+message M365Tenant {
+    string id = 1;
+    string tenant_id = 2;
+    string name = 3;
+    string auth_type = 4;  // app_only / delegated
+    string status = 5;
+}
+
+message M365TenantList {
+    repeated M365Tenant tenants = 1;
+}
+
+message M365BackupJob {
+    string id = 1;
+    string tenant_id = 2;
+    string backup_type = 3; // mailbox / onedrive / sharepoint / all
+    string status = 4;
+    uint64 items_processed = 5;
+    uint64 bytes_processed = 6;
+    int64 started_at = 7;
+    int64 completed_at = 8;
+}
+
+message M365BackupJobList {
+    repeated M365BackupJob jobs = 1;
+}
+
+message M365StartRequest {
+    string tenant_id = 1;
+    string backup_type = 2;
 }
