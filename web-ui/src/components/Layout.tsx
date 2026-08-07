@@ -12,6 +12,11 @@ import AdminIcon from '@mui/icons-material/AdminPanelSettings'
 import MenuIcon from '@mui/icons-material/Menu'
 import LogoutIcon from '@mui/icons-material/Logout'
 import CloudDoneIcon from '@mui/icons-material/CloudDone'
+import LayersIcon from '@mui/icons-material/Layers'
+import CloudIcon from '@mui/icons-material/Cloud'
+import EmailIcon from '@mui/icons-material/Email'
+import AlbumIcon from '@mui/icons-material/Album'
+import PublicIcon from '@mui/icons-material/Public'
 import { getUser, clearAuth } from '../api/client'
 
 const drawerWidth = 248
@@ -22,6 +27,11 @@ const navItems = [
   { path: '/repositories', label: 'Repositories', icon: <StorageIcon /> },
   { path: '/snapshots', label: 'Snapshots', icon: <CloudDoneIcon /> },
   { path: '/restore', label: 'Restore', icon: <RestoreIcon /> },
+  { path: '/sobr', label: 'SOBR', icon: <LayersIcon /> },
+  { path: '/cloud', label: 'Cloud', icon: <CloudIcon /> },
+  { path: '/m365', label: 'Microsoft 365', icon: <EmailIcon /> },
+  { path: '/tape', label: 'Tape Library', icon: <AlbumIcon /> },
+  { path: '/dr', label: 'Disaster Recovery', icon: <PublicIcon /> },
   { path: '/admin', label: 'Administration', icon: <AdminIcon /> },
 ]
 

@@ -170,6 +170,179 @@ export interface FileRestorePayload {
   overwrite?: boolean
 }
 
+// Phase 4–5 entities
+
+export interface StorageTier {
+  id?: string
+  name: string
+  tier_type: 'Performance' | 'Capacity' | 'Archive'
+  backend: string
+  backend_config: Record<string, unknown>
+  capacity_bytes: number
+  used_bytes: number
+  status: string
+  priority: number
+}
+
+export interface SobrPolicy {
+  id?: string
+  name: string
+  performance_tier_id: string
+  capacity_tier_id: string
+  archive_tier_id?: string | null
+  capacity_move_days: number
+  archive_move_days?: number | null
+  seal_days?: number | null
+  retention_days?: number | null
+}
+
+export interface CloudAccount {
+  id?: string
+  name: string
+  provider: 'Aws' | 'Azure' | 'Gcp'
+  auth_type: string
+  region: string
+  status: string
+  access_key?: string | null
+  secret_key?: string | null
+  session_token?: string | null
+  tenant_id?: string | null
+  client_id?: string | null
+  client_secret?: string | null
+  project_id?: string | null
+}
+
+export interface M365Tenant {
+  id?: string
+  tenant_id: string
+  name: string
+  auth_type: 'AppOnly' | 'Delegated'
+  client_id: string
+  encrypted_secret: string
+  status: string
+}
+
+export interface M365BackupJob {
+  id: string
+  tenant_id: string
+  backup_type: string
+  status: string
+  items_processed: number
+  bytes_processed: number
+  started_at: number
+  completed_at?: number | null
+}
+
+export interface TapeDrive {
+  id?: string
+  name: string
+  device_path: string
+  drive_type: string
+  loaded_media?: string | null
+  status: string
+  capacity_bytes: number
+  used_bytes: number
+}
+
+export interface TapeMedia {
+  id?: string
+  barcode: string
+  capacity_bytes: number
+  used_bytes: number
+  media_type: string
+  status: string
+  last_written?: number | null
+  retention_until?: number | null
+  location: string
+}
+
+export interface CdpPolicy {
+  id?: string
+  name: string
+  paths: string[]
+  rpo_seconds: number
+  min_interval_seconds: number
+  retention_days: number
+  compression: string
+  encryption: boolean
+  exclude_patterns: string[]
+}
+
+export interface CdpSession {
+  id: string
+  policy_id: string
+  status: string
+  changes_tracked: number
+  bytes_protected: number
+  last_checkpoint?: number | null
+  started_at: number
+}
+
+export interface CdpStats {
+  active_policies: number
+  total_changes: number
+  total_bytes: number
+}
+
+export interface DrSite {
+  id?: string
+  name: string
+  dr_type: string
+  endpoint: string
+  credentials_id: string
+  storage_id: string
+  is_primary: boolean
+  status: string
+}
+
+export interface DrPlan {
+  id?: string
+  name: string
+  source_site: string
+  target_site: string
+  vms: string[]
+  replication_policy: {
+    rpo_seconds: number
+    rto_seconds: number
+    compression: string
+    encryption: boolean
+    bandwidth_throttle_mbps: number
+  }
+  failover_order: string[]
+  auto_commit: boolean
+  test_mode: boolean
+}
+
+export interface SsoProvider {
+  id: string
+  name: string
+  provider_type: string
+  issuer_url: string
+  client_id: string
+  encrypted_client_secret: string
+  scopes: string[]
+  auto_provision: boolean
+  default_role: string
+  enabled: boolean
+}
+
+export interface LdapConfig {
+  url: string
+  bind_dn: string
+  bind_password: string
+  base_dn: string
+  user_filter: string
+  group_filter: string
+  tls: boolean
+}
+
+export interface ExecuteResult {
+  policy_id?: string
+  plan_id?: string
+  moved_bytes?: number
+  result?: string
+}
+
 // API helpers
 export const authApi = {
   login: (username: string, password: string) =>
@@ -217,4 +390,86 @@ export const agentsApi = {
 
 export const eventsApi = {
   list: (limit = 50) => api.get<EventInfo[]>('/events', { params: { limit } }),
+}
+
+export const sobrApi = {
+  tiers: () => api.get<StorageTier[]>('/sobr'),
+  addTier: (payload: StorageTier) => api.post<StorageTier>('/sobr/tiers', payload),
+  policies: () => api.get<SobrPolicy[]>('/sobr/policies'),
+  createPolicy: (payload: SobrPolicy) => api.post<SobrPolicy>('/sobr/policies', payload),
+  execute: (id: string) => api.post<ExecuteResult>(`/sobr/policies/${id}/execute`),
+}
+
+export const cloudApi = {
+  list: () => api.get<CloudAccount[]>('/cloud'),
+  get: (id: string) => api.get<CloudAccount>(`/cloud/${id}`),
+  register: (payload: CloudAccount) => api.post<CloudAccount>('/cloud', payload),
+  remove: (id: string) => api.delete(`/cloud/${id}`),
+}
+
+export const m365Api = {
+  tenants: () => api.get<M365Tenant[]>('/m365/tenants'),
+  registerTenant: (payload: M365Tenant) => api.post<M365Tenant>('/m365/tenants', payload),
+  jobs: () => api.get<M365BackupJob[]>('/m365/jobs'),
+  startBackup: (tenantId: string, backupType: string) =>
+    api.post<M365BackupJob>('/m365/jobs', { tenant_id: tenantId, backup_type: backupType }),
+}
+
+export const tapeApi = {
+  drives: () => api.get<TapeDrive[]>('/tape/drives'),
+  registerDrive: (payload: TapeDrive) => api.post<TapeDrive>('/tape/drives', payload),
+  media: () => api.get<TapeMedia[]>('/tape/media'),
+  addMedia: (payload: TapeMedia) => api.post<TapeMedia>('/tape/media', payload),
+  formatMedia: (payload: { device_path: string; barcode: string; capacity_bytes: number }) =>
+    api.post<TapeMedia>('/tape/media/format', payload),
+  loadMedia: (driveId: string, mediaId: string) =>
+    api.post(`/tape/drives/${driveId}/load`, { media_id: mediaId }),
+  ejectMedia: (driveId: string) => api.post(`/tape/drives/${driveId}/eject`),
+  write: (driveId: string, name: string, data: Uint8Array) =>
+    api.post<{ name: string; bytes_written: number }>(`/tape/drives/${driveId}/write`, {
+      name,
+      data_base64: bytesToBase64(data),
+    }),
+  read: (driveId: string, name: string) =>
+    api.get<{ name: string; data_base64: string }>(`/tape/drives/${driveId}/read`, { params: { name } }),
+  applyRetention: () => api.post<{ media_released: number }>('/tape/retention'),
+}
+
+export const cdpApi = {
+  policies: () => api.get<CdpPolicy[]>('/cdp/policies'),
+  createPolicy: (payload: CdpPolicy) => api.post<CdpPolicy>('/cdp/policies', payload),
+  start: (id: string) => api.post<CdpSession>(`/cdp/policies/${id}/start`),
+  sessions: () => api.get<CdpSession[]>('/cdp/sessions'),
+  stop: (id: string) => api.post(`/cdp/sessions/${id}/stop`),
+  stats: () => api.get<CdpStats>('/cdp/stats'),
+}
+
+export const drApi = {
+  status: () => api.get<string>('/dr/status'),
+  sites: () => api.get<DrSite[]>('/dr/sites'),
+  registerSite: (payload: DrSite) => api.post<DrSite>('/dr/sites', payload),
+  plans: () => api.get<DrPlan[]>('/dr/plans'),
+  createPlan: (payload: DrPlan) => api.post<DrPlan>('/dr/plans', payload),
+  failover: (id: string) => api.post<ExecuteResult>(`/dr/plans/${id}/failover`),
+  failback: (id: string) => api.post<ExecuteResult>(`/dr/plans/${id}/failback`),
+  test: (id: string) => api.post<ExecuteResult>(`/dr/plans/${id}/test`),
+}
+
+export const ssoApi = {
+  providers: () => api.get<SsoProvider[]>('/auth/sso/providers'),
+  registerProvider: (payload: SsoProvider) => api.post<SsoProvider>('/auth/sso/providers', payload),
+  addLdap: (payload: LdapConfig) => api.post('/auth/sso/ldap', payload),
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin)
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }

@@ -40,7 +40,7 @@ E:\Code\BCK\
 | Scheduler | ✅ | cron-подібні розклади |
 | Auth | ✅ | JWT + Argon2; SSO OIDC (authorize/callback) + LDAP |
 | CLI | 🟡 | jobs, repos, snapshots, restore, status, logs; **немає команд для нових фіч** |
-| Web UI | 🟡 | 7 сторінок (Admin, Dashboard, Jobs, Login, Repositories, Restore, Snapshots); **немає сторінок для SOBR/Cloud/M365/Tape/DR/SSO** |
+| Web UI | 🟡 | 12 сторінок (Admin, Dashboard, Jobs, Login, Repositories, Restore, Snapshots, **SOBR, Cloud, M365, Tape, DR**); SSO — секція в Admin |
 | Instant Recovery | ✅ | реальні NFSv3 + iSCSI сервери |
 | Restore Explorer | ✅ | перегляд снапшотів + витяг файлів |
 | SureBackup | ✅ | валідація відновлення ВМ (register/unregister VM) |
@@ -90,7 +90,7 @@ E:\Code\BCK\
 - [x] M365: mailbox / OneDrive / SharePoint
 - [x] SOBR: тіри + lifecycle (move/archive/seal/retention)
 - [x] REST API для SOBR / CDP / DR / Tape / M365
-- [ ] Web UI сторінки
+- [x] Web UI сторінки
 
 ### Phase 5 — Cloud 🟡
 - [x] AWS: EC2 AMI, EBS snapshots, RDS snapshots/restore
@@ -112,7 +112,7 @@ E:\Code\BCK\
 
 1. **REST роути** для `sobr`, `cloud`, `m365`, `tape`, `cdp`, `dr` у `core/src/server/routes/`
    (усі модулі готові в core — треба лише обгорнути в Axum handlers).
-2. **Web UI**: сторінки SOBR, Cloud accounts, M365, DR, SSO + роутинг/навігація.
+2. **Web UI**: сторінки SOBR, Cloud accounts, M365, DR, SSO + роутинг/навігація. ✅
 3. **CLI**: підкоманди `bck cloud`, `bck sobr`, `bck m365`, `bck dr`.
 4. **Очищення warnings** (~12): unused imports у `restore/instant/*` та `agent`.
 
@@ -120,7 +120,7 @@ E:\Code\BCK\
 
 - ~12 compiler warnings (`unused_imports` / `unused_variables`) у `core/src/restore/instant/`, `agent/src/main.rs`.
 - gRPC реалізує базовий `BackupEngine`; розширити сервіс новими RPC (sobr, cloud, m365).
-- Web UI не покриває Phase 4–6 фічі.
+- Web UI не покриває Phase 4–6 фічі. → покрито (SOBR, Cloud, M365, Tape, DR, SSO в Admin)
 - CLI не покриває Phase 4–6 фічі.
 - VMware register/unregister — перевірити на реальному vCenter.
 
