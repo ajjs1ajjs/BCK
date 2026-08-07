@@ -115,11 +115,13 @@ ensure_rust() {
     log "Rust toolchain ready (cargo $(cargo --version | awk '{print $2}'))."
 }
 
-# Install build prerequisites (Linux): C toolchain + OpenSSL dev headers + protoc + node.
+# Install build prerequisites (Linux): C toolchain + OpenSSL + protoc + node.
 ensure_build_deps() {
     if [ "$OS_LOWER" != "linux" ]; then
         return 0
     fi
+    # Only the packages that are actually missing get installed, so distro
+    # repos that already provide node (e.g. nodesource) are never disturbed.
     local missing=""
     command -v cc >/dev/null 2>&1  || command -v gcc >/dev/null 2>&1 || missing="$missing build-essential"
     command -v cmake >/dev/null 2>&1 || missing="$missing cmake"
@@ -127,22 +129,39 @@ ensure_build_deps() {
     pkg-config --exists openssl 2>/dev/null || missing="$missing libssl-dev"
     pkg-config --exists libzstd 2>/dev/null || missing="$missing libzstd-dev"
     command -v protoc >/dev/null 2>&1 || missing="$missing protobuf-compiler"
-    command -v npm >/dev/null 2>&1  || missing="$missing nodejs npm"
+
     if [ -n "$missing" ]; then
         log "Installing build dependencies:$missing ..."
+        local ok=0
         if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apt-get update -y 2>/dev/null | tail -n 1
-            apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler nodejs npm 2>&1 | tail -n 2
+            apt-get update -y >/dev/null 2>&1
+            apt-get install -y $missing && ok=1
         elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            dnf install -y gcc gcc-c++ cmake pkg-config openssl-devel libzstd-devel protobuf-compiler nodejs npm 2>&1 | tail -n 2
+            dnf install -y gcc gcc-c++ cmake pkg-config openssl-devel libzstd-devel protobuf-compiler 2>&1 | tail -n 2 && ok=1
         elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apk add --no-cache build-base cmake pkgconf openssl-dev zstd-dev protobuf nodejs npm 2>&1 | tail -n 2
-        else
-            warn "Missing system build deps and cannot auto-install (need root for apt/dnf/apk)."
-            warn "Run the installer as root, e.g.:  curl -fsSL .../install.sh | sudo bash"
+            apk add --no-cache build-base cmake pkgconf openssl-dev zstd-dev protobuf 2>&1 | tail -n 2 && ok=1
+        fi
+        if [ "$ok" -ne 1 ]; then
+            warn "Failed to install build dependencies automatically."
+            warn "Install them manually and re-run, e.g.:"
+            warn "  sudo apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler"
             return 1
         fi
     fi
+
+    # Node.js for the web console — best effort, never blocks the install.
+    if ! command -v npm >/dev/null 2>&1; then
+        log "Installing Node.js (for web console) ..."
+        if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+            apt-get install -y nodejs npm >/dev/null 2>&1 || true
+        elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+            dnf install -y nodejs npm >/dev/null 2>&1 || true
+        elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+            apk add --no-cache nodejs npm >/dev/null 2>&1 || true
+        fi
+        command -v npm >/dev/null 2>&1 || warn "npm still not available — web console will be skipped (daemon/CLI/agent work)."
+    fi
+
     # Give the shell the updated linker/cc path just in case.
     export CC="${CC:-cc}"
 }
@@ -196,7 +215,9 @@ if [ "$MODE" = "source" ]; then
     if ! ensure_rust; then
         fail "Rust toolchain could not be prepared. Install it manually (see message above), then re-run this installer."
     fi
-    ensure_build_deps || true
+    if ! ensure_build_deps; then
+        fail "System build dependencies are required. Install them and re-run."
+    fi
     require git
     [ -d "$TMPDIR/BCK" ] || git clone --depth 1 "https://github.com/${REPO}.git" "$TMPDIR/BCK"
     cd "$TMPDIR/BCK"
