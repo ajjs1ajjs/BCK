@@ -57,12 +57,12 @@ Default web console: `http://localhost:9440` (login `admin` / `admin`).
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.
 
-**Linux / macOS**
+**Linux / macOS** (one command — installs Rust, all system build dependencies, the daemon/agent/CLI/proxy, web console and registers the service):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
-**Windows (PowerShell)**
+**Windows (PowerShell)** — run in an **Administrator** PowerShell (auto-elevates if needed):
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex"
 ```
@@ -77,19 +77,17 @@ What the installer does:
 
 > **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates. Build prerequisites (installed automatically when running as root) are: `build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler`.
 
-> **If the installer stops at "Required tool not found: cargo":** you are likely running an old cached copy of the script (GitHub raw sometimes caches for a few minutes after a commit). Verify you have the latest and re-run:
+> **If the installer stops at "Required tool not found: cargo":** you are likely running an old cached copy of the script (GitHub raw sometimes caches for a few minutes after a commit). Verify you have the latest and re-run (use `sudo bash` so system deps can be installed):
 > ```bash
-> # check the fetched script actually contains the Rust auto-install step
 > curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | grep -q ensure_rust && echo "script is up to date"
-> # then install (auto-installs Rust + build deps if missing)
-> curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | bash
+> curl -fsSL "https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh?ts=$(date +%s)" | sudo bash
 > ```
 
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
 ```bash
 # Add a weekly update (Linux/macOS)
-0 3 * * 0  curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | bash
+0 3 * * 0  curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
 **Verify installation:**

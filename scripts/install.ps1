@@ -28,6 +28,18 @@ $BCK_HOME = Join-Path $env:ProgramFiles "BCK"
 $BCK_DATA = Join-Path $env:ProgramData "BCK"
 $TmpDir = Join-Path $env:TEMP "bck-install"
 
+# Auto-elevate to Administrator so binaries + service registration work.
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "[BCK] Elevating to Administrator ..." -ForegroundColor Cyan
+    try {
+        Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -NoProfile -Command `"irm https://raw.githubusercontent.com/$Repo/main/scripts/install.ps1 | iex`"" -Verb RunAs
+        exit
+    } catch {
+        Write-Host "[BCK] Elevation was cancelled." -ForegroundColor Red
+        exit 1
+    }
+}
+
 function Log($msg) { Write-Host "[BCK] $msg" -ForegroundColor Cyan }
 function Warn($msg) { Write-Host "[BCK] $msg" -ForegroundColor Yellow }
 function Fail($msg) { Write-Host "[BCK] $msg" -ForegroundColor Red; exit 1 }

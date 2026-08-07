@@ -52,6 +52,32 @@ case "$ARCH" in
     *) fail "Unsupported arch: $ARCH" ;;
 esac
 
+# Re-exec as root so system deps + /opt install + service registration work.
+# Only applies to the Linux/macOS flow; sudo is used when available.
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        log "Not running as root — re-executing installer with sudo..."
+        if [ -n "${BCK_INSTALL_REEXEC:-}" ]; then
+            fail "sudo re-exec already attempted; install manually as root."
+        fi
+        # Download ourselves to a temp file (stdin may be a pipe) and re-run.
+        SELF_URL="https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh"
+        TMP_SELF="$(mktemp)"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$SELF_URL" -o "$TMP_SELF"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -q "$SELF_URL" -O "$TMP_SELF"
+        else
+            fail "Need curl or wget"
+        fi
+        exec sudo -E env BCK_INSTALL_REEXEC=1 bash "$TMP_SELF" "$@"
+    else
+        warn "Root privileges are required to install system dependencies and register the service."
+        warn "Re-run as root:  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh | sudo bash"
+        exit 1
+    fi
+fi
+
 # ------------------------------------------------------------------ helpers ---
 require() {
     command -v "$1" >/dev/null 2>&1 || fail "Required tool not found: $1"
@@ -89,7 +115,7 @@ ensure_rust() {
     log "Rust toolchain ready (cargo $(cargo --version | awk '{print $2}'))."
 }
 
-# Install build prerequisites (Linux): C toolchain + OpenSSL dev headers + protoc.
+# Install build prerequisites (Linux): C toolchain + OpenSSL dev headers + protoc + node.
 ensure_build_deps() {
     if [ "$OS_LOWER" != "linux" ]; then
         return 0
@@ -101,18 +127,19 @@ ensure_build_deps() {
     pkg-config --exists openssl 2>/dev/null || missing="$missing libssl-dev"
     pkg-config --exists libzstd 2>/dev/null || missing="$missing libzstd-dev"
     command -v protoc >/dev/null 2>&1 || missing="$missing protobuf-compiler"
+    command -v npm >/dev/null 2>&1  || missing="$missing nodejs npm"
     if [ -n "$missing" ]; then
         log "Installing build dependencies:$missing ..."
         if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
             apt-get update -y 2>/dev/null | tail -n 1
-            apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler 2>&1 | tail -n 2
+            apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler nodejs npm 2>&1 | tail -n 2
         elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            dnf install -y gcc gcc-c++ cmake pkg-config openssl-devel libzstd-devel protobuf-compiler 2>&1 | tail -n 2
+            dnf install -y gcc gcc-c++ cmake pkg-config openssl-devel libzstd-devel protobuf-compiler nodejs npm 2>&1 | tail -n 2
         elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apk add --no-cache build-base cmake pkgconf openssl-dev zstd-dev protobuf 2>&1 | tail -n 2
+            apk add --no-cache build-base cmake pkgconf openssl-dev zstd-dev protobuf nodejs npm 2>&1 | tail -n 2
         else
-            warn "Missing system build deps (build-essential / cmake / pkg-config / libssl-dev / libzstd-dev / protobuf-compiler) and cannot auto-install."
-            warn "Install them manually, e.g.:  sudo apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler"
+            warn "Missing system build deps and cannot auto-install (need root for apt/dnf/apk)."
+            warn "Run the installer as root, e.g.:  curl -fsSL .../install.sh | sudo bash"
             return 1
         fi
     fi
