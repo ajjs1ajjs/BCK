@@ -6,7 +6,6 @@ web-ui/dist
 data/
 backup-store/
 restored/
-restore*/
 *.swp
 *.swo
 .idea/
