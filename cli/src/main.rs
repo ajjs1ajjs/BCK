@@ -74,6 +74,157 @@ enum Commands {
         #[arg(short, long)]
         job: Option<String>,
     },
+
+    /// SOBR management (scale-out backup repository)
+    #[command(subcommand)]
+    Sobr(SobrCmd),
+    /// Cloud account management (AWS / Azure / GCP)
+    #[command(subcommand)]
+    Cloud(CloudCmd),
+    /// Microsoft 365 backup management
+    #[command(subcommand)]
+    M365(M365Cmd),
+    /// Disaster recovery management
+    #[command(subcommand)]
+    Dr(DrCmd),
+}
+
+#[derive(Subcommand)]
+enum SobrCmd {
+    /// List SOBR storage tiers
+    Tiers,
+    /// Register a storage tier
+    TierAdd {
+        name: String,
+        #[arg(long, default_value = "Capacity")]
+        tier_type: String,
+        #[arg(long, default_value = "local")]
+        backend: String,
+        #[arg(long, default_value = "1000000000000")]
+        capacity: u64,
+        #[arg(long, default_value = "10")]
+        priority: u32,
+    },
+    /// List SOBR lifecycle policies
+    Policies,
+    /// Create a lifecycle policy
+    PolicyAdd {
+        name: String,
+        #[arg(long)]
+        performance_tier_id: String,
+        #[arg(long)]
+        capacity_tier_id: String,
+        #[arg(long)]
+        archive_tier_id: Option<String>,
+        #[arg(long, default_value = "7")]
+        capacity_move_days: u32,
+        #[arg(long)]
+        archive_move_days: Option<u32>,
+        #[arg(long)]
+        seal_days: Option<u32>,
+        #[arg(long)]
+        retention_days: Option<u32>,
+    },
+    /// Run data movement for a policy
+    Execute { id: String },
+}
+
+#[derive(Subcommand)]
+enum CloudCmd {
+    /// List cloud accounts
+    List,
+    /// Register a cloud account
+    Register {
+        name: String,
+        #[arg(long, default_value = "Aws")]
+        provider: String,
+        #[arg(long, default_value = "access_key")]
+        auth_type: String,
+        #[arg(long, default_value = "us-east-1")]
+        region: String,
+        #[arg(long)]
+        access_key: Option<String>,
+        #[arg(long)]
+        secret_key: Option<String>,
+        #[arg(long)]
+        tenant_id: Option<String>,
+        #[arg(long)]
+        client_id: Option<String>,
+        #[arg(long)]
+        client_secret: Option<String>,
+        #[arg(long)]
+        project_id: Option<String>,
+    },
+    /// Remove a cloud account
+    Remove { id: String },
+}
+
+#[derive(Subcommand)]
+enum M365Cmd {
+    /// List M365 tenants
+    Tenants,
+    /// Register an M365 tenant
+    TenantAdd {
+        name: String,
+        #[arg(long)]
+        tenant_id: String,
+        #[arg(long)]
+        client_id: String,
+        #[arg(long)]
+        client_secret: String,
+        #[arg(long, default_value = "AppOnly")]
+        auth_type: String,
+    },
+    /// List M365 backup jobs
+    Jobs,
+    /// Start an M365 backup
+    Backup {
+        tenant_id: String,
+        #[arg(long, default_value = "All")]
+        backup_type: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum DrCmd {
+    /// Show DR status
+    Status,
+    /// List DR sites
+    Sites,
+    /// Register a DR site
+    SiteAdd {
+        name: String,
+        #[arg(long, default_value = "RemoteBck")]
+        dr_type: String,
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long)]
+        storage_id: String,
+        #[arg(long)]
+        credentials_id: String,
+    },
+    /// List recovery plans
+    Plans,
+    /// Create a recovery plan
+    PlanAdd {
+        name: String,
+        #[arg(long)]
+        source_site: String,
+        #[arg(long)]
+        target_site: String,
+        #[arg(long)]
+        vms: String,
+        #[arg(long, default_value = "900")]
+        rpo_seconds: u64,
+        #[arg(long, default_value = "3600")]
+        rto_seconds: u64,
+    },
+    /// Execute failover for a plan
+    Failover { id: String },
+    /// Execute failback for a plan
+    Failback { id: String },
+    /// Test failover (non-destructive)
+    Test { id: String },
 }
 
 struct Api {
@@ -257,6 +408,158 @@ async fn main() -> Result<()> {
                 );
             }
         }
+        Commands::Sobr(cmd) => match cmd {
+            SobrCmd::Tiers => {
+                let resp = api.get("/api/v1/sobr").await?;
+                print_json(&resp);
+            }
+            SobrCmd::TierAdd { name, tier_type, backend, capacity, priority } => {
+                let resp = api.send("POST", "/api/v1/sobr/tiers", Some(json!({
+                    "name": name,
+                    "tier_type": tier_type,
+                    "backend": backend,
+                    "backend_config": {},
+                    "capacity_bytes": capacity,
+                    "used_bytes": 0,
+                    "status": "Online",
+                    "priority": priority,
+                }))).await?;
+                print_json(&resp);
+            }
+            SobrCmd::Policies => {
+                let resp = api.get("/api/v1/sobr/policies").await?;
+                print_json(&resp);
+            }
+            SobrCmd::PolicyAdd { name, performance_tier_id, capacity_tier_id, archive_tier_id, capacity_move_days, archive_move_days, seal_days, retention_days } => {
+                let resp = api.send("POST", "/api/v1/sobr/policies", Some(json!({
+                    "name": name,
+                    "performance_tier_id": performance_tier_id,
+                    "capacity_tier_id": capacity_tier_id,
+                    "archive_tier_id": archive_tier_id,
+                    "capacity_move_days": capacity_move_days,
+                    "archive_move_days": archive_move_days,
+                    "seal_days": seal_days,
+                    "retention_days": retention_days,
+                }))).await?;
+                print_json(&resp);
+            }
+            SobrCmd::Execute { id } => {
+                let resp = api.send("POST", &format!("/api/v1/sobr/policies/{}/execute", id), None).await?;
+                print_json(&resp);
+            }
+        },
+        Commands::Cloud(cmd) => match cmd {
+            CloudCmd::List => {
+                let resp = api.get("/api/v1/cloud").await?;
+                print_json(&resp);
+            }
+            CloudCmd::Register { name, provider, auth_type, region, access_key, secret_key, tenant_id, client_id, client_secret, project_id } => {
+                let resp = api.send("POST", "/api/v1/cloud", Some(json!({
+                    "name": name,
+                    "provider": provider,
+                    "auth_type": auth_type,
+                    "region": region,
+                    "status": "Connected",
+                    "access_key": access_key,
+                    "secret_key": secret_key,
+                    "tenant_id": tenant_id,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "project_id": project_id,
+                }))).await?;
+                print_json(&resp);
+            }
+            CloudCmd::Remove { id } => {
+                api.send("DELETE", &format!("/api/v1/cloud/{}", id), None).await?;
+                println!("Removed cloud account: {}", id);
+            }
+        },
+        Commands::M365(cmd) => match cmd {
+            M365Cmd::Tenants => {
+                let resp = api.get("/api/v1/m365/tenants").await?;
+                print_json(&resp);
+            }
+            M365Cmd::TenantAdd { name, tenant_id, client_id, client_secret, auth_type } => {
+                let resp = api.send("POST", "/api/v1/m365/tenants", Some(json!({
+                    "name": name,
+                    "tenant_id": tenant_id,
+                    "client_id": client_id,
+                    "encrypted_secret": client_secret,
+                    "auth_type": auth_type,
+                    "status": "Connected",
+                }))).await?;
+                print_json(&resp);
+            }
+            M365Cmd::Jobs => {
+                let resp = api.get("/api/v1/m365/jobs").await?;
+                print_json(&resp);
+            }
+            M365Cmd::Backup { tenant_id, backup_type } => {
+                let resp = api.send("POST", "/api/v1/m365/jobs", Some(json!({
+                    "tenant_id": tenant_id,
+                    "backup_type": backup_type,
+                }))).await?;
+                print_json(&resp);
+            }
+        },
+        Commands::Dr(cmd) => match cmd {
+            DrCmd::Status => {
+                let resp = api.get("/api/v1/dr/status").await?;
+                print_json(&resp);
+            }
+            DrCmd::Sites => {
+                let resp = api.get("/api/v1/dr/sites").await?;
+                print_json(&resp);
+            }
+            DrCmd::SiteAdd { name, dr_type, endpoint, storage_id, credentials_id } => {
+                let resp = api.send("POST", "/api/v1/dr/sites", Some(json!({
+                    "name": name,
+                    "dr_type": dr_type,
+                    "endpoint": endpoint,
+                    "storage_id": storage_id,
+                    "credentials_id": credentials_id,
+                    "is_primary": false,
+                    "status": "Online",
+                }))).await?;
+                print_json(&resp);
+            }
+            DrCmd::Plans => {
+                let resp = api.get("/api/v1/dr/plans").await?;
+                print_json(&resp);
+            }
+            DrCmd::PlanAdd { name, source_site, target_site, vms, rpo_seconds, rto_seconds } => {
+                let vms: Vec<String> = vms.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let resp = api.send("POST", "/api/v1/dr/plans", Some(json!({
+                    "name": name,
+                    "source_site": source_site,
+                    "target_site": target_site,
+                    "vms": vms,
+                    "failover_order": [],
+                    "auto_commit": true,
+                    "test_mode": true,
+                    "replication_policy": {
+                        "rpo_seconds": rpo_seconds,
+                        "rto_seconds": rto_seconds,
+                        "compression": "zstd",
+                        "encryption": true,
+                        "bandwidth_throttle_mbps": 1000,
+                    },
+                }))).await?;
+                print_json(&resp);
+            }
+            DrCmd::Failover { id } => {
+                let resp = api.send("POST", &format!("/api/v1/dr/plans/{}/failover", id), None).await?;
+                print_json(&resp);
+            }
+            DrCmd::Failback { id } => {
+                let resp = api.send("POST", &format!("/api/v1/dr/plans/{}/failback", id), None).await?;
+                print_json(&resp);
+            }
+            DrCmd::Test { id } => {
+                let resp = api.send("POST", &format!("/api/v1/dr/plans/{}/test", id), None).await?;
+                print_json(&resp);
+            }
+        },
     }
 
     Ok(())

@@ -39,7 +39,7 @@ E:\Code\BCK\
 | Database | ✅ | SQLite (rusqlite) default + PostgreSQL (sqlx) |
 | Scheduler | ✅ | cron-подібні розклади |
 | Auth | ✅ | JWT + Argon2; SSO OIDC (authorize/callback) + LDAP |
-| CLI | 🟡 | jobs, repos, snapshots, restore, status, logs; **немає команд для нових фіч** |
+| CLI | 🟡 | jobs, repos, snapshots, restore, status, logs, **cloud, sobr, m365, dr** |
 | Web UI | 🟡 | 12 сторінок (Admin, Dashboard, Jobs, Login, Repositories, Restore, Snapshots, **SOBR, Cloud, M365, Tape, DR**); SSO — секція в Admin |
 | Instant Recovery | ✅ | реальні NFSv3 + iSCSI сервери |
 | Restore Explorer | ✅ | перегляд снапшотів + витяг файлів |
@@ -106,14 +106,14 @@ E:\Code\BCK\
 - [x] Audit log
 - [ ] Self-Service portal
 - [ ] Multi-tenancy
-- [ ] Розширення CLI на нові фічі (cloud, sobr, m365, dr)
+- [x] Розширення CLI на нові фічі (cloud, sobr, m365, dr)
 
 ## Наступні пріоритетні кроки
 
 1. **REST роути** для `sobr`, `cloud`, `m365`, `tape`, `cdp`, `dr` у `core/src/server/routes/`
    (усі модулі готові в core — треба лише обгорнути в Axum handlers).
 2. **Web UI**: сторінки SOBR, Cloud accounts, M365, DR, SSO + роутинг/навігація. ✅
-3. **CLI**: підкоманди `bck cloud`, `bck sobr`, `bck m365`, `bck dr`.
+3. **CLI**: підкоманди `bck cloud`, `bck sobr`, `bck m365`, `bck dr`. ✅
 4. **Очищення warnings** (~12): unused imports у `restore/instant/*` та `agent`.
 
 ## Відомі технічні борги
