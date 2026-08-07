@@ -77,7 +77,7 @@ get_latest_release() {
 }
 
 # --------------------------------------------------------------- download -----
-BIN_NAMES=(bckd bck-agent bck-cli bck-proxy)
+BIN_NAMES=(bckd bck-agent bck bck-proxy)
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -148,7 +148,7 @@ mkdir -p "$BCK_CONFIG_DIR"
 mkdir -p "$BCK_DATA_DIR"
 install -m 0755 "$BIN_DIR"/bckd     "$BCK_HOME/bin/" 2>/dev/null || true
 install -m 0755 "$BIN_DIR"/bck-agent "$BCK_HOME/bin/" 2>/dev/null || true
-install -m 0755 "$BIN_DIR"/bck-cli   "$BCK_HOME/bin/" 2>/dev/null || true
+install -m 0755 "$BIN_DIR"/bck      "$BCK_HOME/bin/" 2>/dev/null || true
 install -m 0755 "$BIN_DIR"/bck-proxy "$BCK_HOME/bin/" 2>/dev/null || true
 
 # Web UI
@@ -249,8 +249,8 @@ log "   Home:    $BCK_HOME"
 log "   Config:  $CONFIG"
 log "   Data:    $BCK_DATA_DIR"
 log "   Web UI:  http://localhost:${BCK_PORT}  (default login admin/admin)"
-log "   Binaries: ${BCK_HOME}/bin/{bckd,bck-agent,bck-cli,bck-proxy}"
-log "   CLI:     bck-cli --help"
+log "   Binaries: ${BCK_HOME}/bin/{bckd,bck-agent,bck,bck-proxy}"
+log "   CLI:     bck --help"
 log "   Agent:   bck-agent --server <host> --port 9440"
 log "==============================================="
 log "Re-run this installer any time to update."

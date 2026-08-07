@@ -33,7 +33,7 @@ function Warn($msg) { Write-Host "[BCK] $msg" -ForegroundColor Yellow }
 function Fail($msg) { Write-Host "[BCK] $msg" -ForegroundColor Red; exit 1 }
 
 function Get-BinNames {
-    return @("bckd.exe", "bck-agent.exe", "bck-cli.exe", "bck-proxy.exe")
+    return @("bckd.exe", "bck-agent.exe", "bck.exe", "bck-proxy.exe")
 }
 
 function Get-LatestRelease {
@@ -191,6 +191,7 @@ Log "   Home:    $BCK_HOME"
 Log "   Config:  $configPath"
 Log "   Data:    $BCK_DATA"
 Log "   Web UI:  http://localhost:$Port  (default login admin/admin)"
-Log "   Binaries: $BCK_HOME\bin\bckd.exe etc."
+Log "   Binaries: $BCK_HOME\bin\bckd.exe, bck-agent.exe, bck.exe, bck-proxy.exe"
+Log "   CLI:     bck --help"
 Log "==============================================="
 Log "Re-run this installer any time to update."

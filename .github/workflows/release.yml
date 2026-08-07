@@ -64,7 +64,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p staging/bin staging/web-ui
-          cp target/release/bckd target/release/bck-agent target/release/bck-cli target/release/bck-proxy staging/bin/
+          cp target/release/bckd target/release/bck-agent target/release/bck target/release/bck-proxy staging/bin/
           cp -r web-ui/dist staging/web-ui/
           tar -czf bck-linux-${{ matrix.ext == '' && 'x86_64' || matrix.target }}.tar.gz -C staging .
           echo "ARCH=bck-linux-x86_64.tar.gz" >> $GITHUB_ENV
@@ -74,7 +74,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force staging/bin | Out-Null
-          Copy-Item target/release/bckd.exe, target/release/bck-agent.exe, target/release/bck-cli.exe, target/release/bck-proxy.exe staging/bin/
+          Copy-Item target/release/bckd.exe, target/release/bck-agent.exe, target/release/bck.exe, target/release/bck-proxy.exe staging/bin/
           Copy-Item web-ui/dist staging/web-ui -Recurse
           Compress-Archive -Path staging/bin, staging/web-ui -DestinationPath bck-windows-x86_64.zip
         if: matrix.os == 'windows-latest'
@@ -83,7 +83,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p staging/bin
-          cp target/release/bckd target/release/bck-agent target/release/bck-cli target/release/bck-proxy staging/bin/
+          cp target/release/bckd target/release/bck-agent target/release/bck target/release/bck-proxy staging/bin/
           tar -czf bck-darwin-x86_64.tar.gz -C staging .
         if: matrix.os == 'macos-latest'
 
