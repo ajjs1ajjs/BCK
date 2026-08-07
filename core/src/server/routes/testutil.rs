@@ -46,6 +46,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
         sso: crate::enterprise::sso::SsoManager::new(),
         sobr: crate::sobr::SobrManager::new(),
         cloud: crate::cloud::CloudBackupManager::new(),
+        cloud_restore: crate::cloud::restore::CloudRestoreManager::new(),
         m365: crate::m365::M365BackupManager::new(),
         tape: crate::tape::TapeManager::new(),
         cdp: crate::cdp::CdpEngine::new(&cdp_dir).unwrap(),

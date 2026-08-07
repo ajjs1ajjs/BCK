@@ -163,6 +163,30 @@ enum CloudCmd {
     },
     /// Remove a cloud account
     Remove { id: String },
+    /// List restorable resource kinds for an account
+    Restorable { id: String },
+    /// List cloud restore operations (optionally scoped to an account)
+    Restores {
+        #[arg(long)]
+        account: Option<String>,
+    },
+    /// Submit a cloud restore operation
+    Restore {
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        resource_type: String,
+        #[arg(long)]
+        resource_id: String,
+        #[arg(long)]
+        target_name: String,
+        #[arg(long)]
+        subscription_id: Option<String>,
+        #[arg(long)]
+        resource_group: Option<String>,
+        #[arg(long)]
+        zone: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -573,6 +597,40 @@ async fn main() -> Result<()> {
             CloudCmd::Remove { id } => {
                 api.send("DELETE", &format!("/api/v1/cloud/{}", id), None).await?;
                 println!("Removed cloud account: {}", id);
+            }
+            CloudCmd::Restorable { id } => {
+                let resp = api.get(&format!("/api/v1/cloud/{}/restorable", id)).await?;
+                print_json(&resp);
+            }
+            CloudCmd::Restores { account } => {
+                let resp = match account {
+                    Some(account) => api.get(&format!("/api/v1/cloud/{}/restores", account)).await?,
+                    None => api.get("/api/v1/cloud/restores").await?,
+                };
+                print_json(&resp);
+            }
+            CloudCmd::Restore { account, resource_type, resource_id, target_name, subscription_id, resource_group, zone } => {
+                let mut params = serde_json::Map::new();
+                if let Some(subscription_id) = subscription_id {
+                    params.insert("subscription_id".into(), json!(subscription_id));
+                }
+                if let Some(resource_group) = resource_group {
+                    params.insert("resource_group".into(), json!(resource_group));
+                }
+                if let Some(zone) = zone {
+                    params.insert("zone".into(), json!(zone));
+                }
+                let resp = api.send(
+                    "POST",
+                    &format!("/api/v1/cloud/{}/restore", account),
+                    Some(json!({
+                        "resource_type": resource_type,
+                        "resource_id": resource_id,
+                        "target_name": target_name,
+                        "params": params,
+                    })),
+                ).await?;
+                print_json(&resp);
             }
         },
         Commands::M365(cmd) => match cmd {

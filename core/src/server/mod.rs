@@ -13,6 +13,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::auth::jwt::JwtManager;
 use crate::cdp::CdpEngine;
 use crate::cloud::CloudBackupManager;
+use crate::cloud::restore::CloudRestoreManager;
 use crate::config::AppConfig;
 use crate::db::DbPool;
 use crate::dr::DrOrchestrator;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub sso: SsoManager,
     pub sobr: SobrManager,
     pub cloud: CloudBackupManager,
+    pub cloud_restore: CloudRestoreManager,
     pub m365: M365BackupManager,
     pub tape: TapeManager,
     pub cdp: CdpEngine,

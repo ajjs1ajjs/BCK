@@ -8,9 +8,11 @@ import AddIcon from '@mui/icons-material/Add'
 import DeleteIcon from '@mui/icons-material/Delete'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import CloudIcon from '@mui/icons-material/Cloud'
+import RestoreIcon from '@mui/icons-material/Restore'
 import PageHeader from '../components/PageHeader'
 import StatusChip from '../components/StatusChip'
-import { cloudApi, type CloudAccount } from '../api/client'
+import { formatTs } from '../utils'
+import { cloudApi, type CloudAccount, type CloudRestore, type CloudRestorableKind } from '../api/client'
 
 const PROVIDERS = ['Aws', 'Azure', 'Gcp']
 
@@ -30,6 +32,7 @@ const EMPTY_ACCOUNT = {
 
 export default function Cloud() {
   const [accounts, setAccounts] = useState<CloudAccount[]>([])
+  const [restores, setRestores] = useState<CloudRestore[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -37,18 +40,103 @@ export default function Cloud() {
   const [form, setForm] = useState(EMPTY_ACCOUNT)
   const [confirmDelete, setConfirmDelete] = useState<CloudAccount | null>(null)
 
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restoreKinds, setRestoreKinds] = useState<CloudRestorableKind[]>([])
+  const [restoreForm, setRestoreForm] = useState({
+    account_id: '',
+    resource_type: '',
+    resource_id: '',
+    target_name: '',
+    subscription_id: '',
+    resource_group: '',
+    zone: '',
+  })
+
   const load = useCallback(async () => {
     try {
       const r = await cloudApi.list()
       setAccounts(r.data)
+      const rr = await cloudApi.allRestores()
+      setRestores(rr.data)
     } catch {
-      setError('Failed to load cloud accounts')
+      setError('Failed to load cloud data')
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const openRestore = async (account?: CloudAccount) => {
+    const target = account ?? accounts[0]
+    if (!target) return
+    setRestoreForm({
+      account_id: target.id!,
+      resource_type: '',
+      resource_id: '',
+      target_name: '',
+      subscription_id: '',
+      resource_group: '',
+      zone: '',
+    })
+    try {
+      const kinds = await cloudApi.restorable(target.id!)
+      setRestoreKinds(kinds.data)
+    } catch {
+      setRestoreKinds([])
+    }
+    setRestoreOpen(true)
+    setError(null)
+  }
+
+  const switchRestoreAccount = async (accountId: string) => {
+    setRestoreForm({ ...restoreForm, account_id: accountId, resource_type: '' })
+    try {
+      const kinds = await cloudApi.restorable(accountId)
+      setRestoreKinds(kinds.data)
+    } catch {
+      setRestoreKinds([])
+    }
+  }
+
+  const submitRestore = async () => {
+    if (!restoreForm.account_id || !restoreForm.resource_type || !restoreForm.resource_id || !restoreForm.target_name) return
+    setBusy(true)
+    setError(null)
+    try {
+      const params: Record<string, string> = {}
+      if (restoreForm.subscription_id) params.subscription_id = restoreForm.subscription_id
+      if (restoreForm.resource_group) params.resource_group = restoreForm.resource_group
+      if (restoreForm.zone) params.zone = restoreForm.zone
+      await cloudApi.restore(restoreForm.account_id, {
+        resource_type: restoreForm.resource_type,
+        resource_id: restoreForm.resource_id,
+        target_name: restoreForm.target_name,
+        params,
+      })
+      setRestoreOpen(false)
+      load()
+    } catch {
+      setError('Failed to submit cloud restore')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async () => {
+    if (!confirmDelete) return
+    setBusy(true)
+    setError(null)
+    try {
+      await cloudApi.remove(confirmDelete.id!)
+      setConfirmDelete(null)
+      load()
+    } catch {
+      setError('Failed to remove cloud account')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const openCreate = () => {
     setForm({ ...EMPTY_ACCOUNT, provider: accounts.length ? accounts[0].provider : 'Aws' })
@@ -84,21 +172,6 @@ export default function Cloud() {
     }
   }
 
-  const remove = async () => {
-    if (!confirmDelete) return
-    setBusy(true)
-    setError(null)
-    try {
-      await cloudApi.remove(confirmDelete.id!)
-      setConfirmDelete(null)
-      load()
-    } catch {
-      setError('Failed to remove cloud account')
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <Box>
       <PageHeader
@@ -106,6 +179,7 @@ export default function Cloud() {
         subtitle="AWS, Azure and GCP infrastructure backup accounts"
         actions={
           <>
+            <Button variant="outlined" startIcon={<RestoreIcon />} disabled={accounts.length === 0} onClick={() => openRestore()}>Cloud Restore</Button>
             <Button variant="outlined" startIcon={<RefreshIcon />} onClick={load}>Refresh</Button>
             <Button variant="contained" startIcon={<AddIcon />} onClick={openCreate}>Register Account</Button>
           </>
@@ -166,6 +240,55 @@ export default function Cloud() {
         </CardContent>
       </Card>
 
+      <Card sx={{ mt: 3 }}>
+        <CardContent>
+          <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
+            <RestoreIcon color="primary" />
+            <Typography variant="h6">Cloud restores</Typography>
+          </Stack>
+          {restores.length === 0 ? (
+            <Typography color="text.secondary" sx={{ py: 3, textAlign: 'center' }}>
+              No cloud restore operations yet. Use "Cloud Restore" to restore a backup from a registered account.
+            </Typography>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Account</TableCell>
+                  <TableCell>Type</TableCell>
+                  <TableCell>Resource</TableCell>
+                  <TableCell>Target</TableCell>
+                  <TableCell>Requested</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Result</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {restores.map((r) => (
+                  <TableRow key={r.id} hover>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {accounts.find((a) => a.id === r.account_id)?.name ?? r.account_id.slice(0, 8)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.resource_type}</Typography></TableCell>
+                    <TableCell><Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>{r.resource_id}</Typography></TableCell>
+                    <TableCell><Typography variant="body2">{r.target_name}</Typography></TableCell>
+                    <TableCell><Typography variant="body2">{formatTs(r.requested_at)}</Typography></TableCell>
+                    <TableCell><StatusChip status={r.status} /></TableCell>
+                    <TableCell>
+                      <Typography variant="caption" color={r.status === 'Failed' ? 'error' : 'text.secondary'}>
+                        {r.result ?? r.error ?? '—'}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
       <Dialog open={dialog} onClose={() => setDialog(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Register Cloud Account</DialogTitle>
         <DialogContent>
@@ -216,6 +339,52 @@ export default function Cloud() {
         <DialogActions>
           <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
           <Button color="error" variant="contained" onClick={remove}>Remove</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={restoreOpen} onClose={() => setRestoreOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Cloud restore</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              select label="Account" value={restoreForm.account_id}
+              onChange={(e) => switchRestoreAccount(e.target.value)}
+              fullWidth required
+            >
+              {accounts.map((a) => <MenuItem key={a.id} value={a.id!}>{a.name} ({a.provider})</MenuItem>)}
+            </TextField>
+            <TextField
+              select label="Resource type" value={restoreForm.resource_type}
+              onChange={(e) => setRestoreForm({ ...restoreForm, resource_type: e.target.value })}
+              fullWidth required
+            >
+              {restoreKinds.map((k) => <MenuItem key={k.resource_type} value={k.resource_type}>{k.label}</MenuItem>)}
+            </TextField>
+            <TextField label="Resource / backup id" value={restoreForm.resource_id}
+              onChange={(e) => setRestoreForm({ ...restoreForm, resource_id: e.target.value })}
+              fullWidth required placeholder="snap-0abc / rp-123 / image-name"
+            />
+            <TextField label={restoreForm.resource_type === 'ebs_snapshot' ? 'Availability zone' : 'Target name'} value={restoreForm.target_name}
+              onChange={(e) => setRestoreForm({ ...restoreForm, target_name: e.target.value })}
+              fullWidth required
+            />
+            {restoreForm.resource_type === 'vm_restore_point' && (
+              <>
+                <TextField label="Azure subscription id" value={restoreForm.subscription_id}
+                  onChange={(e) => setRestoreForm({ ...restoreForm, subscription_id: e.target.value })} fullWidth />
+                <TextField label="Azure resource group" value={restoreForm.resource_group}
+                  onChange={(e) => setRestoreForm({ ...restoreForm, resource_group: e.target.value })} fullWidth />
+              </>
+            )}
+            {restoreForm.resource_type === 'gce_image' && (
+              <TextField label="Zone" value={restoreForm.zone}
+                onChange={(e) => setRestoreForm({ ...restoreForm, zone: e.target.value })} fullWidth />
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRestoreOpen(false)}>Cancel</Button>
+          <Button variant="contained" disabled={busy} onClick={submitRestore}>Restore</Button>
         </DialogActions>
       </Dialog>
     </Box>

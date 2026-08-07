@@ -2,6 +2,7 @@ pub mod aws;
 pub mod azure;
 pub mod gcp;
 pub mod k8s;
+pub mod restore;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

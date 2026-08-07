@@ -146,6 +146,67 @@ async fn cloud_accounts_crud() {
 }
 
 #[tokio::test]
+async fn cloud_restore_workflow() {
+    let state = test_state(&format!("{}\\cloud-restore.db", temp_dir("cloud-restore"))).await;
+    let app = cloud::router().with_state(state.clone());
+
+    // No account -> restore endpoints reject.
+    let resp = oneshot(app.clone(), "GET", "/missing/restorable", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Register an AWS account without live credentials.
+    let resp = oneshot(app.clone(), "POST", "/", Some(
+        r#"{"name":"prod","provider":"Aws","auth_type":"access_key","region":"us-east-1",
+            "status":"Connected"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let account: serde_json::Value = read_json(resp).await;
+    let id = account["id"].as_str().unwrap().to_string();
+
+    // List restorable kinds.
+    let resp = oneshot(app.clone(), "GET", &format!("/{}/restorable", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let kinds: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(kinds.len(), 3);
+    assert_eq!(kinds[0]["resource_type"], "ec2_ami");
+
+    // Submit a restore (no credentials -> Planned).
+    let resp = oneshot(app.clone(), "POST", &format!("/{}/restore", id), Some(
+        r#"{"resource_type":"ebs_snapshot","resource_id":"snap-1","target_name":"us-east-1a","params":{}}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    let restore: serde_json::Value = read_json(resp).await;
+    let rid = restore["id"].as_str().unwrap().to_string();
+    assert_eq!(restore["status"], "Planned");
+
+    // Unsupported resource type is rejected.
+    let resp = oneshot(app.clone(), "POST", &format!("/{}/restore", id), Some(
+        r#"{"resource_type":"nope","resource_id":"x","target_name":"y","params":{}}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Account scoped + global lists and get.
+    let resp = oneshot(app.clone(), "GET", &format!("/{}/restores", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let scoped: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(scoped.len(), 1);
+
+    let resp = oneshot(app.clone(), "GET", "/restores", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let all: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(all.len(), 1);
+
+    let resp = oneshot(app.clone(), "GET", &format!("/restores/{}", rid), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let detail: serde_json::Value = read_json(resp).await;
+    assert_eq!(detail["account_id"], id);
+
+    // Missing restore id -> not found.
+    let resp = oneshot(app.clone(), "GET", "/restores/nope", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn m365_tenant_and_job() {
     let state = test_state(&format!("{}\\m365.db", temp_dir("m365"))).await;
     let app = m365::router().with_state(state.clone());

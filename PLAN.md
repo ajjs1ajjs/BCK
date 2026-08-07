@@ -98,7 +98,7 @@ E:\Code\BCK\
 - [x] GCP: GCE images, disk snapshots, Cloud SQL
 - [x] K8s: PVC + manifest backup
 - [x] REST API для керування cloud accounts
-- [ ] Cloud restore через Web UI
+- [x] Cloud restore через Web UI (CloudRestoreManager → REST /api/v1/cloud/{id}/restore, Web UI секція, CLI `bck cloud restore`)
 
 ### Phase 6 — Polish 🟡
 - [x] SSO (OIDC + LDAP) з HTTP routes
