@@ -77,6 +77,14 @@ What the installer does:
 
 > **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates.
 
+> **If the installer stops at "Required tool not found: cargo":** you are likely running an old cached copy of the script (GitHub raw sometimes caches for a few minutes after a commit). Verify you have the latest and re-run:
+> ```bash
+> # check the fetched script actually contains the Rust auto-install step
+> curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | grep -q ensure_rust && echo "script is up to date"
+> # then install (auto-installs Rust + build deps if missing)
+> curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | bash
+> ```
+
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
 ```bash

@@ -74,8 +74,19 @@ ensure_rust() {
     fi
     # Source the environment so `cargo` is on PATH for this session.
     # shellcheck disable=SC1091
-    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
-    require cargo
+    if [ -f "$HOME/.cargo/env" ]; then
+        . "$HOME/.cargo/env"
+    else
+        export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+        warn "Rust was installed but 'cargo' is not on PATH yet."
+        warn "Open a new shell and re-run this installer, or run:"
+        warn "  . \"\$HOME/.cargo/env\""
+        warn "  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/scripts/install.sh | bash"
+        return 1
+    fi
+    log "Rust toolchain ready (cargo $(cargo --version | awk '{print $2}'))."
 }
 
 # Install build prerequisites (Linux): C toolchain + OpenSSL dev headers.
@@ -152,9 +163,10 @@ fi
 
 if [ "$MODE" = "source" ]; then
     log "Building from source (this requires Rust + a C toolchain)..."
-    ensure_rust
+    if ! ensure_rust; then
+        fail "Rust toolchain could not be prepared. Install it manually (see message above), then re-run this installer."
+    fi
     ensure_build_deps || true
-    require cargo
     require git
     [ -d "$TMPDIR/BCK" ] || git clone --depth 1 "https://github.com/${REPO}.git" "$TMPDIR/BCK"
     cd "$TMPDIR/BCK"
