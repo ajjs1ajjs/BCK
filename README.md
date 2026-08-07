@@ -69,11 +69,13 @@ powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.c
 
 What the installer does:
 
-1. Downloads the latest GitHub release for your OS/arch, or builds from source when no release exists yet (add `--from-source` / `-FromSource` to force).
+1. Downloads the latest GitHub release for your OS/arch. When no release exists yet (or `--from-source` / `-FromSource` is passed) it **builds from source** — installing the Rust toolchain and system build dependencies automatically on a fresh Linux/macOS machine (requires root for `apt`/`dnf`/`apk` installs).
 2. Installs `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console to `BCK_HOME` (`/opt/bck` on Linux/macOS, `%ProgramFiles%\BCK` on Windows).
 3. Creates a default config (`/etc/bck/config.toml` on Linux, `%ProgramData%\BCK\config.toml` on Windows) — existing config is **preserved** on update.
 4. Registers `bckd` as a systemd service (Linux), launchd agent (macOS) or Windows service (with restart-on-failure).
 5. Symlinks the binaries into `PATH`.
+
+> **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates.
 
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 

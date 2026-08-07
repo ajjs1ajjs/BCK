@@ -57,6 +57,55 @@ require() {
     command -v "$1" >/dev/null 2>&1 || fail "Required tool not found: $1"
 }
 
+# Install the Rust toolchain (rustup) when missing. Safe to run repeatedly.
+ensure_rust() {
+    if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
+        return 0
+    fi
+    log "Installing Rust toolchain (rustup) ..."
+    if command -v curl >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$TMPDIR/rustup.sh"
+        sh "$TMPDIR/rustup.sh" -y --profile minimal --default-toolchain stable
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q https://sh.rustup.rs -O "$TMPDIR/rustup.sh"
+        sh "$TMPDIR/rustup.sh" -y --profile minimal --default-toolchain stable
+    else
+        fail "Need curl or wget to install Rust"
+    fi
+    # Source the environment so `cargo` is on PATH for this session.
+    # shellcheck disable=SC1091
+    [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+    require cargo
+}
+
+# Install build prerequisites (Linux): C toolchain + OpenSSL dev headers.
+ensure_build_deps() {
+    if [ "$OS_LOWER" != "linux" ]; then
+        return 0
+    fi
+    local missing=""
+    command -v cc >/dev/null 2>&1  || command -v gcc >/dev/null 2>&1 || missing="$missing build-essential"
+    command -v pkg-config >/dev/null 2>&1 || missing="$missing pkg-config"
+    pkg-config --exists openssl 2>/dev/null || missing="$missing libssl-dev"
+    if [ -n "$missing" ]; then
+        log "Installing build dependencies:$missing ..."
+        if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+            apt-get update -y 2>/dev/null | tail -n 1
+            apt-get install -y build-essential pkg-config libssl-dev 2>&1 | tail -n 2
+        elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+            dnf install -y gcc gcc-c++ pkg-config openssl-devel 2>&1 | tail -n 2
+        elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+            apk add --no-cache build-base pkgconf openssl-dev 2>&1 | tail -n 2
+        else
+            warn "Missing system build deps (build-essential / pkg-config / libssl-dev) and cannot auto-install."
+            warn "Install them manually, e.g.:  sudo apt-get install -y build-essential pkg-config libssl-dev"
+            return 1
+        fi
+    fi
+    # Give the shell the updated linker/cc path just in case.
+    export CC="${CC:-cc}"
+}
+
 download() { # url -> local path
     local url="$1" out="$2"
     if command -v curl >/dev/null 2>&1; then
@@ -87,10 +136,14 @@ if [ "$MODE" = "release" ]; then
         log "Downloading release $TAG ($OS_LOWER/$ARCH_LOWER)"
         ARCHIVE="bck-${OS_LOWER}-${ARCH_LOWER}.tar.gz"
         URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
-        download "$URL" "$TMPDIR/$ARCHIVE"
-        tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
-        SRC_DIR="$TMPDIR"
-        log "Release binaries staged."
+        if download "$URL" "$TMPDIR/$ARCHIVE"; then
+            tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
+            SRC_DIR="$TMPDIR"
+            log "Release binaries staged."
+        else
+            warn "Release download failed ($ARCHIVE); building from source instead."
+            MODE="source"
+        fi
     else
         warn "No GitHub release found; building from source instead."
         MODE="source"
@@ -99,6 +152,8 @@ fi
 
 if [ "$MODE" = "source" ]; then
     log "Building from source (this requires Rust + a C toolchain)..."
+    ensure_rust
+    ensure_build_deps || true
     require cargo
     require git
     [ -d "$TMPDIR/BCK" ] || git clone --depth 1 "https://github.com/${REPO}.git" "$TMPDIR/BCK"
@@ -116,6 +171,8 @@ if [ "$MODE" = "source" ]; then
         (cd web-ui && npm ci --silent && npm run build)
         mkdir -p "$TMPDIR/web-ui"
         cp -r web-ui/dist "$TMPDIR/web-ui/"
+    elif [ -d web-ui ]; then
+        warn "npm not found — skipping web UI build. Install Node.js (nodejs + npm) for the web console."
     fi
 fi
 
