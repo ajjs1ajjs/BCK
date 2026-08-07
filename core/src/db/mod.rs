@@ -1,4 +1,5 @@
 pub mod models;
+pub mod hypervisor;
 
 use anyhow::Result;
 use sqlx::pool::PoolOptions;

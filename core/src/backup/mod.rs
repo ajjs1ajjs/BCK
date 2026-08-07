@@ -3,7 +3,7 @@ pub mod vm;
 use crate::integrations::HypervisorConnector;
 use crate::pipeline::BackupPipeline;
 use crate::storage::StorageBackend;
-use crate::types::BackupStats;
+use crate::types::{BackupStats, FileBlock};
 
 pub struct BackupOrchestrator {
     pipeline: BackupPipeline,
@@ -15,13 +15,13 @@ impl BackupOrchestrator {
     }
 
     pub async fn run_vm_backup(
-        &self,
+        &mut self,
         connector: &dyn HypervisorConnector,
         vm_ref: &str,
         storage: &dyn StorageBackend,
     ) -> Result<VmBackupResult, anyhow::Error> {
         let result = vm::VmBackupJob::new(connector, vm_ref)
-            .run(&self.pipeline, storage)
+            .run(&mut self.pipeline, storage)
             .await?;
         Ok(result)
     }
@@ -32,6 +32,7 @@ pub struct VmBackupResult {
     pub vm_name: String,
     pub snapshot_id: String,
     pub stats: BackupStats,
+    pub blocks: Vec<FileBlock>,
     pub total_disks: usize,
     pub changed_disks: usize,
 }

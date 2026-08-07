@@ -93,6 +93,9 @@ enum Commands {
     /// Self-service restore portal
     #[command(subcommand)]
     Portal(PortalCmd),
+    /// Hypervisor and VM backup management
+    #[command(subcommand)]
+    Hypervisor(HypervisorCmd),
 }
 
 #[derive(Subcommand)]
@@ -314,6 +317,36 @@ enum TenantCmd {
         #[arg(long, default_value = "local, s3")]
         allowed_storage: String,
     },
+}
+
+#[derive(Subcommand)]
+enum HypervisorCmd {
+    /// List registered hypervisors
+    List,
+    /// Discover VMs on a hypervisor
+    Vms { id: String },
+    /// Start a full backup of a VM on a hypervisor
+    Backup {
+        /// Hypervisor id
+        id: String,
+        /// VM reference on the hypervisor
+        #[arg(long)]
+        vm_ref: String,
+        /// Target repository id
+        #[arg(long)]
+        repo: String,
+        /// Job name
+        #[arg(long)]
+        name: Option<String>,
+        /// Schedule (cron)
+        #[arg(long)]
+        schedule: Option<String>,
+        /// Retention days
+        #[arg(long)]
+        retention_days: Option<i32>,
+    },
+    /// Show status of a backup job
+    JobStatus { id: String },
 }
 
 #[derive(Subcommand)]
@@ -826,6 +859,29 @@ async fn main() -> Result<()> {
             PortalCmd::Complete { id } => {
                 api.send("POST", &format!("/api/v1/portal/admin/restore-requests/{}/complete", id), None).await?;
                 println!("Restore request completed: {}", id);
+            }
+        },
+        Commands::Hypervisor(cmd) => match cmd {
+            HypervisorCmd::List => {
+                let resp = api.get("/api/v1/hypervisors").await?;
+                print_json(&resp);
+            }
+            HypervisorCmd::Vms { id } => {
+                let resp = api.get(&format!("/api/v1/hypervisors/{}/vms", id)).await?;
+                print_json(&resp);
+            }
+            HypervisorCmd::Backup { id, vm_ref, repo, name, schedule, retention_days } => {
+                let resp = api.send("POST", &format!("/api/v1/hypervisors/{}/vms/{}/backup", id, vm_ref), Some(json!({
+                    "repository_id": repo,
+                    "name": name,
+                    "schedule": schedule,
+                    "retention_days": retention_days,
+                }))).await?;
+                print_json(&resp);
+            }
+            HypervisorCmd::JobStatus { id } => {
+                let resp = api.get(&format!("/api/v1/jobs/{}", id)).await?;
+                print_json(&resp);
             }
         },
     }

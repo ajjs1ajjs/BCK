@@ -19,6 +19,7 @@ import AlbumIcon from '@mui/icons-material/Album'
 import PublicIcon from '@mui/icons-material/Public'
 import GroupsIcon from '@mui/icons-material/Groups'
 import HailIcon from '@mui/icons-material/Hail'
+import DnsIcon from '@mui/icons-material/Dns'
 import { getUser, clearAuth } from '../api/client'
 
 const drawerWidth = 248
@@ -35,6 +36,7 @@ const navItems = [
   { path: '/tape', label: 'Tape Library', icon: <AlbumIcon /> },
   { path: '/dr', label: 'Disaster Recovery', icon: <PublicIcon /> },
   { path: '/tenants', label: 'Tenants', icon: <GroupsIcon /> },
+  { path: '/hypervisors', label: 'Hypervisors', icon: <DnsIcon /> },
   { path: '/portal', label: 'Self-service', icon: <HailIcon /> },
   { path: '/admin', label: 'Administration', icon: <AdminIcon /> },
 ]

@@ -563,6 +563,38 @@ export interface PortalMe {
   can_approve: boolean
 }
 
+export interface Hypervisor {
+  id: string
+  name: string
+  hv_type: string
+  host: string
+  port: number
+  status: string
+  version?: string | null
+  created_at: number
+}
+
+export interface HypervisorVm {
+  id: string
+  name: string
+  hypervisor_id: string
+  mo_ref: string
+  power_state: string
+  os?: string | null
+  cpu_count: number
+  ram_mb: number
+  disk_gb: number
+  protection_status: string
+  last_backup?: number | null
+}
+
+export const hypervisorApi = {
+  list: () => api.get<Hypervisor[]>('/hypervisors'),
+  vms: (id: string) => api.get<HypervisorVm[]>(`/hypervisors/${id}/vms`),
+  backupVm: (id: string, vmRef: string, payload: { repository_id: string; name?: string; vm_name?: string; schedule?: string }) =>
+    api.post(`/hypervisors/${id}/vms/${vmRef}/backup`, payload),
+}
+
 export const portalApi = {
   me: () => api.get<PortalMe>('/portal/me'),
   myRequests: () => api.get<RestoreRequest[]>('/portal/restore-requests'),

@@ -11,6 +11,7 @@ use crate::db::models::hypervisor::HypervisorModel;
 use crate::db::models::vm::VmModel;
 use crate::db::DbPool;
 use crate::integrations::{HypervisorConnector, PowerState, VmInfo};
+use crate::job::JobView;
 use crate::server::AppState;
 
 #[derive(Serialize, Deserialize)]
@@ -91,12 +92,26 @@ impl From<VmModel> for VmResponse {
     }
 }
 
+#[derive(Deserialize)]
+pub struct VmBackupRequest {
+    pub repository_id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub vm_name: Option<String>,
+    #[serde(default)]
+    pub schedule: Option<String>,
+    #[serde(default)]
+    pub retention_days: Option<i32>,
+}
+
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/", axum::routing::get(list_hypervisors).post(add_hypervisor))
         .route("/:id", axum::routing::get(get_hypervisor).delete(delete_hypervisor))
         .route("/:id/test", axum::routing::post(test_hypervisor))
         .route("/:id/vms", axum::routing::get(list_vms))
+        .route("/:id/vms/:vm_ref/backup", axum::routing::post(start_vm_backup))
 }
 
 fn connector_from_request(req: &AddHypervisorRequest) -> Result<Box<dyn HypervisorConnector>> {
@@ -114,22 +129,7 @@ fn connector_from_request(req: &AddHypervisorRequest) -> Result<Box<dyn Hypervis
 }
 
 pub(crate) fn connector_from_model(m: &HypervisorModel) -> Result<Box<dyn HypervisorConnector>> {
-    let creds: serde_json::Value = serde_json::from_str(&m.credentials_json)
-        .unwrap_or_else(|_| serde_json::json!({}));
-    let username = creds["username"].as_str().unwrap_or("").to_string();
-    let password = creds["password"].as_str().unwrap_or("").to_string();
-    let ignore_ssl = creds["ignore_ssl"].as_bool().unwrap_or(false);
-    let use_ssl = m.port == 5986 || m.port == 443;
-
-    match m.hv_type.to_lowercase().as_str() {
-        "hyperv" => Ok(crate::integrations::hyperv::create_connector(
-            &m.host, &username, &password, use_ssl,
-        )),
-        "vmware" | "esxi" | "vsphere" => Ok(crate::integrations::vmware::create_connector(
-            &m.host, m.port as u16, &username, &password, ignore_ssl,
-        )),
-        other => Err(anyhow!("Unsupported hypervisor type: {}", other)),
-    }
+    crate::db::hypervisor::connector_from_model(m)
 }
 
 async fn list_hypervisors(
@@ -339,6 +339,61 @@ async fn list_vms(
     Ok(Json(responses))
 }
 
+/// Create and start a full VM backup job for the given VM on the hypervisor.
+/// The job runs the real backup pipeline against the VM's virtual disks and
+/// records a snapshot in the configured repository.
+async fn start_vm_backup(
+    State(state): State<Arc<AppState>>,
+    Path((id, vm_ref)): Path<(String, String)>,
+    Json(req): Json<VmBackupRequest>,
+) -> Result<(StatusCode, Json<JobView>), StatusCode> {
+    let _model = fetch_hypervisor(&state.db, &id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let job_id = {
+        let jm = state.job_manager.lock().await;
+        jm.register_vm_job(
+            req.name.as_deref().unwrap_or("vm-backup"),
+            None,
+            &id,
+            &vm_ref,
+            req.vm_name.as_deref(),
+            &req.repository_id,
+            req.schedule.as_deref(),
+            req.retention_days,
+        ).await.map_err(|e| {
+            tracing::error!("register VM backup job: {}", e);
+            StatusCode::BAD_REQUEST
+        })?
+    };
+
+    {
+        let jm = state.job_manager.lock().await;
+        jm.start_job(&job_id).await.map_err(|e| {
+            tracing::error!("start VM backup job: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    }
+
+    let jm = state.job_manager.lock().await;
+    let job = jm.get_job(&job_id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    drop(jm);
+
+    crate::db::record_event(
+        &state.db,
+        "vm_backup_started",
+        "hypervisors",
+        &format!("VM backup job {} started for VM {} on hypervisor {}", job_id, vm_ref, id),
+        Some(&job_id),
+        None,
+    ).await.ok();
+
+    Ok((StatusCode::ACCEPTED, Json(job)))
+}
+
 fn vm_to_response(vm: &VmInfo, hypervisor_id: &str) -> VmResponse {
     let disk_gb = vm.disks.iter().map(|d| d.capacity_bytes.max(0) as u64 / (1024 * 1024 * 1024)).sum::<u64>() as i64;
     VmResponse {
@@ -473,55 +528,11 @@ async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> 
 // ---- DB helpers ----
 
 pub async fn fetch_hypervisors(db: &DbPool) -> Result<Vec<HypervisorModel>> {
-    match db {
-        DbPool::Sqlite(pool) => {
-            let rows = sqlx::query_as::<_, HypervisorModel>(
-                "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
-                 FROM hypervisors ORDER BY created_at DESC"
-            )
-            .fetch_all(pool)
-            .await?;
-            Ok(rows)
-        }
-        DbPool::Postgres(pool) => {
-            let rows = sqlx::query_as::<_, HypervisorModel>(
-                "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
-                 FROM hypervisors ORDER BY created_at DESC"
-            )
-            .fetch_all(pool)
-            .await?;
-            Ok(rows)
-        }
-    }
+    crate::db::hypervisor::fetch_hypervisors(db).await
 }
 
 pub async fn fetch_hypervisor(db: &DbPool, id: &str) -> Result<Option<HypervisorModel>> {
-    match db {
-        DbPool::Sqlite(pool) => {
-            let row = sqlx::query_as::<_, HypervisorModel>(
-                "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
-                 FROM hypervisors WHERE id = ?1"
-            )
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-            Ok(row)
-        }
-        DbPool::Postgres(pool) => {
-            let row = sqlx::query_as::<_, HypervisorModel>(
-                "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
-                 FROM hypervisors WHERE id = $1"
-            )
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
-            Ok(row)
-        }
-    }
+    crate::db::hypervisor::fetch_hypervisor(db, id).await
 }
 
 async fn update_hypervisor_status(db: &DbPool, id: &str, status: &str) -> Result<()> {
@@ -635,6 +646,77 @@ mod tests {
                 .unwrap(),
         ).await.unwrap();
         assert_eq!(resp.status(), HttpStatus::NOT_FOUND);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn vm_backup_job_start_and_list() {
+        let dir = std::env::temp_dir().join(format!("bck-hv-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("test.db");
+        let state = test_state(db_path.to_str().unwrap()).await;
+
+        // Create a hypervisor record (connection fails — no such host — but the
+        // row is stored with status "error", which is enough to start a job).
+        let app = router().with_state(state.clone());
+        let add = Request::builder()
+            .method("POST")
+            .uri("/")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(add).await.unwrap();
+        assert_eq!(resp.status(), HttpStatus::CREATED);
+        let hv: HypervisorResponse = read_json(resp).await;
+
+        // Create a repository row so the job FK resolves.
+        let t = chrono::Utc::now().timestamp();
+        sqlx::query(
+            "INSERT INTO repositories (id, name, repo_type, config_json, capacity_bytes, used_bytes,
+             free_bytes, encrypted, immutable, status, created_at, updated_at)
+             VALUES ('repo-1', 'main', 'local', ?, 0, 0, 0, 0, 0, 'ready', ?, ?)"
+        )
+        .bind(serde_json::json!({"path": dir.join("store")}).to_string())
+        .bind(t)
+        .bind(t)
+        .execute(&match &state.db {
+            crate::db::DbPool::Sqlite(p) => p.clone(),
+            _ => unreachable!(),
+        })
+        .await.unwrap();
+
+        // Start a VM backup job -> 202 Accepted with the job view.
+        let backup = Request::builder()
+            .method("POST")
+            .uri(format!("/{}/vms/vm-42/backup", hv.id))
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"repository_id":"repo-1","vm_name":"test-vm","name":"nightly-vm"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(backup).await.unwrap();
+        assert_eq!(resp.status(), HttpStatus::ACCEPTED);
+        let job: serde_json::Value = read_json(resp).await;
+        assert_eq!(job["job_type"], "vm");
+        assert_eq!(job["name"], "nightly-vm");
+        assert_eq!(job["repository_id"], "repo-1");
+        let job_id = job["id"].as_str().unwrap().to_string();
+
+        // The job should now be listed.
+        let jm = state.job_manager.lock().await;
+        let jobs = jm.list_jobs().await.unwrap();
+        drop(jm);
+        assert!(jobs.iter().any(|j| j.id == job_id && j.job_type == "vm"));
+
+        // Backup on a missing hypervisor -> 404.
+        let resp = app.oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/missing/vms/vm-42/backup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"repository_id":"repo-1"}"#))
+                .unwrap(),
+        ).await.unwrap();
+        assert_eq!(resp.status(), HttpStatus::NOT_FOUND);
+
         std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::collections::HashMap;
 
 use crate::chunker::Chunker;
 use crate::compress::{create_compressor, Compressor};
@@ -9,7 +10,7 @@ use crate::storage::StorageBackend;
 use crate::stream::ProgressTracker;
 use crate::throttle::BandwidthLimiter;
 use crate::types::{
-    BackupStats, CompressionAlgorithm, EncryptionAlgorithm, FileBlock, PipelineConfig,
+    BackupStats, CompressionAlgorithm, EncryptionAlgorithm, FileBlock, FileMetadata, PipelineConfig,
 };
 
 // Block encoding magic markers.
@@ -202,6 +203,86 @@ impl BackupPipeline {
         }
 
         Ok(BackupResult { stats, blocks })
+    }
+
+    /// Process raw bytes through the pipeline (chunk → dedup → compress →
+    /// encrypt → write) without a filesystem source. Used for non-file backup
+    /// sources such as VM virtual disks. `logical_path` becomes the relative
+    /// path recorded in the manifest; `base_offset` is the absolute byte
+    /// offset within the logical disk, so blocks can be reassembled later.
+    pub async fn process_bytes(
+        &mut self,
+        logical_path: &str,
+        base_offset: u64,
+        logical_size: u64,
+        data: &[u8],
+        storage: &dyn StorageBackend,
+        stats: &mut BackupStats,
+    ) -> Result<Vec<FileBlock>> {
+        let chunks = self.chunker.chunk_data(data)?;
+
+        let metadata = FileMetadata {
+            path: logical_path.to_string(),
+            size: logical_size,
+            modified_time: 0,
+            mode: 0,
+            owner: "vm".into(),
+            group: "vm".into(),
+            extended_attributes: HashMap::new(),
+            acl: Vec::new(),
+        };
+
+        let mut blocks = Vec::new();
+        for chunk in &chunks {
+            // Dedup
+            let dedup_result = match &self.dedup {
+                Some(dedup) => dedup.process_block(&chunk.data)?,
+                None => crate::dedup::DedupResult {
+                    id: crate::dedup::DedupEngine::calculate_id(&chunk.data),
+                    data: chunk.data.clone(),
+                    is_duplicate: false,
+                },
+            };
+
+            blocks.push(FileBlock {
+                relative_path: logical_path.to_string(),
+                offset: base_offset + chunk.offset,
+                size: chunk.size,
+                block_id: dedup_result.id.clone(),
+                metadata: metadata.clone(),
+            });
+
+            if dedup_result.is_duplicate {
+                stats.blocks_deduped += 1;
+                continue;
+            }
+
+            // Compress
+            let compressed = self.compressor.compress(&dedup_result.data)?;
+            stats.compressed_bytes += compressed.len() as u64;
+
+            // Encrypt + wrap with magic marker
+            let final_data = self.encode_block(&compressed)?;
+
+            // Write to storage
+            storage.write_block(&dedup_result.id.sha256, &final_data).await?;
+
+            // Record in dedup index
+            if let Some(dedup) = &self.dedup {
+                dedup.record_block(&dedup_result.id, final_data.len() as u64, &dedup_result.id.sha256)?;
+            }
+
+            stats.blocks_unique += 1;
+            stats.transferred_bytes += final_data.len() as u64;
+            stats.unique_bytes += chunk.size as u64;
+
+            // Throttle
+            if let Some(throttler) = &mut self.throttler {
+                throttler.throttle(final_data.len() as u64).await;
+            }
+        }
+
+        Ok(blocks)
     }
 }
 

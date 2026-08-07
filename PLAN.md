@@ -69,7 +69,7 @@ E:\Code\BCK\
 ### Phase 1 — VM Backup 🟡
 - [x] VMware connector (snapshots, CBT, changed blocks, disks, power on/off, register VM)
 - [x] Hyper-V connector (RCT changed blocks, disks, power state, register VM)
-- [ ] Повний VM backup job у демоні через API
+- [x] Повний VM backup job у демоні через API (VmBackupJob → pipeline → repository, JobManager `vm` job type, REST `POST /api/v1/hypervisors/:id/vms/:vm_ref/backup`, Web UI секція Hypervisors, CLI `bck hypervisor`)
 - [ ] Instant Recovery для VMware/Hyper-V через REST API
 
 ### Phase 2 — Agent ✅
@@ -126,6 +126,7 @@ E:\Code\BCK\
 
 ## Тести
 
-- **131 тест** у `bck-core` (всі проходять), бінарники — без тестів.
+- **145 тест** у `bck-core` (всі проходять), бінарники — без тестів.
 - SOBR lifecycle покритий (move, archive, seal, retention, shared blocks).
 - Instant recovery (NFS/iSCSI/xdr), cloud XML parsing, M365 Graph, Hyper-V RCT — покриті.
+- VM backup job покритий (unit: `backup::vm` блоки → storage; route: `POST .../vms/:ref/backup` + 404).

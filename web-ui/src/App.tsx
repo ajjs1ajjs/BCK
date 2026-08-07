@@ -11,6 +11,7 @@ import M365 from './pages/M365'
 import Tape from './pages/Tape'
 import Dr from './pages/Dr'
 import Tenants from './pages/Tenants'
+import Hypervisors from './pages/Hypervisors'
 import SelfService from './pages/SelfService'
 import Login from './pages/Login'
 import Layout from './components/Layout'
@@ -40,6 +41,7 @@ function App() {
         <Route path="/tape" element={<Tape />} />
         <Route path="/dr" element={<Dr />} />
         <Route path="/tenants" element={<Tenants />} />
+        <Route path="/hypervisors" element={<Hypervisors />} />
         <Route path="/portal" element={<SelfService />} />
         <Route path="/admin" element={<Admin />} />
       </Route>

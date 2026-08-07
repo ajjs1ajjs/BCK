@@ -196,6 +196,84 @@ impl JobManager {
         Ok(id)
     }
 
+    /// Register a VM backup job. `source_config` stores the hypervisor id and
+    /// VM reference instead of a filesystem path.
+    pub async fn register_vm_job(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        hypervisor_id: &str,
+        vm_ref: &str,
+        vm_name: Option<&str>,
+        repository_id: &str,
+        schedule: Option<&str>,
+        retention_days: Option<i32>,
+    ) -> Result<String> {
+        let id = Uuid::new_v4().to_string();
+        let source_config = serde_json::json!({
+            "hypervisor_id": hypervisor_id,
+            "vm_ref": vm_ref,
+            "vm_name": vm_name,
+        }).to_string();
+        let retention = retention_days
+            .map(|d| serde_json::json!({ "daily": d, "weekly": 0, "monthly": 0 }).to_string())
+            .unwrap_or_else(|| "{\"daily\":7,\"weekly\":4,\"monthly\":12}".to_string());
+        let t = now();
+
+        match &self.db {
+            DbPool::Sqlite(pool) => {
+                sqlx::query(
+                    "INSERT INTO backup_jobs
+                     (id, name, description, job_type, backup_type, source_config, repository_id,
+                      schedule, retention_config, compression, encryption, bandwidth_limit, enabled,
+                      last_run_at, next_run_at, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, 'vm', 'full', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, ?12, ?12)"
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description.map(|s| s.to_string()))
+                .bind(&source_config)
+                .bind(repository_id)
+                .bind(schedule.map(|s| s.to_string()))
+                .bind(&retention)
+                .bind("zstd")
+                .bind(if self.config.encryption.algorithm != "none" { 1i64 } else { 0i64 })
+                .bind(0i64)
+                .bind(1i64)
+                .bind(t)
+                .execute(pool)
+                .await?;
+            }
+            DbPool::Postgres(pool) => {
+                sqlx::query(
+                    "INSERT INTO backup_jobs
+                     (id, name, description, job_type, backup_type, source_config, repository_id,
+                      schedule, retention_config, compression, encryption, bandwidth_limit, enabled,
+                      last_run_at, next_run_at, created_at, updated_at)
+                     VALUES ($1, $2, $3, 'vm', 'full', $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, $12, $12)"
+                )
+                .bind(&id)
+                .bind(name)
+                .bind(description.map(|s| s.to_string()))
+                .bind(&source_config)
+                .bind(repository_id)
+                .bind(schedule.map(|s| s.to_string()))
+                .bind(&retention)
+                .bind("zstd")
+                .bind(if self.config.encryption.algorithm != "none" { 1i64 } else { 0i64 })
+                .bind(0i64)
+                .bind(1i64)
+                .bind(t)
+                .execute(pool)
+                .await?;
+            }
+        }
+
+        self.runtimes.write().await.insert(id.clone(), JobRuntime::pending());
+        info!("Registered VM job {} ({}), hypervisor={}, vm={}", name, id, hypervisor_id, vm_ref);
+        Ok(id)
+    }
+
     pub async fn update_job(
         &self,
         id: &str,
@@ -545,6 +623,10 @@ impl JobManager {
         job: &BackupJobModel,
         session_id: &str,
     ) -> Result<(Snapshot, BackupStats)> {
+        if job.job_type == "vm" {
+            return self.run_vm_backup(job, session_id).await;
+        }
+
         let repo = self.load_repository(&job.repository_id).await?
             .ok_or_else(|| anyhow::anyhow!("Repository not found: {}", job.repository_id))?;
         info!("Job {}: repo loaded {} type={}", job.id, repo.id, repo.repo_type);
@@ -555,44 +637,7 @@ impl JobManager {
             .ok_or_else(|| anyhow::anyhow!("Invalid source_config for job {}", job.id))?;
         info!("Job {}: source={} encryption={}", job.id, source_path, job.encryption);
 
-        let compression = match job.compression.as_str() {
-            "lz4" => CompressionAlgorithm::Lz4,
-            "none" => CompressionAlgorithm::None,
-            _ => CompressionAlgorithm::Zstd { level: 3 },
-        };
-
-        let encryption = if job.encryption {
-            match self.config.encryption.algorithm.to_lowercase().as_str() {
-                "chacha20-poly1305" => EncryptionAlgorithm::ChaCha20Poly1305,
-                "none" => EncryptionAlgorithm::None,
-                _ => EncryptionAlgorithm::Aes256Gcm,
-            }
-        } else {
-            EncryptionAlgorithm::None
-        };
-
-        let key = if encryption != EncryptionAlgorithm::None {
-            let key_path = self.config.encryption.key_path.clone()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| {
-                    self.config.storage.default_path.join("encryption.key")
-                });
-            Some(crate::encrypt::load_or_create_key(&key_path)?)
-        } else {
-            None
-        };
-
-        let pipeline_config = PipelineConfig {
-            compression,
-            encryption,
-            encryption_key: key.clone(),
-            chunk_size: ChunkSizeConfig::default(),
-            throttle: None,
-        };
-
-        let mut pipeline = BackupPipeline::new(pipeline_config);
-        pipeline = pipeline.with_dedup(&self.index_path())
-            .map_err(|e| anyhow::anyhow!("with_dedup failed (index {}): {}", self.index_path(), e))?;
+        let mut pipeline = self.build_pipeline(job)?;
 
         let storage = self.build_storage(&repo).await
             .map_err(|e| anyhow::anyhow!("build_storage failed for repo {}: {}", repo.id, e))?;
@@ -640,6 +685,131 @@ impl JobManager {
         self.update_repo_used(&job.repository_id, result.stats.compressed_bytes).await?;
 
         Ok((snapshot, result.stats))
+    }
+
+    /// Run a VM backup job: connect to the hypervisor, snapshot the VM, stream
+    /// its virtual disks through the pipeline into the repository, then record
+    /// the resulting snapshot and update the VM protection status.
+    async fn run_vm_backup(
+        &self,
+        job: &BackupJobModel,
+        session_id: &str,
+    ) -> Result<(Snapshot, BackupStats)> {
+        let cfg: serde_json::Value = serde_json::from_str(&job.source_config)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let hypervisor_id = cfg["hypervisor_id"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("VM job {} missing hypervisor_id", job.id))?;
+        let vm_ref = cfg["vm_ref"].as_str()
+            .ok_or_else(|| anyhow::anyhow!("VM job {} missing vm_ref", job.id))?;
+        let vm_name = cfg["vm_name"].as_str().unwrap_or("vm");
+        info!(
+            "VM job {}: hypervisor={} vm={} (ref {})",
+            job.id, hypervisor_id, vm_name, vm_ref
+        );
+
+        let hv = crate::db::hypervisor::fetch_hypervisor(&self.db, hypervisor_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Hypervisor not found: {}", hypervisor_id))?;
+        let connector = crate::db::hypervisor::connector_from_model(&hv)?;
+
+        let repo = self.load_repository(&job.repository_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Repository not found: {}", job.repository_id))?;
+        let storage = self.build_storage(&repo).await?;
+        let mut pipeline = self.build_pipeline(job)?;
+
+        let result = crate::backup::vm::VmBackupJob::new(connector.as_ref(), vm_ref)
+            .run(&mut pipeline, storage.as_ref())
+            .await
+            .map_err(|e| anyhow::anyhow!("VM backup failed for {}: {}", vm_ref, e))?;
+
+        info!(
+            "VM job {}: backed up {} disks ({} changed), {} bytes",
+            job.id, result.total_disks, result.changed_disks, result.stats.total_bytes
+        );
+
+        // Save manifest + snapshot record
+        let snapshot_id = Uuid::new_v4().to_string();
+        let t = now();
+        let checksum = compute_checksum(&result.blocks);
+        let manifest = BackupManifest {
+            snapshot_id: snapshot_id.clone(),
+            parent_id: None,
+            blocks: result.blocks.clone(),
+            total_size: result.stats.total_bytes,
+            unique_size: result.stats.unique_bytes,
+            compressed_size: result.stats.compressed_bytes,
+            file_count: result.total_disks as u64,
+            checksum: checksum.clone(),
+            created_at: t,
+        };
+
+        let index = BlockIndex::new(&self.index_path())?;
+        index.save_manifest(&snapshot_id, &manifest)?;
+
+        let snapshot = Snapshot {
+            id: snapshot_id.clone(),
+            job_id: job.id.clone(),
+            repository_id: job.repository_id.clone(),
+            snapshot_type: SnapshotType::Full,
+            parent_id: None,
+            size_bytes: result.stats.total_bytes,
+            unique_bytes: result.stats.unique_bytes,
+            compressed_bytes: result.stats.compressed_bytes,
+            checksum: checksum.clone(),
+            consistency: ConsistencyLevel::Consistent,
+            app_consistent: true,
+            created_at: t,
+            manifest_path: self.index_path(),
+        };
+        index.add_snapshot(&snapshot)?;
+
+        self.insert_snapshot(&snapshot, session_id).await?;
+        self.update_repo_used(&job.repository_id, result.stats.compressed_bytes).await?;
+        crate::db::hypervisor::mark_vm_backed_up(&self.db, hypervisor_id, vm_ref, t).await?;
+
+        Ok((snapshot, result.stats))
+    }
+
+    /// Build the backup pipeline (compression + encryption + dedup) for a job.
+    fn build_pipeline(&self, job: &BackupJobModel) -> Result<BackupPipeline> {
+        let compression = match job.compression.as_str() {
+            "lz4" => CompressionAlgorithm::Lz4,
+            "none" => CompressionAlgorithm::None,
+            _ => CompressionAlgorithm::Zstd { level: 3 },
+        };
+
+        let encryption = if job.encryption {
+            match self.config.encryption.algorithm.to_lowercase().as_str() {
+                "chacha20-poly1305" => EncryptionAlgorithm::ChaCha20Poly1305,
+                "none" => EncryptionAlgorithm::None,
+                _ => EncryptionAlgorithm::Aes256Gcm,
+            }
+        } else {
+            EncryptionAlgorithm::None
+        };
+
+        let key = if encryption != EncryptionAlgorithm::None {
+            let key_path = self.config.encryption.key_path.clone()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| {
+                    self.config.storage.default_path.join("encryption.key")
+                });
+            Some(crate::encrypt::load_or_create_key(&key_path)?)
+        } else {
+            None
+        };
+
+        let pipeline_config = PipelineConfig {
+            compression,
+            encryption,
+            encryption_key: key.clone(),
+            chunk_size: ChunkSizeConfig::default(),
+            throttle: None,
+        };
+
+        let mut pipeline = BackupPipeline::new(pipeline_config);
+        pipeline = pipeline.with_dedup(&self.index_path())
+            .map_err(|e| anyhow::anyhow!("with_dedup failed (index {}): {}", self.index_path(), e))?;
+        Ok(pipeline)
     }
 
     async fn load_repository(&self, id: &str) -> Result<Option<RepositoryModel>> {
