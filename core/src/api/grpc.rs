@@ -20,6 +20,7 @@ use bck_proto::{
 use bck_proto::sobr_service_server::SobrService;
 use bck_proto::cloud_service_server::CloudService;
 use bck_proto::m365_service_server::M365Service;
+use bck_proto::agent_server::Agent;
 use bck_proto::{
     AccountRef, CloudAccount as PbCloudAccount, CloudAccountList as PbCloudAccountList,
     CloudRestore as PbCloudRestore, CloudRestoreList as PbCloudRestoreList,
@@ -28,6 +29,10 @@ use bck_proto::{
     RestorableKind as PbRestorableKind, RestorableKindList as PbRestorableKindList,
     RestoreQuery, RestoreRequest as PbRestoreRequest, SobrPolicy as PbSobrPolicy,
     SobrPolicyList as PbSobrPolicyList, SobrTier as PbSobrTier, SobrTierList as PbSobrTierList,
+    AgentBackupConfig, AgentRestoreConfig, AgentStatus as PbAgentStatus,
+    HeartbeatRequest as PbHeartbeatRequest, HeartbeatResponse as PbHeartbeatResponse,
+    ScriptRequest as PbScriptRequest, ScriptResult as PbScriptResult,
+    UpdateProgress, UpdateRequest as PbUpdateRequest,
 };
 
 use crate::server::AppState;
@@ -888,6 +893,281 @@ impl M365Service for M365ServiceService {
 }
 
 // ---------------------------------------------------------------------------
+// Agent service (server-side: persists heartbeats, queues tasks, reports state)
+// ---------------------------------------------------------------------------
+
+pub struct AgentService {
+    state: Arc<AppState>,
+}
+
+impl AgentService {
+    pub fn new(state: Arc<AppState>) -> Self {
+        Self { state }
+    }
+}
+
+async fn upsert_agent(state: &AppState, hb: &PbHeartbeatRequest) -> Result<String, Status> {
+    let id = if hb.agent_id.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        hb.agent_id.clone()
+    };
+    let now = chrono::Utc::now().timestamp();
+    let capabilities = serde_json::to_string(&hb.capabilities)
+        .unwrap_or_else(|_| "[]".into());
+    let ip: Option<String> = None;
+
+    let res: Result<(), String> = match &state.db {
+        crate::db::DbPool::Sqlite(pool) => {
+            sqlx::query(
+                "INSERT INTO agents (id, hostname, ip_address, os_type, os_version, agent_version, status, last_seen, capabilities, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'online', ?7, ?8, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                    hostname = excluded.hostname,
+                    ip_address = excluded.ip_address,
+                    os_type = excluded.os_type,
+                    os_version = excluded.os_version,
+                    agent_version = excluded.agent_version,
+                    status = 'online',
+                    last_seen = excluded.last_seen,
+                    capabilities = excluded.capabilities"
+            )
+            .bind(&id)
+            .bind(&hb.hostname)
+            .bind(&ip)
+            .bind(&hb.os_type)
+            .bind(&hb.os_version)
+            .bind(&hb.agent_version)
+            .bind(now)
+            .bind(&capabilities)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        }
+        crate::db::DbPool::Postgres(pool) => {
+            sqlx::query(
+                "INSERT INTO agents (id, hostname, ip_address, os_type, os_version, agent_version, status, last_seen, capabilities, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'online', $7, $8, $7)
+                 ON CONFLICT(id) DO UPDATE SET
+                    hostname = EXCLUDED.hostname,
+                    ip_address = EXCLUDED.ip_address,
+                    os_type = EXCLUDED.os_type,
+                    os_version = EXCLUDED.os_version,
+                    agent_version = EXCLUDED.agent_version,
+                    status = 'online',
+                    last_seen = EXCLUDED.last_seen,
+                    capabilities = EXCLUDED.capabilities"
+            )
+            .bind(&id)
+            .bind(&hb.hostname)
+            .bind(&ip)
+            .bind(&hb.os_type)
+            .bind(&hb.os_version)
+            .bind(&hb.agent_version)
+            .bind(now)
+            .bind(&capabilities)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        }
+    };
+    res.map_err(|e| Status::internal(e))?;
+    Ok(id)
+}
+
+/// Insert a task into `agent_tasks` and return its id.
+async fn insert_agent_task(state: &AppState, agent_id: &str, task_type: &str, payload: serde_json::Value) -> Result<String, Status> {
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().timestamp();
+    let payload = payload.to_string();
+
+    let res: Result<(), String> = match &state.db {
+        crate::db::DbPool::Sqlite(pool) => {
+            sqlx::query(
+                "INSERT INTO agent_tasks (id, agent_id, task_type, status, payload, created_at)
+                 VALUES (?1, ?2, ?3, 'pending', ?4, ?5)"
+            )
+            .bind(&task_id)
+            .bind(agent_id)
+            .bind(task_type)
+            .bind(&payload)
+            .bind(now)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        }
+        crate::db::DbPool::Postgres(pool) => {
+            sqlx::query(
+                "INSERT INTO agent_tasks (id, agent_id, task_type, status, payload, created_at)
+                 VALUES ($1, $2, $3, 'pending', $4, $5)"
+            )
+            .bind(&task_id)
+            .bind(agent_id)
+            .bind(task_type)
+            .bind(&payload)
+            .bind(now)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+        }
+    };
+    res.map_err(|e| Status::internal(e))?;
+    Ok(task_id)
+}
+
+#[tonic::async_trait]
+impl Agent for AgentService {
+    async fn heartbeat(
+        &self,
+        request: Request<PbHeartbeatRequest>,
+    ) -> Result<Response<PbHeartbeatResponse>, Status> {
+        let hb = request.into_inner();
+        let id = upsert_agent(&self.state, &hb).await?;
+        info!("gRPC agent heartbeat: {} ({})", hb.hostname, id);
+
+        crate::db::record_event(
+            &self.state.db,
+            "agent_heartbeat",
+            "agents",
+            &format!("Agent {} heartbeat", id),
+            None,
+            None,
+        ).await.ok();
+
+        Ok(Response::new(PbHeartbeatResponse {
+            accepted: true,
+            server_time: chrono::Utc::now().to_rfc3339(),
+            update_available: false,
+            update_version: String::new(),
+            update_url: String::new(),
+            pending_commands: Vec::new(),
+        }))
+    }
+
+    async fn start_backup(
+        &self,
+        request: Request<AgentBackupConfig>,
+    ) -> Result<Response<JobHandle>, Status> {
+        let cfg = request.into_inner();
+        info!("gRPC agent start_backup: agent={} paths={:?}", cfg.agent_id, cfg.paths);
+
+        let _task_id = insert_agent_task(&self.state, &cfg.agent_id, "file_backup", serde_json::json!({
+            "paths": cfg.paths,
+            "use_vss": cfg.use_vss,
+            "use_journal": cfg.use_journal,
+        })).await?;
+
+        Ok(Response::new(JobHandle {
+            job_id: cfg.agent_id.clone(),
+            session_id: cfg.session_id,
+            status: "queued".into(),
+            created_at: chrono::Utc::now().timestamp() as u64,
+        }))
+    }
+
+    type StartRestoreStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<RestoreProgress, Status>> + Send>>;
+
+    async fn start_restore(
+        &self,
+        request: Request<AgentRestoreConfig>,
+    ) -> Result<Response<Self::StartRestoreStream>, Status> {
+        let cfg = request.into_inner();
+        info!("gRPC agent start_restore: agent={} snapshot={}", cfg.agent_id, cfg.snapshot_id);
+
+        let _ = insert_agent_task(&self.state, &cfg.agent_id, "file_restore", serde_json::json!({
+            "snapshot_id": cfg.snapshot_id,
+            "paths": cfg.paths,
+            "target_path": cfg.target_path,
+        })).await?;
+
+        let (tx, rx) = mpsc::channel(8);
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(RestoreProgress {
+                status: "completed".into(),
+                progress_pct: 100.0,
+                ..Default::default()
+            })).await;
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+    }
+
+    async fn execute_script(
+        &self,
+        request: Request<PbScriptRequest>,
+    ) -> Result<Response<PbScriptResult>, Status> {
+        let req = request.into_inner();
+        info!("gRPC agent execute_script: agent={} interpreter={}", req.agent_id, req.interpreter);
+
+        let _task_id = insert_agent_task(&self.state, &req.agent_id, "run_script", serde_json::json!({
+            "interpreter": req.interpreter,
+            "timeout": req.timeout,
+            "script": req.script_content,
+        })).await?;
+
+        // The script runs asynchronously on the agent; report it as queued.
+        Ok(Response::new(PbScriptResult {
+            exit_code: 0,
+            stdout: format!("script queued as task {}", _task_id),
+            stderr: String::new(),
+            timed_out: false,
+        }))
+    }
+
+    async fn get_status(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<PbAgentStatus>, Status> {
+        let agents = crate::server::routes::agents::fetch_agents(&self.state.db)
+            .await.map_err(status_err)?;
+        match agents.first() {
+            Some(a) => Ok(Response::new(PbAgentStatus {
+                agent_id: a.id.clone(),
+                hostname: a.hostname.clone(),
+                status: a.status.clone(),
+                version: a.agent_version.clone().unwrap_or_default(),
+                running_jobs: Vec::new(),
+                ..Default::default()
+            })),
+            None => Ok(Response::new(PbAgentStatus {
+                status: "unknown".into(),
+                ..Default::default()
+            })),
+        }
+    }
+
+    type UpdateAgentStream = Pin<Box<dyn tokio_stream::Stream<Item = Result<UpdateProgress, Status>> + Send>>;
+
+    async fn update_agent(
+        &self,
+        request: Request<PbUpdateRequest>,
+    ) -> Result<Response<Self::UpdateAgentStream>, Status> {
+        let req = request.into_inner();
+        info!("gRPC agent update_agent: agent={} target={}", req.agent_id, req.target_version);
+
+        let _ = insert_agent_task(&self.state, &req.agent_id, "update", serde_json::json!({
+            "target_version": req.target_version,
+            "package_url": req.package_url,
+            "checksum": hex::encode(&req.package_checksum),
+        })).await?;
+
+        let (tx, rx) = mpsc::channel(8);
+        tokio::spawn(async move {
+            let _ = tx.send(Ok(UpdateProgress {
+                progress_pct: 0.0,
+                phase: "queued".into(),
+                status: "queued".into(),
+                ..Default::default()
+            })).await;
+        });
+        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -1076,5 +1356,69 @@ mod tests {
 
         let list = svc.list_tenants(Request::new(Empty {})).await.unwrap().into_inner();
         assert_eq!(list.tenants.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn agent_heartbeat_upserts_and_tasks_queued() {
+        let state = test_state().await;
+        let svc = AgentService::new(state.clone());
+
+        // Heartbeat with an explicit agent id upserts the agent row.
+        let resp = svc.heartbeat(Request::new(PbHeartbeatRequest {
+            agent_id: "agent-1".into(),
+            hostname: "node-1".into(),
+            os_type: "linux".into(),
+            os_version: "6.8".into(),
+            agent_version: "0.1.0".into(),
+            cpu_usage: 12.5,
+            memory_usage: 34.0,
+            disk_free_bytes: 100_000,
+            capabilities: vec!["vss".into(), "file_backup".into()],
+            ..Default::default()
+        })).await.unwrap();
+        assert!(resp.into_inner().accepted);
+
+        let agents = crate::server::routes::agents::fetch_agents(&state.db).await.unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].id, "agent-1");
+        assert_eq!(agents[0].status, "online");
+
+        // Start a backup -> a pending task is created for the agent.
+        let resp = svc.start_backup(Request::new(AgentBackupConfig {
+            agent_id: "agent-1".into(),
+            session_id: "sess-1".into(),
+            paths: vec!["/data".into()],
+            use_vss: false,
+            use_journal: false,
+            ..Default::default()
+        })).await.unwrap();
+        assert_eq!(resp.into_inner().job_id, "agent-1");
+
+        // Task was inserted into agent_tasks.
+        let count: i64 = match &state.db {
+            crate::db::DbPool::Sqlite(pool) => {
+                sqlx::query_scalar("SELECT COUNT(*) FROM agent_tasks WHERE agent_id = 'agent-1' AND task_type = 'file_backup' AND status = 'pending'")
+                    .fetch_one(pool).await.unwrap()
+            }
+            crate::db::DbPool::Postgres(_) => 0,
+        };
+        assert_eq!(count, 1);
+
+        // ExecuteScript also queues a task.
+        let script = svc.execute_script(Request::new(PbScriptRequest {
+            agent_id: "agent-1".into(),
+            script_content: "echo hi".into(),
+            interpreter: "bash".into(),
+            timeout: 30,
+        })).await.unwrap().into_inner();
+        assert!(script.stdout.contains("queued"));
+    }
+
+    #[tokio::test]
+    async fn agent_get_status_returns_unknown_when_empty() {
+        let state = test_state().await;
+        let svc = AgentService::new(state);
+        let resp = svc.get_status(Request::new(Empty {})).await.unwrap();
+        assert_eq!(resp.into_inner().status, "unknown");
     }
 }

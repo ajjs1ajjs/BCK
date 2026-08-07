@@ -168,7 +168,10 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
     use bck_core::api::grpc::bck_proto::sobr_service_server::SobrServiceServer;
     use bck_core::api::grpc::bck_proto::cloud_service_server::CloudServiceServer;
     use bck_core::api::grpc::bck_proto::m365_service_server::M365ServiceServer;
-    use bck_core::api::grpc::{BackupEngineImpl, SobrServiceService, CloudServiceService, M365ServiceService};
+    use bck_core::api::grpc::bck_proto::agent_server::AgentServer;
+    use bck_core::api::grpc::{
+        BackupEngineImpl, SobrServiceService, CloudServiceService, M365ServiceService, AgentService,
+    };
     use tonic::transport::Server;
 
     Server::builder()
@@ -176,6 +179,7 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
         .add_service(SobrServiceServer::new(SobrServiceService::new(state.clone())))
         .add_service(CloudServiceServer::new(CloudServiceService::new(state.clone())))
         .add_service(M365ServiceServer::new(M365ServiceService::new(state.clone())))
+        .add_service(AgentServer::new(AgentService::new(state.clone())))
         .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
         .await?;
 

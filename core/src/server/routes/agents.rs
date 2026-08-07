@@ -486,7 +486,7 @@ async fn delete_agent(
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn fetch_agents(db: &DbPool) -> anyhow::Result<Vec<AgentResponse>> {
+pub async fn fetch_agents(db: &DbPool) -> anyhow::Result<Vec<AgentResponse>> {
     match db {
         DbPool::Sqlite(pool) => {
             let rows = sqlx::query_as::<_, crate::db::models::agent::AgentModel>(

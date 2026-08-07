@@ -35,7 +35,7 @@ E:\Code\BCK\
 | Core engine | ✅ | scanner → chunker (XXH3) → dedup (SHA-256) → compress (LZ4/Zstd/noop) → encrypt (AES-256/ChaCha20) |
 | Storage | ✅ | Local FS, S3 (SigV4, MinIO path-style), Azure Blob, GCS |
 | REST API | ✅ | jobs, repos, snapshots, restore, dashboard, auth, agents, hypervisors, events, **sso, sobr, cloud, m365, tape, cdp, dr** |
-| gRPC | ✅ | Tonic + Prost; `BackupEngine` (реальний: start/cancel jobs, list snapshots, stats, health, restore), **SOBR / Cloud / M365 сервіси** |
+| gRPC | ✅ | Tonic + Prost; `BackupEngine` (реальний: start/cancel jobs, list snapshots, stats, health, restore), **SOBR / Cloud / M365 / Agent сервіси** |
 | Database | ✅ | SQLite (rusqlite) default + PostgreSQL (sqlx) |
 | Scheduler | ✅ | cron-подібні розклади |
 | Auth | ✅ | JWT + Argon2; SSO OIDC (authorize/callback) + LDAP |
@@ -122,9 +122,9 @@ E:\Code\BCK\
 
 ## Тести
 
-- **152 тест** у `bck-core` (всі проходять), бінарники — без тестів.
+- **154 тест** у `bck-core` (всі проходять), бінарники — без тестів.
 - SOBR lifecycle покритий (move, archive, seal, retention, shared blocks).
 - Instant recovery (NFS/iSCSI/xdr), cloud XML parsing, M365 Graph, Hyper-V RCT — покриті.
 - VM backup job покритий (unit: `backup::vm` блоки → storage; route: `POST .../vms/:ref/backup` + 404).
 - Instant Recovery для VM покритий (unit: register/unregister VM на hypervisor; route: 404/400/GET list).
-- gRPC покритий (6 unit-тестів: StartJob→JobManager, ListSnapshots, Health, SOBR tier, Cloud account, M365 tenant).
+- gRPC покритий (8 unit-тестів: StartJob→JobManager, ListSnapshots, Health, SOBR tier, Cloud account, M365 tenant, Agent heartbeat/tasks, Agent status).
