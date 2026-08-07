@@ -75,7 +75,7 @@ What the installer does:
 4. Registers `bckd` as a systemd service (Linux), launchd agent (macOS) or Windows service (with restart-on-failure).
 5. Symlinks the binaries into `PATH`.
 
-> **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates.
+> **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates. Build prerequisites (installed automatically when running as root) are: `build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler`.
 
 > **If the installer stops at "Required tool not found: cargo":** you are likely running an old cached copy of the script (GitHub raw sometimes caches for a few minutes after a commit). Verify you have the latest and re-run:
 > ```bash

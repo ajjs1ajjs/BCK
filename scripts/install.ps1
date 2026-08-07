@@ -58,9 +58,17 @@ function Install-FromRelease {
 }
 
 function Install-FromSource {
-    Log "Building from source (requires Rust + MSVC toolchain)..."
+    Log "Building from source (requires Rust + MSVC toolchain + protoc)..."
     foreach ($t in @("cargo", "rustc")) {
         if (-not (Get-Command $t -ErrorAction SilentlyContinue)) { Fail "Missing: $t. Install Rust from https://rustup.rs" }
+    }
+    if (-not (Get-Command protoc -ErrorAction SilentlyContinue)) {
+        Warn "Missing: protoc (protobuf compiler). Install it, e.g.:  winget install protobuf  or  choco install protoc"
+        Fail "protoc is required to compile the gRPC protocol. Install it and re-run."
+    }
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+        Warn "Missing: cmake (used by aws-sdk / zstd). Install it, e.g.:  winget install Kitware.CMake"
+        Fail "cmake is required. Install it and re-run."
     }
     $src = Join-Path $TmpDir "BCK"
     if (-not (Test-Path $src)) {

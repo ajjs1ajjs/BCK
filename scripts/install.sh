@@ -89,27 +89,30 @@ ensure_rust() {
     log "Rust toolchain ready (cargo $(cargo --version | awk '{print $2}'))."
 }
 
-# Install build prerequisites (Linux): C toolchain + OpenSSL dev headers.
+# Install build prerequisites (Linux): C toolchain + OpenSSL dev headers + protoc.
 ensure_build_deps() {
     if [ "$OS_LOWER" != "linux" ]; then
         return 0
     fi
     local missing=""
     command -v cc >/dev/null 2>&1  || command -v gcc >/dev/null 2>&1 || missing="$missing build-essential"
+    command -v cmake >/dev/null 2>&1 || missing="$missing cmake"
     command -v pkg-config >/dev/null 2>&1 || missing="$missing pkg-config"
     pkg-config --exists openssl 2>/dev/null || missing="$missing libssl-dev"
+    pkg-config --exists libzstd 2>/dev/null || missing="$missing libzstd-dev"
+    command -v protoc >/dev/null 2>&1 || missing="$missing protobuf-compiler"
     if [ -n "$missing" ]; then
         log "Installing build dependencies:$missing ..."
         if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
             apt-get update -y 2>/dev/null | tail -n 1
-            apt-get install -y build-essential pkg-config libssl-dev 2>&1 | tail -n 2
+            apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler 2>&1 | tail -n 2
         elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            dnf install -y gcc gcc-c++ pkg-config openssl-devel 2>&1 | tail -n 2
+            dnf install -y gcc gcc-c++ cmake pkg-config openssl-devel libzstd-devel protobuf-compiler 2>&1 | tail -n 2
         elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apk add --no-cache build-base pkgconf openssl-dev 2>&1 | tail -n 2
+            apk add --no-cache build-base cmake pkgconf openssl-dev zstd-dev protobuf 2>&1 | tail -n 2
         else
-            warn "Missing system build deps (build-essential / pkg-config / libssl-dev) and cannot auto-install."
-            warn "Install them manually, e.g.:  sudo apt-get install -y build-essential pkg-config libssl-dev"
+            warn "Missing system build deps (build-essential / cmake / pkg-config / libssl-dev / libzstd-dev / protobuf-compiler) and cannot auto-install."
+            warn "Install them manually, e.g.:  sudo apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler"
             return 1
         fi
     fi
