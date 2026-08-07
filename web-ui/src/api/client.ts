@@ -595,6 +595,35 @@ export const hypervisorApi = {
     api.post(`/hypervisors/${id}/vms/${vmRef}/backup`, payload),
 }
 
+export interface InstantRecoverySession {
+  session_id: string
+  snapshot_id: string
+  vm_name: string
+  protocol: string
+  mount_path: string
+  target_host: string
+  status: string
+  progress_pct: number
+  bytes_migrated: number
+  total_bytes: number
+  hypervisor_id?: string | null
+  vm_ref?: string | null
+}
+
+export const instantRecoveryApi = {
+  list: () => api.get<InstantRecoverySession[]>('/restore/instant'),
+  vm: (payload: {
+    snapshot_id: string
+    vm_name: string
+    hypervisor_id: string
+    protocol: string
+    target_host: string
+    datastore?: string
+    power_on: boolean
+  }) => api.post('/restore/instant/vm', payload),
+  stop: (id: string) => api.post(`/restore/instant/${id}/stop`),
+}
+
 export const portalApi = {
   me: () => api.get<PortalMe>('/portal/me'),
   myRequests: () => api.get<RestoreRequest[]>('/portal/restore-requests'),

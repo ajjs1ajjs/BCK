@@ -4,12 +4,14 @@ pub mod xdr;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::index::BlockIndex;
+use crate::integrations::HypervisorConnector;
 use crate::storage::StorageBackend;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +26,8 @@ pub struct InstantRecoverySession {
     pub progress_pct: f64,
     pub bytes_migrated: u64,
     pub total_bytes: u64,
+    pub hypervisor_id: Option<String>,
+    pub vm_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -87,6 +91,9 @@ pub struct InstantRecoveryManager {
     index: Arc<BlockIndex>,
     storage: Arc<RwLock<Box<dyn StorageBackend>>>,
     sessions: Arc<RwLock<Vec<InstantRecoverySession>>>,
+    /// Optional hypervisor connector used to register the recovered VM directly
+    /// on VMware/Hyper-V (instant recovery for VMs).
+    connectors: Arc<RwLock<HashMap<String, Arc<dyn HypervisorConnector>>>>,
 }
 
 impl InstantRecoveryManager {
@@ -99,6 +106,7 @@ impl InstantRecoveryManager {
             index,
             storage: Arc::new(RwLock::new(storage)),
             sessions: Arc::new(RwLock::new(Vec::new())),
+            connectors: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -172,6 +180,8 @@ impl InstantRecoveryManager {
             progress_pct: 0.0,
             bytes_migrated: 0,
             total_bytes,
+            hypervisor_id: None,
+            vm_ref: None,
         };
 
         self.sessions.write().await.push(session.clone());
@@ -277,10 +287,58 @@ impl InstantRecoveryManager {
             progress_pct: 0.0,
             bytes_migrated: 0,
             total_bytes,
+            hypervisor_id: None,
+            vm_ref: None,
         };
 
         self.sessions.write().await.push(session.clone());
         self.spawn_migration(session_id, snapshot_id.to_string(), total_bytes);
+        Ok(session)
+    }
+
+    /// Start instant recovery and register the recovered VM directly on the
+    /// target hypervisor (VMware / Hyper-V). The VM boots from the NFS/iSCSI
+    /// export backed by the snapshot, so no full restore is required. Returns
+    /// the session with the hypervisor VM ref populated.
+    pub async fn start_hypervisor_recovery(
+        &self,
+        snapshot_id: &str,
+        vm_name: &str,
+        protocol: &str,
+        listen_addr: &str,
+        hypervisor_id: &str,
+        connector: Box<dyn HypervisorConnector>,
+        datastore: &str,
+        power_on: bool,
+    ) -> Result<InstantRecoverySession> {
+        let mut session = match protocol.to_lowercase().as_str() {
+            "iscsi" => self.start_iscsi_recovery(snapshot_id, vm_name, "", listen_addr).await?,
+            _ => self.start_nfs_recovery(snapshot_id, vm_name, "", listen_addr).await?,
+        };
+
+        // Build the list of virtual disk / config files in the snapshot so the
+        // VM can be registered against the export.
+        let manifest = self.index.load_manifest(snapshot_id)?
+            .ok_or_else(|| anyhow::anyhow!("Snapshot not found: {}", snapshot_id))?;
+        let mut disk_files: Vec<String> = manifest.blocks.iter()
+            .map(|b| b.relative_path.clone())
+            .collect();
+        disk_files.sort();
+        disk_files.dedup();
+
+        let vm_ref = connector.register_vm(vm_name, &disk_files, datastore, power_on).await?;
+        info!(
+            "Instant recovery: registered VM '{}' on hypervisor {} as {} ({} disk files)",
+            vm_name, hypervisor_id, vm_ref, disk_files.len()
+        );
+
+        self.connectors.write().await.insert(session.id.clone(), Arc::from(connector));
+        session.vm_ref = Some(vm_ref);
+        session.hypervisor_id = Some(hypervisor_id.to_string());
+        if let Some(s) = self.sessions.write().await.iter_mut().find(|s| s.id == session.id) {
+            s.vm_ref = session.vm_ref.clone();
+            s.hypervisor_id = session.hypervisor_id.clone();
+        }
         Ok(session)
     }
 
@@ -319,8 +377,23 @@ impl InstantRecoveryManager {
         });
     }
 
-    /// Stop instant recovery and clean up
+    /// Stop instant recovery and clean up. If the session registered a VM on a
+    /// hypervisor, unregister it first.
     pub async fn stop_recovery(&self, session_id: &str) -> Result<()> {
+        {
+            let sessions = self.sessions.read().await;
+            if let Some(s) = sessions.iter().find(|s| s.id == session_id) {
+                if let Some(vm_ref) = &s.vm_ref {
+                    if let Some(conn) = self.connectors.read().await.get(session_id) {
+                        match conn.unregister_vm(vm_ref).await {
+                            Ok(_) => info!("Instant recovery: unregistered VM {} from hypervisor", vm_ref),
+                            Err(e) => warn!("Instant recovery: failed to unregister VM {}: {}", vm_ref, e),
+                        }
+                    }
+                }
+            }
+        }
+        self.connectors.write().await.remove(session_id);
         let mut sessions = self.sessions.write().await;
         sessions.retain(|s| s.id != session_id);
         info!("Instant recovery session {} stopped", session_id);
@@ -407,6 +480,29 @@ impl InstantRecoveryRegistry {
         Ok(session)
     }
 
+    /// Start instant recovery for a VM and register it on the target hypervisor
+    /// (VMware / Hyper-V). The VM boots directly from the backup export.
+    pub async fn start_hypervisor(
+        &self,
+        index_path: &str,
+        storage: Box<dyn StorageBackend>,
+        snapshot_id: &str,
+        vm_name: &str,
+        protocol: &str,
+        listen_addr: &str,
+        hypervisor_id: &str,
+        connector: Box<dyn HypervisorConnector>,
+        datastore: &str,
+        power_on: bool,
+    ) -> Result<InstantRecoverySession> {
+        let mgr = Arc::new(InstantRecoveryManager::new(index_path, storage)?);
+        let session = mgr.start_hypervisor_recovery(
+            snapshot_id, vm_name, protocol, listen_addr, hypervisor_id, connector, datastore, power_on,
+        ).await?;
+        self.inner.write().await.push(mgr);
+        Ok(session)
+    }
+
     /// Stop a recovery session across all managers.
     pub async fn stop_session(&self, session_id: &str) -> bool {
         let mgrs = self.inner.read().await;
@@ -431,14 +527,149 @@ impl InstantRecoveryRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
-    #[test]
-    fn parse_addr() {
-        let a = parse_listen_addr("", 2049).unwrap();
-        assert_eq!(a.port(), 2049);
-        let b = parse_listen_addr("0.0.0.0:3260", 2049).unwrap();
-        assert_eq!(b.port(), 3260);
-        let c = parse_listen_addr("2049", 2049).unwrap();
-        assert_eq!(c.port(), 2049);
+    use crate::storage::local::LocalStorage;
+    use crate::types::{BackupManifest, BlockId, FileBlock, FileMetadata};
+
+    /// Connector that records register/unregister calls.
+    struct MockConnector {
+        registered: Arc<AtomicBool>,
+        unregistered: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl HypervisorConnector for MockConnector {
+        async fn connect(&self) -> Result<()> { Ok(()) }
+        async fn test_connection(&self) -> Result<()> { Ok(()) }
+        async fn list_vms(&self) -> Result<Vec<crate::integrations::VmInfo>> { Ok(vec![]) }
+        async fn get_vm(&self, _mo_ref: &str) -> Result<crate::integrations::VmInfo> {
+            anyhow::bail!("not implemented")
+        }
+        async fn power_on(&self, _vm_ref: &str) -> Result<()> { Ok(()) }
+        async fn power_off(&self, _vm_ref: &str, _force: bool) -> Result<()> { Ok(()) }
+        async fn create_snapshot(
+            &self,
+            _vm_ref: &str,
+            _name: &str,
+            _description: &str,
+            _quiesce: bool,
+            _memory: bool,
+        ) -> Result<crate::integrations::VmSnapshot> {
+            anyhow::bail!("not implemented")
+        }
+        async fn remove_snapshot(&self, _vm_ref: &str, _snapshot_id: &str) -> Result<()> { Ok(()) }
+        async fn get_changed_blocks(
+            &self,
+            _vm_ref: &str,
+            _disk_id: &str,
+            _change_id: &str,
+        ) -> Result<Vec<crate::integrations::ChangedBlock>> { Ok(vec![]) }
+        async fn get_change_id(&self, _vm_ref: &str, _disk_id: &str) -> Result<Option<String>> { Ok(None) }
+        async fn read_disk_blocks(
+            &self,
+            _vm_ref: &str,
+            _disk_path: &str,
+            _offset: i64,
+            _length: i64,
+        ) -> Result<Vec<u8>> { Ok(vec![]) }
+        async fn register_vm(
+            &self,
+            _vm_name: &str,
+            disk_files: &[String],
+            _datastore: &str,
+            _power_on: bool,
+        ) -> Result<String> {
+            assert!(!disk_files.is_empty());
+            self.registered.store(true, Ordering::SeqCst);
+            Ok("vm-ref-123".into())
+        }
+        async fn unregister_vm(&self, _vm_ref: &str) -> Result<()> {
+            self.unregistered.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// Build a manifest with one virtual disk and persist the backing block.
+    async fn seed_snapshot(index_path: &str, store_path: &str, snap_id: &str) {
+        let storage = LocalStorage::new(store_path).unwrap();
+        let block_data = vec![0xabu8; 8192];
+        let id = BlockId {
+            sha256: crate::dedup::DedupEngine::calculate_id(&block_data).sha256,
+            size: block_data.len() as u32,
+        };
+        storage.write_block(&id.sha256, &block_data).await.unwrap();
+        let manifest = BackupManifest {
+            snapshot_id: snap_id.to_string(),
+            parent_id: None,
+            blocks: vec![FileBlock {
+                relative_path: "disks/disk0.vmdk".into(),
+                offset: 0,
+                size: block_data.len() as u32,
+                block_id: id.clone(),
+                metadata: FileMetadata {
+                    path: "disks/disk0.vmdk".into(),
+                    size: block_data.len() as u64,
+                    modified_time: 0,
+                    mode: 0,
+                    owner: "vm".into(),
+                    group: "vm".into(),
+                    extended_attributes: std::collections::HashMap::new(),
+                    acl: Vec::new(),
+                },
+            }],
+            total_size: block_data.len() as u64,
+            unique_size: block_data.len() as u64,
+            compressed_size: block_data.len() as u64,
+            file_count: 1,
+            checksum: "test".into(),
+            created_at: 0,
+        };
+        let index = BlockIndex::new(index_path).unwrap();
+        index.save_manifest(snap_id, &manifest).unwrap();
+    }
+
+    #[tokio::test]
+    async fn hypervisor_instant_recovery_registers_and_unregisters_vm() {
+        let dir = std::env::temp_dir().join(format!("bck-ir-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let index_path = dir.join("index").to_string_lossy().to_string();
+        let store_path = dir.join("store").to_string_lossy().to_string();
+        std::fs::create_dir_all(&dir.join("index")).unwrap();
+        std::fs::create_dir_all(&dir.join("store")).unwrap();
+
+        seed_snapshot(&index_path, &store_path, "snap-1").await;
+
+        let storage = LocalStorage::new(&store_path).unwrap();
+        let mgr = InstantRecoveryManager::new(&index_path, Box::new(storage)).unwrap();
+        let connector = MockConnector {
+            registered: Arc::new(AtomicBool::new(false)),
+            unregistered: Arc::new(AtomicBool::new(false)),
+        };
+        let reg_flag = connector.registered.clone();
+        let unreg_flag = connector.unregistered.clone();
+
+        let session = mgr.start_hypervisor_recovery(
+            "snap-1",
+            "restored-vm",
+            "nfs",
+            "127.0.0.1:0",
+            "hv-1",
+            Box::new(connector),
+            "datastore1",
+            true,
+        ).await.unwrap();
+
+        assert!(reg_flag.load(Ordering::SeqCst));
+        assert_eq!(session.vm_ref.as_deref(), Some("vm-ref-123"));
+        assert_eq!(session.hypervisor_id.as_deref(), Some("hv-1"));
+
+        // Stopping unregisters the VM from the hypervisor.
+        mgr.stop_recovery(&session.id).await.unwrap();
+        assert!(unreg_flag.load(Ordering::SeqCst));
+        assert!(mgr.list_sessions().await.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

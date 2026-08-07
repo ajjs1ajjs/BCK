@@ -347,6 +347,33 @@ enum HypervisorCmd {
     },
     /// Show status of a backup job
     JobStatus { id: String },
+    /// Instant-recover a VM on a hypervisor (boot from backup via NFS/iSCSI)
+    InstantRecover {
+        /// Hypervisor id
+        id: String,
+        /// Snapshot id to boot from
+        #[arg(long)]
+        snapshot: String,
+        /// VM name for the recovered machine
+        #[arg(long)]
+        vm_name: String,
+        /// Protocol: nfs (default) or iscsi
+        #[arg(long, default_value = "nfs")]
+        protocol: String,
+        /// Listen address for the export server (host:port)
+        #[arg(long, default_value = "")]
+        target_host: String,
+        /// Datastore name on the hypervisor
+        #[arg(long, default_value = "")]
+        datastore: String,
+        /// Power the recovered VM on
+        #[arg(long)]
+        power_on: bool,
+    },
+    /// List active instant recovery sessions
+    InstantList,
+    /// Stop an instant recovery session
+    InstantStop { id: String },
 }
 
 #[derive(Subcommand)]
@@ -882,6 +909,26 @@ async fn main() -> Result<()> {
             HypervisorCmd::JobStatus { id } => {
                 let resp = api.get(&format!("/api/v1/jobs/{}", id)).await?;
                 print_json(&resp);
+            }
+            HypervisorCmd::InstantRecover { id, snapshot, vm_name, protocol, target_host, datastore, power_on } => {
+                let resp = api.send("POST", "/api/v1/restore/instant/vm", Some(json!({
+                    "snapshot_id": snapshot,
+                    "vm_name": vm_name,
+                    "hypervisor_id": id,
+                    "protocol": protocol,
+                    "target_host": target_host,
+                    "datastore": if datastore.is_empty() { serde_json::Value::Null } else { json!(datastore) },
+                    "power_on": power_on,
+                }))).await?;
+                print_json(&resp);
+            }
+            HypervisorCmd::InstantList => {
+                let resp = api.get("/api/v1/restore/instant").await?;
+                print_json(&resp);
+            }
+            HypervisorCmd::InstantStop { id } => {
+                api.send("POST", &format!("/api/v1/restore/instant/{}/stop", id), None).await?;
+                println!("Instant recovery session stopped: {}", id);
             }
         },
     }

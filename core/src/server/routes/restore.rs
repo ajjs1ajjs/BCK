@@ -42,6 +42,18 @@ pub struct InstantRecoveryRequest {
     pub datastore: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct VmInstantRecoveryRequest {
+    pub snapshot_id: String,
+    pub vm_name: String,
+    pub hypervisor_id: String,
+    pub protocol: String,
+    pub target_host: String,
+    pub datastore: Option<String>,
+    #[serde(default)]
+    pub power_on: bool,
+}
+
 #[derive(Serialize)]
 pub struct RestoreSessionResponse {
     pub session_id: String,
@@ -64,6 +76,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/vm", axum::routing::post(restore_vm))
         .route("/file", axum::routing::post(restore_file))
         .route("/instant", axum::routing::post(instant_recovery))
+        .route("/instant", axum::routing::get(list_instant_recovery))
+        .route("/instant/vm", axum::routing::post(instant_recovery_vm))
         .route("/instant/:id/stop", axum::routing::post(stop_instant_recovery))
         .route("/explore/:snapshot_id", axum::routing::get(browse_snapshot))
         .route("/explore/:snapshot_id/file", axum::routing::get(download_file))
@@ -255,6 +269,130 @@ async fn stop_instant_recovery(
         Some(_) => StatusCode::BAD_REQUEST,
         None => StatusCode::NOT_FOUND,
     }
+}
+
+#[derive(Serialize)]
+pub struct InstantRecoveryListEntry {
+    pub session_id: String,
+    pub snapshot_id: String,
+    pub vm_name: String,
+    pub protocol: String,
+    pub mount_path: String,
+    pub target_host: String,
+    pub status: String,
+    pub progress_pct: f64,
+    pub bytes_migrated: u64,
+    pub total_bytes: u64,
+    pub hypervisor_id: Option<String>,
+    pub vm_ref: Option<String>,
+}
+
+async fn list_instant_recovery(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<InstantRecoveryListEntry>>, StatusCode> {
+    let sessions = state.instant_recovery.list_sessions().await;
+    let entries = sessions.into_iter().map(|s| {
+        InstantRecoveryListEntry {
+            session_id: s.id,
+            snapshot_id: s.snapshot_id,
+            vm_name: s.vm_name,
+            protocol: format!("{:?}", s.protocol),
+            mount_path: s.mount_path,
+            target_host: s.target_host,
+            status: format!("{:?}", s.status),
+            progress_pct: s.progress_pct,
+            bytes_migrated: s.bytes_migrated,
+            total_bytes: s.total_bytes,
+            hypervisor_id: s.hypervisor_id,
+            vm_ref: s.vm_ref,
+        }
+    }).collect();
+    Ok(Json(entries))
+}
+
+/// Instant recovery for a VM on a target hypervisor (VMware / Hyper-V):
+/// starts the NFS/iSCSI export from the snapshot and registers the VM on the
+/// hypervisor so it boots directly from the backup. Stopping the session
+/// unregisters the VM.
+async fn instant_recovery_vm(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<VmInstantRecoveryRequest>,
+) -> Result<(StatusCode, Json<RestoreSessionResponse>), StatusCode> {
+    let protocol = match req.protocol.to_lowercase().as_str() {
+        "nfs" => RestoreType::InstantNfs,
+        "iscsi" => RestoreType::InstantIscsi,
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+
+    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let repo = lookup_repository(&state.db, &snapshot.repository_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let storage = build_storage(&repo).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let hv = crate::server::routes::hypervisors::fetch_hypervisor(&state.db, &req.hypervisor_id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let connector = crate::server::routes::hypervisors::connector_from_model(&hv)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let index_str = state.config.storage.default_path.to_string_lossy().to_string();
+
+    let session = RestoreSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        snapshot_id: req.snapshot_id.clone(),
+        restore_type: protocol,
+        status: RestoreStatus::Running,
+        progress_pct: 0.0,
+        bytes_processed: 0,
+        total_bytes: 0,
+        target: format!("hypervisor:{}", req.hypervisor_id),
+        started_at: chrono::Utc::now().timestamp(),
+        finished_at: None,
+        error: None,
+    };
+
+    let resp = session_to_response(&session);
+    let sid = session.id.clone();
+    let snap_id = req.snapshot_id.clone();
+    let vm_name = req.vm_name.clone();
+    let listen = req.target_host.clone();
+    let proto = req.protocol.clone();
+    let datastore = req.datastore.clone().unwrap_or_default();
+    let hypervisor_id = req.hypervisor_id.clone();
+    let power_on = req.power_on;
+    state.restore_tracker.create(session).await;
+
+    let registry = state.instant_recovery.clone();
+    tokio::spawn(async move {
+        let result = registry.start_hypervisor(
+            &index_str,
+            storage,
+            &snap_id,
+            &vm_name,
+            &proto,
+            &listen,
+            &hypervisor_id,
+            connector,
+            &datastore,
+            power_on,
+        ).await;
+        match result {
+            Ok(_) => {
+                state.restore_tracker.update(&sid, |s| {
+                    s.progress_pct = 100.0;
+                }).await;
+            }
+            Err(e) => {
+                state.restore_tracker.update(&sid, |s| {
+                    s.status = RestoreStatus::Failed(e.to_string());
+                    s.finished_at = Some(chrono::Utc::now().timestamp());
+                }).await;
+            }
+        }
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(resp)))
 }
 
 async fn browse_snapshot(

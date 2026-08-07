@@ -562,3 +562,49 @@ async fn portal_restore_request_lifecycle() {
     ).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn hypervisor_instant_recovery_routes() {
+    use crate::server::routes::{hypervisors, restore};
+
+    let state = test_state(&format!("{}\\ir.db", temp_dir("ir"))).await;
+
+    // Register a hypervisor (connection fails, but the record is stored).
+    let hv_app = hypervisors::router().with_state(state.clone());
+    let resp = oneshot(hv_app.clone(), "POST", "/", Some(
+        r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let hv: serde_json::Value = read_json(resp).await;
+    let hv_id = hv["id"].as_str().unwrap().to_string();
+
+    let app = restore::router().with_state(state.clone());
+
+    // Unknown hypervisor on the VM instant-recovery endpoint -> 404.
+    let resp = oneshot(app.clone(), "POST", "/instant/vm", Some(
+        r#"{"snapshot_id":"snap-x","vm_name":"vm","hypervisor_id":"nope","protocol":"nfs","target_host":"127.0.0.1:2049"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Invalid protocol is rejected before connecting to the hypervisor.
+    let resp = oneshot(app.clone(), "POST", "/instant/vm", Some(
+        &format!(r#"{{"snapshot_id":"snap-x","vm_name":"vm","hypervisor_id":"{}","protocol":"bogus","target_host":"127.0.0.1:2049"}}"#, hv_id),
+    )).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The hypervisor exists now, so an unknown snapshot -> 404.
+    let resp = oneshot(app.clone(), "POST", "/instant/vm", Some(
+        &format!(r#"{{"snapshot_id":"snap-x","vm_name":"vm","hypervisor_id":"{}","protocol":"nfs","target_host":"127.0.0.1:2049"}}"#, hv_id),
+    )).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Listing instant recovery sessions returns an empty list initially.
+    let resp = oneshot(app.clone(), "GET", "/instant", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let sessions: Vec<serde_json::Value> = read_json(resp).await;
+    assert!(sessions.is_empty());
+
+    std::fs::remove_dir_all(std::path::Path::new(
+        &state.config.storage.default_path.to_string_lossy().to_string(),
+    ).parent().unwrap()).ok();
+}

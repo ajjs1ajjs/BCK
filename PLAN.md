@@ -50,7 +50,7 @@ E:\Code\BCK\
 | Tape (LTFS) | ✅ | `tape/mod.rs` + `tape/ltfs.rs` |
 | M365 | ✅ | Graph OAuth2, mailbox / OneDrive / SharePoint експорт |
 | Cloud | ✅ | AWS (EC2/EBS/RDS), Azure (VM/disk/SQL), GCP (GCE/disk/SQL), K8s (PVC) |
-| VMware / Hyper-V | 🟡 | connectors, changed-block tracking (CBT/RCT), power on/off, register/unregister VM |
+| VMware / Hyper-V | ✅ | connectors, changed-block tracking (CBT/RCT), power on/off, register/unregister VM, **VM backup job + instant recovery via REST API** |
 | Enterprise | ✅ | Reports (SLA/CSV), SSO, audit log, **multi-tenancy (REST + Web UI + CLI)** |
 | Agent | ✅ | file_backup, app-aware (VSS, SQL, Oracle archivelog) |
 | Proxy | ✅ | backup proxy |
@@ -66,11 +66,11 @@ E:\Code\BCK\
 - [x] Scheduler
 - [x] Retention (GFS daily/weekly/monthly)
 
-### Phase 1 — VM Backup 🟡
+### Phase 1 — VM Backup ✅
 - [x] VMware connector (snapshots, CBT, changed blocks, disks, power on/off, register VM)
 - [x] Hyper-V connector (RCT changed blocks, disks, power state, register VM)
 - [x] Повний VM backup job у демоні через API (VmBackupJob → pipeline → repository, JobManager `vm` job type, REST `POST /api/v1/hypervisors/:id/vms/:vm_ref/backup`, Web UI секція Hypervisors, CLI `bck hypervisor`)
-- [ ] Instant Recovery для VMware/Hyper-V через REST API
+- [x] Instant Recovery для VMware/Hyper-V через REST API (`POST /api/v1/restore/instant/vm` реєструє VM на hypervisor з бекуба, stop розреєстровує; Web UI + CLI)
 
 ### Phase 2 — Agent ✅
 - [x] Агент-демон + polling задач
@@ -126,7 +126,8 @@ E:\Code\BCK\
 
 ## Тести
 
-- **145 тест** у `bck-core` (всі проходять), бінарники — без тестів.
+- **146 тест** у `bck-core` (всі проходять), бінарники — без тестів.
 - SOBR lifecycle покритий (move, archive, seal, retention, shared blocks).
 - Instant recovery (NFS/iSCSI/xdr), cloud XML parsing, M365 Graph, Hyper-V RCT — покриті.
 - VM backup job покритий (unit: `backup::vm` блоки → storage; route: `POST .../vms/:ref/backup` + 404).
+- Instant Recovery для VM покритий (unit: register/unregister VM на hypervisor; route: 404/400/GET list).
