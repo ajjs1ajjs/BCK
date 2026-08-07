@@ -219,9 +219,23 @@ if [ "$MODE" = "source" ]; then
         fail "System build dependencies are required. Install them and re-run."
     fi
     require git
-    [ -d "$TMPDIR/BCK" ] || git clone --depth 1 "https://github.com/${REPO}.git" "$TMPDIR/BCK"
+    if [ -d "$TMPDIR/BCK/.git" ]; then
+        (cd "$TMPDIR/BCK" && git fetch --depth 1 origin main && git reset --hard origin/main) || true
+    else
+        git clone --depth 1 --branch main "https://github.com/${REPO}.git" "$TMPDIR/BCK"
+    fi
     cd "$TMPDIR/BCK"
-    cargo build --release --workspace --bins 2>&1 | tail -n 5
+
+    # Sanity check: a couple of files that must exist for a valid checkout.
+    if [ ! -f "core/src/db/hypervisor.rs" ] || [ ! -f "core/src/api/grpc.rs" ]; then
+        fail "Source checkout looks incomplete (missing files). Re-run the installer."
+    fi
+
+    log "Compiling release binaries (this takes several minutes)..."
+    if ! cargo build --release --workspace --bins; then
+        warn "Cargo build failed. Re-run the installer to retry (it will reuse cached artifacts)."
+        exit 1
+    fi
     SRC_DIR="$TMPDIR/BCK"
     # Collect binaries
     mkdir -p "$TMPDIR/bin"
