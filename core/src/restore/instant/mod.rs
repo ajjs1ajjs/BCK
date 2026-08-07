@@ -51,7 +51,7 @@ pub struct InstantDisk {
 /// Reads a byte range of a virtual file/disk from the backup store by walking
 /// the manifest blocks overlapping [offset, offset+len).
 async fn read_backed_range(
-    index: &BlockIndex,
+    _index: &BlockIndex,
     storage: &dyn StorageBackend,
     blocks: &[crate::types::FileBlock],
     file_path: &str,
@@ -108,7 +108,7 @@ impl InstantRecoveryManager {
         &self,
         snapshot_id: &str,
         vm_name: &str,
-        export_path: &str,
+        _export_path: &str,
         listen_addr: &str,
     ) -> Result<InstantRecoverySession> {
         let session_id = uuid::Uuid::new_v4().to_string();
@@ -123,7 +123,7 @@ impl InstantRecoveryManager {
         let mut exporter = nfs::NfsExporter::new(2049);
         let mut paths: Vec<(String, u64)> = Vec::new();
         for block in &manifest.blocks {
-            if let Some((p, s)) = paths.iter_mut().find(|(p, _)| p == &block.relative_path) {
+            if let Some((_p, s)) = paths.iter_mut().find(|(p, _)| p == &block.relative_path) {
                 *s = (*s).max(block.offset + block.size as u64);
             } else {
                 paths.push((block.relative_path.clone(), block.offset + block.size as u64));

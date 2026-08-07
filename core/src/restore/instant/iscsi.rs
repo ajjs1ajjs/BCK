@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -143,7 +143,7 @@ impl IscsiTarget {
         // Parse initiator name from text params.
         let itt = pdu.itt();
         let cid = pdu.bytes(10, 12);
-        let (csg, nsg) = ((pdu.header[1] >> 2) & 0x3, (pdu.header[1] >> 6) & 0x3);
+        let (_csg, _nsg) = ((pdu.header[1] >> 2) & 0x3, (pdu.header[1] >> 6) & 0x3);
         let text = String::from_utf8_lossy(&pdu.data).to_string();
 
         let mut resp = Pdu::new(OP_LOGIN_RESP);
@@ -230,7 +230,7 @@ impl IscsiTarget {
                 data[4] = 31; // additional length
                 let vendor: Vec<u8> = self.vendor_id.as_bytes().iter().take(8).cloned().collect();
                 let product: Vec<u8> = self.product_id.as_bytes().iter().take(16).cloned().collect();
-                let mut rev: Vec<u8> = b"0001".to_vec();
+                let rev: Vec<u8> = b"0001".to_vec();
                 for (i, b) in vendor.into_iter().enumerate() {
                     data[8 + i] = b;
                 }

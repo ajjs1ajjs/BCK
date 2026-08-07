@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -35,6 +35,7 @@ pub struct NfsExporter {
     files: HashMap<Vec<u8>, NfsFile>,
     /// Called to fetch a byte range of a file; used to lazily read from backup.
     read_fn: Option<Arc<dyn Fn(&str, u64, u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send>> + Send + Sync>>,
+    #[allow(dead_code)]
     port: u16,
 }
 
@@ -220,6 +221,7 @@ impl NfsExporter {
         }
     }
 
+    #[allow(dead_code)]
     fn file_attr(&self, f: &NfsFile) -> Xdr {
         let mut a = Xdr::new();
         a.void(); // fattr3: attributes follow (null post_op_attr is separate)
@@ -430,7 +432,7 @@ impl NfsExporter {
                 reply.buf.extend(attr.into_vec());
                 // dirlist3: entries (cookie3 + name3 + fileid3), eof
                 let mut entries = Xdr::new();
-                for (name, handle) in self.listing() {
+                for (name, _handle) in self.listing() {
                     entries.bool_(true); // entry present
                     entries.uhyper(1); // cookie
                     entries.string(&name);
@@ -557,6 +559,7 @@ impl NfsExporter {
 }
 
 /// helper for NfsExporter used by fsinfo.
+#[allow(dead_code)]
 trait FsinfoExt {
     fn rtime(&self) -> u64;
 }

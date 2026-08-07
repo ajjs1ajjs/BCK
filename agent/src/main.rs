@@ -266,7 +266,7 @@ async fn report_result(
     ctx: Arc<AgentContext>,
     client: reqwest::Client,
     task_id: String,
-    started: i64,
+    _started: i64,
     result: anyhow::Result<serde_json::Value>,
 ) {
     match result {
@@ -340,7 +340,7 @@ async fn run_app_backup(task_type: &str, payload: &serde_json::Value, work_dir: 
             run_log_backup(&app, &app_type, &target).await?
         }
         _ => {
-            use bck_core::agent::appaware::{AppBackupHandler, create_backup_handler};
+            use bck_core::agent::appaware::create_backup_handler;
             let handler = create_backup_handler(&app_type)
                 .ok_or_else(|| anyhow::anyhow!("No handler for {:?}", app_type))?;
             handler.prepare(&app).await?;

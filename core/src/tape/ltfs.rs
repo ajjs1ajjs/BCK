@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 use tracing::info;
 
@@ -244,6 +244,7 @@ impl LtfsManager {
         })
     }
 
+    #[allow(dead_code)]
     fn header_len(&self, data: &[u8]) -> Result<usize> {
         if data.len() < LTFS_MAGIC.len() + 12 {
             bail!("Short tape file");

@@ -114,11 +114,11 @@ E:\Code\BCK\
    (усі модулі готові в core — треба лише обгорнути в Axum handlers).
 2. **Web UI**: сторінки SOBR, Cloud accounts, M365, DR, SSO + роутинг/навігація. ✅
 3. **CLI**: підкоманди `bck cloud`, `bck sobr`, `bck m365`, `bck dr`. ✅
-4. **Очищення warnings** (~12): unused imports у `restore/instant/*` та `agent`.
+4. **Очищення warnings** (~12): unused imports у `restore/instant/*` та `agent`. ✅
 
 ## Відомі технічні борги
 
-- ~12 compiler warnings (`unused_imports` / `unused_variables`) у `core/src/restore/instant/`, `agent/src/main.rs`.
+- ~12 compiler warnings (`unused_imports` / `unused_variables`) у `core/src/restore/instant/`, `agent/src/main.rs`. → cleaned, 0 warnings
 - gRPC реалізує базовий `BackupEngine`; розширити сервіс новими RPC (sobr, cloud, m365).
 - Web UI не покриває Phase 4–6 фічі. → покрито (SOBR, Cloud, M365, Tape, DR, SSO в Admin)
 - CLI не покриває Phase 4–6 фічі.
