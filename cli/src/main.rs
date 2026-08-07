@@ -87,6 +87,9 @@ enum Commands {
     /// Disaster recovery management
     #[command(subcommand)]
     Dr(DrCmd),
+    /// Multi-tenancy management
+    #[command(subcommand)]
+    Tenant(TenantCmd),
 }
 
 #[derive(Subcommand)]
@@ -225,6 +228,65 @@ enum DrCmd {
     Failback { id: String },
     /// Test failover (non-destructive)
     Test { id: String },
+}
+
+#[derive(Subcommand)]
+enum TenantCmd {
+    /// List all tenants
+    List,
+    /// Create a tenant
+    Add {
+        name: String,
+        slug: String,
+    },
+    /// Show a tenant by ID
+    Get { id: String },
+    /// Delete a tenant
+    Delete { id: String },
+    /// Suspend a tenant
+    Suspend { id: String },
+    /// Activate a tenant
+    Activate { id: String },
+    /// Disable a tenant
+    Disable { id: String },
+    /// Update a tenant's resource quota
+    Quota {
+        id: String,
+        #[arg(long, default_value = "5")]
+        max_repositories: u32,
+        #[arg(long, default_value = "50")]
+        max_vms: u32,
+        #[arg(long, default_value = "10")]
+        max_users: u32,
+        #[arg(long, default_value = "1024")]
+        max_storage_gb: u64,
+        #[arg(long, default_value = "90")]
+        max_retention_days: u32,
+        #[arg(long, default_value = "30")]
+        max_snapshots_per_vm: u32,
+        #[arg(long)]
+        allow_cloud_tiers: bool,
+        #[arg(long)]
+        allow_tape: bool,
+    },
+    /// Update a tenant's settings
+    Settings {
+        id: String,
+        #[arg(long, default_value = "30")]
+        default_retention_days: u32,
+        #[arg(long, default_value = "22:00")]
+        backup_window_start: String,
+        #[arg(long, default_value = "06:00")]
+        backup_window_end: String,
+        #[arg(long)]
+        notify_on_failure: bool,
+        #[arg(long)]
+        notify_on_success: bool,
+        #[arg(long, default_value = "vmware, hyperv")]
+        allowed_hypervisors: String,
+        #[arg(long, default_value = "local, s3")]
+        allowed_storage: String,
+    },
 }
 
 struct Api {
@@ -557,6 +619,66 @@ async fn main() -> Result<()> {
             }
             DrCmd::Test { id } => {
                 let resp = api.send("POST", &format!("/api/v1/dr/plans/{}/test", id), None).await?;
+                print_json(&resp);
+            }
+        },
+        Commands::Tenant(cmd) => match cmd {
+            TenantCmd::List => {
+                let resp = api.get("/api/v1/tenants").await?;
+                print_json(&resp);
+            }
+            TenantCmd::Add { name, slug } => {
+                let resp = api.send("POST", "/api/v1/tenants", Some(json!({
+                    "name": name,
+                    "slug": slug,
+                }))).await?;
+                print_json(&resp);
+            }
+            TenantCmd::Get { id } => {
+                let resp = api.get(&format!("/api/v1/tenants/{}", id)).await?;
+                print_json(&resp);
+            }
+            TenantCmd::Delete { id } => {
+                api.send("DELETE", &format!("/api/v1/tenants/{}", id), None).await?;
+                println!("Deleted tenant: {}", id);
+            }
+            TenantCmd::Suspend { id } => {
+                api.send("POST", &format!("/api/v1/tenants/{}/suspend", id), None).await?;
+                println!("Tenant suspended: {}", id);
+            }
+            TenantCmd::Activate { id } => {
+                api.send("POST", &format!("/api/v1/tenants/{}/activate", id), None).await?;
+                println!("Tenant activated: {}", id);
+            }
+            TenantCmd::Disable { id } => {
+                api.send("POST", &format!("/api/v1/tenants/{}/disable", id), None).await?;
+                println!("Tenant disabled: {}", id);
+            }
+            TenantCmd::Quota { id, max_repositories, max_vms, max_users, max_storage_gb, max_retention_days, max_snapshots_per_vm, allow_cloud_tiers, allow_tape } => {
+                let resp = api.send("PUT", &format!("/api/v1/tenants/{}/quota", id), Some(json!({
+                    "max_repositories": max_repositories,
+                    "max_vms": max_vms,
+                    "max_users": max_users,
+                    "max_storage_gb": max_storage_gb,
+                    "max_retention_days": max_retention_days,
+                    "max_snapshots_per_vm": max_snapshots_per_vm,
+                    "allow_cloud_tiers": allow_cloud_tiers,
+                    "allow_tape": allow_tape,
+                }))).await?;
+                print_json(&resp);
+            }
+            TenantCmd::Settings { id, default_retention_days, backup_window_start, backup_window_end, notify_on_failure, notify_on_success, allowed_hypervisors, allowed_storage } => {
+                let hypervisors: Vec<String> = allowed_hypervisors.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let storage: Vec<String> = allowed_storage.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let resp = api.send("PUT", &format!("/api/v1/tenants/{}/settings", id), Some(json!({
+                    "default_retention_days": default_retention_days,
+                    "backup_window_start": backup_window_start,
+                    "backup_window_end": backup_window_end,
+                    "notify_on_failure": notify_on_failure,
+                    "notify_on_success": notify_on_success,
+                    "allowed_hypervisors": hypervisors,
+                    "allowed_storage": storage,
+                }))).await?;
                 print_json(&resp);
             }
         },

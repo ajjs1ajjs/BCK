@@ -51,7 +51,7 @@ E:\Code\BCK\
 | M365 | ✅ | Graph OAuth2, mailbox / OneDrive / SharePoint експорт |
 | Cloud | ✅ | AWS (EC2/EBS/RDS), Azure (VM/disk/SQL), GCP (GCE/disk/SQL), K8s (PVC) |
 | VMware / Hyper-V | 🟡 | connectors, changed-block tracking (CBT/RCT), power on/off, register/unregister VM |
-| Enterprise | ✅ | Reports (SLA/CSV), SSO, audit log |
+| Enterprise | ✅ | Reports (SLA/CSV), SSO, audit log, **multi-tenancy (REST + Web UI + CLI)** |
 | Agent | ✅ | file_backup, app-aware (VSS, SQL, Oracle archivelog) |
 | Proxy | ✅ | backup proxy |
 | CI/CD | ✅ | release.yml (GitHub Actions), install.sh/ps1, Dockerfile, docker-compose |
@@ -105,7 +105,7 @@ E:\Code\BCK\
 - [x] Reports / SLA / CSV
 - [x] Audit log
 - [ ] Self-Service portal
-- [ ] Multi-tenancy
+- [x] Multi-tenancy (TenantManager → REST /api/v1/tenants, Web UI сторінка, CLI `bck tenant`)
 - [x] Розширення CLI на нові фічі (cloud, sobr, m365, dr)
 
 ## Наступні пріоритетні кроки

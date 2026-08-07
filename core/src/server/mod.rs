@@ -16,6 +16,7 @@ use crate::cloud::CloudBackupManager;
 use crate::config::AppConfig;
 use crate::db::DbPool;
 use crate::dr::DrOrchestrator;
+use crate::enterprise::multitenant::TenantManager;
 use crate::enterprise::sso::SsoManager;
 use crate::job::JobManager;
 use crate::m365::M365BackupManager;
@@ -41,6 +42,7 @@ pub struct AppState {
     pub tape: TapeManager,
     pub cdp: CdpEngine,
     pub dr: DrOrchestrator,
+    pub tenants: TenantManager,
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

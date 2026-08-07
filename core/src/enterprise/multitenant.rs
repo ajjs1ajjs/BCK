@@ -122,17 +122,20 @@ impl TenantManager {
     }
 
     /// Update resource usage for a tenant
-    pub async fn update_usage(&self, tenant_id: &str, delta: ResourceUsage) -> Result<()> {
+    pub async fn update_usage(&self, tenant_id: &str, delta: ResourceUsage) -> Result<bool> {
         let mut tenants = self.tenants.write().await;
-        if let Some(tenant) = tenants.iter_mut().find(|t| t.id == tenant_id) {
-            tenant.usage.repositories += delta.repositories;
-            tenant.usage.vms += delta.vms;
-            tenant.usage.users += delta.users;
-            tenant.usage.storage_used_gb += delta.storage_used_gb;
-            tenant.usage.snapshots_total += delta.snapshots_total;
-            tenant.usage.monthly_data_written_gb += delta.monthly_data_written_gb;
+        match tenants.iter_mut().find(|t| t.id == tenant_id) {
+            Some(tenant) => {
+                tenant.usage.repositories += delta.repositories;
+                tenant.usage.vms += delta.vms;
+                tenant.usage.users += delta.users;
+                tenant.usage.storage_used_gb += delta.storage_used_gb;
+                tenant.usage.snapshots_total += delta.snapshots_total;
+                tenant.usage.monthly_data_written_gb += delta.monthly_data_written_gb;
+                Ok(true)
+            }
+            None => Ok(false),
         }
-        Ok(())
     }
 
     /// Suspend a tenant
@@ -143,6 +146,62 @@ impl TenantManager {
             info!("Tenant suspended: {}", tenant.name);
         }
         Ok(())
+    }
+
+    /// Set a tenant's status (Active / Suspended / Disabled)
+    pub async fn set_status(&self, tenant_id: &str, status: TenantStatus) -> Result<bool> {
+        let mut tenants = self.tenants.write().await;
+        match tenants.iter_mut().find(|t| t.id == tenant_id) {
+            Some(tenant) => {
+                tenant.status = status;
+                info!("Tenant status updated: {}", tenant.name);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Delete a tenant
+    pub async fn delete_tenant(&self, tenant_id: &str) -> Result<bool> {
+        let mut tenants = self.tenants.write().await;
+        let len_before = tenants.len();
+        tenants.retain(|t| t.id != tenant_id);
+        let removed = tenants.len() < len_before;
+        if removed {
+            info!("Tenant deleted: {}", tenant_id);
+        }
+        Ok(removed)
+    }
+
+    /// Update a tenant's resource quota
+    pub async fn update_quota(&self, tenant_id: &str, quota: Quota) -> Result<bool> {
+        let mut tenants = self.tenants.write().await;
+        match tenants.iter_mut().find(|t| t.id == tenant_id) {
+            Some(tenant) => {
+                tenant.quota = quota;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Update a tenant's settings
+    pub async fn update_settings(&self, tenant_id: &str, settings: TenantSettings) -> Result<bool> {
+        let mut tenants = self.tenants.write().await;
+        match tenants.iter_mut().find(|t| t.id == tenant_id) {
+            Some(tenant) => {
+                tenant.settings = settings;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Get a tenant's current resource usage
+    pub async fn get_usage(&self, tenant_id: &str) -> Option<ResourceUsage> {
+        self.tenants.read().await.iter()
+            .find(|t| t.id == tenant_id)
+            .map(|t| t.usage.clone())
     }
 
     /// List all tenants

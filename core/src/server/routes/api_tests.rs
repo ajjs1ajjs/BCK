@@ -6,7 +6,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use crate::server::routes::{cdp, cloud, dr, m365, sobr, tape};
+use crate::server::routes::{cdp, cloud, dr, m365, sobr, tape, tenants};
 use crate::server::routes::testutil::{read_json, test_state};
 
 async fn oneshot(
@@ -257,4 +257,82 @@ async fn dr_sites_plans_and_test() {
     // Failover for a missing plan is rejected.
     let resp = oneshot(app.clone(), "POST", "/plans/missing/failover", None).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn tenant_lifecycle() {
+    let state = test_state(&format!("{}\\tenants.db", temp_dir("tenants"))).await;
+    let app = tenants::router().with_state(state.clone());
+
+    // No tenants initially.
+    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tenants: Vec<serde_json::Value> = read_json(resp).await;
+    assert!(tenants.is_empty());
+
+    // Create a tenant.
+    let resp = oneshot(app.clone(), "POST", "/", Some(
+        r#"{"name":"Acme Corp","slug":"acme"}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let tenant: serde_json::Value = read_json(resp).await;
+    let id = tenant["id"].as_str().unwrap().to_string();
+    assert_eq!(tenant["status"], "Active");
+    assert_eq!(tenant["slug"], "acme");
+
+    // Defaults from create_tenant.
+    assert_eq!(tenant["quota"]["max_repositories"], 5);
+    assert_eq!(tenant["settings"]["default_retention_days"], 30);
+
+    // List reflects the tenant.
+    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    let tenants: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(tenants.len(), 1);
+
+    // Get by id.
+    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Suspend -> activate.
+    let resp = oneshot(app.clone(), "POST", &format!("/{}/suspend", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    let tenant: serde_json::Value = read_json(resp).await;
+    assert_eq!(tenant["status"], "Suspended");
+
+    let resp = oneshot(app.clone(), "POST", &format!("/{}/activate", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Update quota.
+    let resp = oneshot(app.clone(), "PUT", &format!("/{}/quota", id), Some(
+        r#"{"max_repositories":10,"max_vms":100,"max_users":25,"max_storage_gb":2048,
+            "max_retention_days":180,"max_snapshots_per_vm":60,
+            "allow_cloud_tiers":true,"allow_tape":true}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tenant: serde_json::Value = read_json(resp).await;
+    assert_eq!(tenant["quota"]["max_repositories"], 10);
+
+    // Usage + quota check.
+    let resp = oneshot(app.clone(), "POST", &format!("/{}/usage", id), Some(
+        r#"{"repositories":3,"vms":0,"users":0,"storage_used_gb":0,"snapshots_total":0,
+            "monthly_data_written_gb":0}"#,
+    )).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(app.clone(), "GET", &format!("/{}/usage", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(app.clone(), "GET", &format!("/{}/check-quota?resource=repository", id), None).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let check: serde_json::Value = read_json(resp).await;
+    assert_eq!(check["within_quota"], true);
+
+    // Delete -> not found.
+    let resp = oneshot(app.clone(), "DELETE", &format!("/{}", id), None).await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Missing tenant operations are rejected.
+    let resp = oneshot(app.clone(), "POST", "/missing/suspend", None).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

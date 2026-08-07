@@ -50,6 +50,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
         tape: crate::tape::TapeManager::new(),
         cdp: crate::cdp::CdpEngine::new(&cdp_dir).unwrap(),
         dr: crate::dr::DrOrchestrator::new(),
+        tenants: crate::enterprise::multitenant::TenantManager::new(),
     })
 }
 

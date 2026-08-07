@@ -17,6 +17,7 @@ import CloudIcon from '@mui/icons-material/Cloud'
 import EmailIcon from '@mui/icons-material/Email'
 import AlbumIcon from '@mui/icons-material/Album'
 import PublicIcon from '@mui/icons-material/Public'
+import GroupsIcon from '@mui/icons-material/Groups'
 import { getUser, clearAuth } from '../api/client'
 
 const drawerWidth = 248
@@ -32,6 +33,7 @@ const navItems = [
   { path: '/m365', label: 'Microsoft 365', icon: <EmailIcon /> },
   { path: '/tape', label: 'Tape Library', icon: <AlbumIcon /> },
   { path: '/dr', label: 'Disaster Recovery', icon: <PublicIcon /> },
+  { path: '/tenants', label: 'Tenants', icon: <GroupsIcon /> },
   { path: '/admin', label: 'Administration', icon: <AdminIcon /> },
 ]
 

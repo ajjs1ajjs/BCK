@@ -343,6 +343,47 @@ export interface ExecuteResult {
   result?: string
 }
 
+export interface Tenant {
+  id: string
+  name: string
+  slug: string
+  status: 'Active' | 'Suspended' | 'Disabled'
+  quota: TenantQuota
+  usage: ResourceUsage
+  settings: TenantSettings
+  created_at: number
+}
+
+export interface TenantQuota {
+  max_repositories: number
+  max_vms: number
+  max_users: number
+  max_storage_gb: number
+  max_retention_days: number
+  max_snapshots_per_vm: number
+  allow_cloud_tiers: boolean
+  allow_tape: boolean
+}
+
+export interface ResourceUsage {
+  repositories: number
+  vms: number
+  users: number
+  storage_used_gb: number
+  snapshots_total: number
+  monthly_data_written_gb: number
+}
+
+export interface TenantSettings {
+  default_retention_days: number
+  backup_window_start: string
+  backup_window_end: string
+  notify_on_failure: boolean
+  notify_on_success: boolean
+  allowed_hypervisors: string[]
+  allowed_storage: string[]
+}
+
 // API helpers
 export const authApi = {
   login: (username: string, password: string) =>
@@ -459,6 +500,18 @@ export const ssoApi = {
   providers: () => api.get<SsoProvider[]>('/auth/sso/providers'),
   registerProvider: (payload: SsoProvider) => api.post<SsoProvider>('/auth/sso/providers', payload),
   addLdap: (payload: LdapConfig) => api.post('/auth/sso/ldap', payload),
+}
+
+export const tenantsApi = {
+  list: () => api.get<Tenant[]>('/tenants'),
+  get: (id: string) => api.get<Tenant>(`/tenants/${id}`),
+  create: (name: string, slug: string) => api.post<Tenant>('/tenants', { name, slug }),
+  remove: (id: string) => api.delete(`/tenants/${id}`),
+  suspend: (id: string) => api.post(`/tenants/${id}/suspend`),
+  activate: (id: string) => api.post(`/tenants/${id}/activate`),
+  disable: (id: string) => api.post(`/tenants/${id}/disable`),
+  updateQuota: (id: string, quota: TenantQuota) => api.put<Tenant>(`/tenants/${id}/quota`, quota),
+  updateSettings: (id: string, settings: TenantSettings) => api.put<Tenant>(`/tenants/${id}/settings`, settings),
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

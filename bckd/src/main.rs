@@ -108,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
             &config.storage.default_path.to_string_lossy(),
         )?,
         dr: bck_core::dr::DrOrchestrator::new(),
+        tenants: bck_core::enterprise::multitenant::TenantManager::new(),
     });
 
     // Start scheduler
