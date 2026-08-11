@@ -608,3 +608,45 @@ async fn hypervisor_instant_recovery_routes() {
         &state.config.storage.default_path.to_string_lossy().to_string(),
     ).parent().unwrap()).ok();
 }
+
+#[tokio::test]
+async fn agent_endpoints_require_agent_token() {
+    let state = test_state(&format!("{}\\agent-auth.db", temp_dir("agent-auth"))).await;
+    let app = crate::server::routes::api_routes(state.clone());
+
+    let heartbeat = r#"{"agent_id":"agent-1","hostname":"test"}"#;
+
+    // No token -> 401.
+    let resp = oneshot(app.clone(), "POST", "/agents/heartbeat", Some(heartbeat)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Wrong token -> 401.
+    let resp = oneshot_auth(app.clone(), "POST", "/agents/heartbeat", Some(heartbeat), "Bearer wrong-token").await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Correct pre-shared token -> accepted (200).
+    let resp = oneshot_auth(app.clone(), "POST", "/agents/heartbeat", Some(heartbeat), "Bearer test-agent-token").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Pending-task polling also requires the token.
+    let resp = oneshot_auth(app.clone(), "GET", "/agents/agent-1/tasks/pending", None, "Bearer test-agent-token").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(app.clone(), "GET", "/agents/agent-1/tasks/pending", None).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+async fn oneshot_auth(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    body: Option<&str>,
+    auth: &str,
+) -> axum::response::Response {
+    let mut builder = Request::builder().method(method).uri(uri)
+        .header("authorization", auth);
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
+    let body = body.map(|s| Body::from(s.to_string())).unwrap_or_else(Body::empty);
+    app.oneshot(builder.body(body).unwrap()).await.unwrap()
+}

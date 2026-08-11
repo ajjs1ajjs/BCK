@@ -130,11 +130,13 @@ impl Encryptor for ChaCha20Encryptor {
 
 /// Load a 32-byte encryption key from disk, generating and persisting one if
 /// it does not exist yet. The key is derived (hashed) down to 32 bytes if the
-/// stored material is shorter.
+/// stored material is shorter. The file is created with owner-only permissions
+/// (0600) so other local users cannot read the key material.
 pub fn load_or_create_key(path: &std::path::Path) -> Result<Vec<u8>> {
     if path.exists() {
         let raw = std::fs::read(path)?;
         if !raw.is_empty() {
+            tighten_permissions(path);
             return Ok(raw);
         }
     }
@@ -145,8 +147,53 @@ pub fn load_or_create_key(path: &std::path::Path) -> Result<Vec<u8>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(path, &key)?;
+    write_key_file(path, &key)?;
     Ok(key)
+}
+
+fn tighten_permissions(_path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(perm) = std::fs::metadata(_path) {
+            if perm.permissions().mode() & 0o077 != 0 {
+                let _ = std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+}
+
+fn write_key_file(path: &std::path::Path, key: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|e| anyhow!("create key file: {}", e))?;
+        f.write_all(key).map_err(|e| anyhow!("write key file: {}", e))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, key).map_err(|e| anyhow!("write key file: {}", e))
+    }
+}
+
+/// Where the encryption key is stored when `encryption.key_path` is unset.
+/// Lives outside the backups directory so a compromise of backup data alone
+/// does not also hand over the key.
+pub fn default_key_path(config: &crate::config::AppConfig) -> std::path::PathBuf {
+    config
+        .storage
+        .default_path
+        .parent()
+        .unwrap_or(&config.storage.default_path)
+        .join("keys")
+        .join("encryption.key")
 }
 
 fn ensure_key_size<const N: usize>(key: &[u8]) -> [u8; N] {

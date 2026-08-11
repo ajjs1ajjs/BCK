@@ -82,9 +82,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Initialize components
-    let jwt_secret = std::env::var("BCK_JWT_SECRET")
-        .unwrap_or_else(|_| "bck-dev-secret-change-in-production".to_string());
-    let jwt = JwtManager::new(jwt_secret.as_bytes());
+    let jwt_secret = resolve_jwt_secret(&config)?;
+    let jwt = JwtManager::new(&jwt_secret);
+
+    // Pre-shared token agents must present when calling agent endpoints.
+    // Optional: operators can set it explicitly; otherwise a random token is
+    // generated once and persisted next to the other secrets.
+    let agent_token = resolve_agent_token(&config)?;
 
     let job_manager = Arc::new(Mutex::new(JobManager::new(db.clone(), config.clone())));
 
@@ -96,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
         job_manager: job_manager.clone(),
         scheduler: scheduler.clone(),
         jwt,
+        agent_token,
         restore_tracker: bck_core::restore::tracker::RestoreTracker::new(),
         instant_recovery: bck_core::restore::instant::InstantRecoveryRegistry::new(),
         surebackup: bck_core::restore::surebackup::SureBackupEngine::new(),
@@ -132,16 +137,24 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    info!("API server listening on http://{}", addr);
+    let use_tls = config.server.tls_cert.is_some() && config.server.tls_key.is_some();
+    let scheme = if use_tls { "https" } else { "http" };
+    info!("API server listening on {}://{}", scheme, addr);
+    if !use_tls {
+        warn!("TLS is DISABLED for the API. Set server.tls_cert/server.tls_key in config.toml or terminate TLS at a reverse proxy.");
+    }
 
     // Start gRPC server
     let grpc_addr = format!("{}:{}", config.server.host, config.server.grpc_port);
     let grpc_listener = tokio::net::TcpListener::bind(&grpc_addr).await?;
     info!("gRPC server listening on {}", grpc_addr);
+    if use_tls {
+        warn!("gRPC is served without TLS; agents authenticate with the shared agent token instead");
+    }
 
     // Serve both servers
     tokio::select! {
-        result = axum::serve(listener, app) => {
+        result = serve_api(listener, app, config.server.tls_cert.clone(), config.server.tls_key.clone()) => {
             if let Err(e) = result {
                 warn!("API server error: {}", e);
             }
@@ -161,6 +174,101 @@ async fn main() -> anyhow::Result<()> {
 
     info!("BCK daemon stopped");
     Ok(())
+}
+
+async fn serve_api(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    tls_cert: Option<String>,
+    tls_key: Option<String>,
+) -> anyhow::Result<()> {
+    match (tls_cert, tls_key) {
+        (Some(cert), Some(key)) => serve_tls(listener, app, &cert, &key).await,
+        _ => {
+            axum::serve(listener, app)
+                .await
+                .map_err(|e| anyhow::anyhow!("http serve: {}", e))?;
+            Ok(())
+        }
+    }
+}
+
+async fn serve_tls(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    cert_path: &str,
+    key_path: &str,
+) -> anyhow::Result<()> {
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use hyper_util::server::conn::auto::Builder;
+    use hyper_util::service::TowerToHyperService;
+    use std::sync::Arc;
+    use tokio_rustls::TlsAcceptor;
+
+    let certs = load_certs(cert_path)?;
+    let key = load_key(key_path)?;
+    let config = rustls::ServerConfig::builder()
+        .with_safe_default_cipher_suites()
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+        .map_err(|e| anyhow::anyhow!("TLS protocol config: {}", e))?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| anyhow::anyhow!("TLS config: {}", e))?;
+    let acceptor = TlsAcceptor::from(Arc::new(config));
+
+    loop {
+        let (stream, _addr) = listener.accept().await?;
+        let acceptor = acceptor.clone();
+        let app = app.clone();
+        tokio::spawn(async move {
+            let tls_stream = match acceptor.accept(stream).await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("TLS handshake failed: {}", e);
+                    return;
+                }
+            };
+            let service = TowerToHyperService::new(app);
+            let io = TokioIo::new(tls_stream);
+            if let Err(e) = Builder::new(TokioExecutor::new())
+                .serve_connection_with_upgrades(io, service)
+                .await
+            {
+                warn!("Connection error: {}", e);
+            }
+        });
+    }
+}
+
+fn load_certs(path: &str) -> anyhow::Result<Vec<rustls::Certificate>> {
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path)?);
+    let certs = rustls_pemfile::certs(&mut reader)
+        .map_err(|e| anyhow::anyhow!("failed to load certs from {}: {}", path, e))?;
+    Ok(certs.into_iter().map(rustls::Certificate).collect())
+}
+
+fn load_key(path: &str) -> anyhow::Result<rustls::PrivateKey> {
+    // Try PKCS#8 first, then RSA ("BEGIN RSA PRIVATE KEY").
+    if let Some(der) = read_pem_key(path, rustls_pemfile::pkcs8_private_keys) {
+        return Ok(rustls::PrivateKey(der));
+    }
+    if let Some(der) = read_pem_key(path, rustls_pemfile::rsa_private_keys) {
+        return Ok(rustls::PrivateKey(der));
+    }
+    Err(anyhow::anyhow!("no private key found in {}", path))
+}
+
+fn read_pem_key(
+    path: &str,
+    f: fn(&mut dyn std::io::BufRead) -> std::io::Result<Vec<Vec<u8>>>,
+) -> Option<Vec<u8>> {
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    let mut keys = f(&mut reader).ok()?;
+    if keys.is_empty() {
+        return None;
+    }
+    Some(keys.remove(0))
 }
 
 async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck_core::server::AppState>) -> anyhow::Result<()> {
@@ -186,7 +294,8 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
     Ok(())
 }
 
-/// Create the default admin/admin user when no users exist yet.
+/// Create the default admin user when no users exist yet. The initial password
+/// is randomly generated and printed once — never a hardcoded admin/admin.
 async fn seed_default_admin(db: &bck_core::db::DbPool) {
     use bck_core::db::DbPool;
 
@@ -212,7 +321,8 @@ async fn seed_default_admin(db: &bck_core::db::DbPool) {
     let t = chrono::Utc::now().timestamp();
     let id = "00000000-0000-0000-0000-000000000001";
     let username = "admin";
-    let hash = bck_core::auth::hash_password("admin");
+    let password = bck_core::auth::generate_random_password(20);
+    let hash = bck_core::auth::hash_password(&password);
 
     let seed_result = match db {
         DbPool::Sqlite(pool) => {
@@ -246,7 +356,90 @@ async fn seed_default_admin(db: &bck_core::db::DbPool) {
     };
 
     match seed_result {
-        Ok(()) => info!("Seeded default admin user (admin/admin). Please change the password."),
+        Ok(()) => {
+            // Print the bootstrap credential once. After first login the
+            // operator must change it; there is no hardcoded default.
+            eprintln!("======================================================");
+            eprintln!("  BCK: initial admin account created");
+            eprintln!("  username: admin");
+            eprintln!("  password: {}", password);
+            eprintln!("  Change this password immediately after first login.");
+            eprintln!("======================================================");
+            info!("Seeded default admin user with a generated password.");
+        }
         Err(e) => warn!("Failed to seed default admin: {}", e),
     }
+}
+
+/// Resolve the JWT signing secret: BCK_JWT_SECRET env wins; otherwise a random
+/// 32-byte secret is generated once and persisted (0600) next to the data dir
+/// so tokens survive restarts. Never falls back to a hardcoded value.
+fn resolve_jwt_secret(config: &AppConfig) -> anyhow::Result<Vec<u8>> {
+    if let Ok(secret) = std::env::var("BCK_JWT_SECRET") {
+        if secret.len() < 32 {
+            warn!("BCK_JWT_SECRET is shorter than 32 bytes; use a long random value");
+        }
+        return Ok(secret.into_bytes());
+    }
+
+    let path = config.storage.default_path.join("jwt_secret");
+    if let Ok(existing) = std::fs::read(&path) {
+        if existing.len() >= 32 {
+            return Ok(existing);
+        }
+    }
+
+    let secret = bck_core::auth::random_bytes(32);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, &secret)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    warn!(
+        "BCK_JWT_SECRET not set; generated and persisted a random secret at {}",
+        path.display()
+    );
+    Ok(secret)
+}
+
+/// Resolve the pre-shared agent token from BCK_AGENT_TOKEN or the config file;
+/// otherwise generate and persist one. Used to authenticate agent endpoints.
+fn resolve_agent_token(config: &AppConfig) -> anyhow::Result<Option<String>> {
+    if let Ok(token) = std::env::var("BCK_AGENT_TOKEN") {
+        if !token.is_empty() {
+            return Ok(Some(token));
+        }
+    }
+    if let Some(token) = &config.agent_token {
+        if !token.is_empty() {
+            return Ok(Some(token.clone()));
+        }
+    }
+
+    let path = config.storage.default_path.join("agent_token");
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        if !existing.trim().is_empty() {
+            return Ok(Some(existing.trim().to_string()));
+        }
+    }
+
+    let token = bck_core::auth::generate_random_password(32);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, &token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    warn!(
+        "BCK_AGENT_TOKEN not set; generated and persisted an agent token at {}",
+        path.display()
+    );
+    Ok(Some(token))
 }

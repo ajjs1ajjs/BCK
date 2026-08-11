@@ -678,12 +678,8 @@ fn build_storage(repo: &RepositoryModel) -> impl std::future::Future<Output = an
 fn encryption_key(state: &AppState) -> Option<Vec<u8>> {
     let key_path = state.config.encryption.key_path.clone()
         .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| state.config.storage.default_path.join("encryption.key"));
-    if key_path.exists() {
-        std::fs::read(&key_path).ok()
-    } else {
-        None
-    }
+        .unwrap_or_else(|| crate::encrypt::default_key_path(&state.config));
+    std::fs::read(&key_path).ok()
 }
 
 async fn perform_vm_restore(

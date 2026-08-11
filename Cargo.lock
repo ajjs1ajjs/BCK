@@ -994,6 +994,7 @@ name = "bck-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bck-core",
  "chrono",
  "clap",
@@ -1092,10 +1093,14 @@ dependencies = [
  "bck-core",
  "chrono",
  "clap",
+ "hyper-util",
+ "rustls 0.21.12",
+ "rustls-pemfile",
  "serde",
  "serde_json",
  "sqlx",
  "tokio",
+ "tokio-rustls 0.24.1",
  "tokio-stream",
  "toml",
  "tonic",

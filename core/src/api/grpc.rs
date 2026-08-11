@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::info;
+use tracing::{info, warn};
 
 pub mod bck_proto {
     include!(concat!(env!("OUT_DIR"), "/bck.rs"));
@@ -1055,11 +1055,31 @@ impl Agent for AgentService {
         let cfg = request.into_inner();
         info!("gRPC agent start_backup: agent={} paths={:?}", cfg.agent_id, cfg.paths);
 
-        let _task_id = insert_agent_task(&self.state, &cfg.agent_id, "file_backup", serde_json::json!({
+        let mut payload = serde_json::json!({
             "paths": cfg.paths,
             "use_vss": cfg.use_vss,
             "use_journal": cfg.use_journal,
-        })).await?;
+        });
+
+        // Ship the encryption config to the agent so backups are encrypted at
+        // the source instead of being stored as plaintext.
+        let enc_alg = self.state.config.encryption.algorithm.to_lowercase();
+        if enc_alg != "none" {
+            let key_path = self.state.config.encryption.key_path.clone()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or_else(|| crate::encrypt::default_key_path(&self.state.config));
+            if let Ok(key) = crate::encrypt::load_or_create_key(&key_path) {
+                use base64::Engine;
+                payload["encryption"] = serde_json::json!(enc_alg);
+                payload["encryption_key"] = serde_json::json!(
+                    base64::engine::general_purpose::STANDARD.encode(&key)
+                );
+            } else {
+                warn!("Failed to load encryption key for agent task; dispatching without encryption");
+            }
+        }
+
+        let _task_id = insert_agent_task(&self.state, &cfg.agent_id, "file_backup", payload).await?;
 
         Ok(Response::new(JobHandle {
             job_id: cfg.agent_id.clone(),

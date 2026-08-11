@@ -51,7 +51,21 @@ docker compose up -d
 bck --server http://127.0.0.1:9440 status
 ```
 
-Default web console: `http://localhost:9440` (login `admin` / `admin`).
+Default web console: `http://localhost:9440`.
+
+> **First login:** on first start the daemon seeds an `admin` account with a
+> **randomly generated password** and prints it once to the console (there is
+> no hardcoded `admin/admin`). Change it immediately after the first login.
+
+> **Secrets:** `BCK_JWT_SECRET`, `BCK_AGENT_TOKEN` and the encryption key are
+> auto-generated and persisted with `0600` permissions under the data dir when
+> not configured explicitly. For production set them explicitly (e.g. via a
+> `.env` file for docker-compose, or `config.toml` / environment for the daemon).
+
+> **TLS:** set `server.tls_cert` / `server.tls_key` in `config.toml` to serve
+> HTTPS. Otherwise terminate TLS at a reverse proxy. gRPC (agents) is not
+> TLS-terminated by the daemon; agents must authenticate with the shared
+> `BCK_AGENT_TOKEN`.
 
 ## One-line Install & Update
 

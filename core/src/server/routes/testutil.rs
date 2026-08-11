@@ -40,6 +40,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
         job_manager,
         scheduler,
         jwt: JwtManager::new(b"test-secret"),
+        agent_token: Some("test-agent-token".to_string()),
         restore_tracker: crate::restore::tracker::RestoreTracker::new(),
         instant_recovery: crate::restore::instant::InstantRecoveryRegistry::new(),
         surebackup: crate::restore::surebackup::SureBackupEngine::new(),

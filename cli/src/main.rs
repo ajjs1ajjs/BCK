@@ -14,8 +14,10 @@ struct Cli {
     #[arg(long, default_value = "admin")]
     username: String,
 
-    #[arg(long, default_value = "admin")]
-    password: String,
+    // No default password: it must be supplied (or use --token). The daemon no
+    // longer provisions an admin/admin account; the initial password is random.
+    #[arg(long)]
+    password: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -501,7 +503,11 @@ async fn main() -> Result<()> {
 
     let token = match cli.token.clone() {
         Some(t) => t,
-        None => login(&cli.server, &cli.username, &cli.password).await?,
+        None => {
+            let password = cli.password
+                .ok_or_else(|| anyhow!("either --token or --password is required"))?;
+            login(&cli.server, &cli.username, &password).await?
+        }
     };
     let api = Api::new(&cli.server, token);
 

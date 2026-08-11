@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::auth::{User, UserRole, hash_password, verify_password};
+use crate::auth::{User, UserRole, verify_password};
 use crate::db::models::user::UserModel;
 use crate::db::DbPool;
 use crate::server::AppState;
@@ -45,52 +45,8 @@ async fn login(
             }
             u
         }
-        // Auto-provision the default admin on first login.
-        Ok(None) if req.username == "admin" && req.password == "admin" => {
-            let t = chrono::Utc::now().timestamp();
-            let id = "00000000-0000-0000-0000-000000000001".to_string();
-            let hash = hash_password(&req.password);
-            match &state.db {
-                DbPool::Sqlite(pool) => {
-                    sqlx::query(
-                        "INSERT OR IGNORE INTO users (id, username, password_hash, role, enabled, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, 'admin', 1, ?4, ?4)"
-                    )
-                    .bind(&id)
-                    .bind(&req.username)
-                    .bind(&hash)
-                    .bind(t)
-                    .execute(pool)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                }
-                DbPool::Postgres(pool) => {
-                    sqlx::query(
-                        "INSERT INTO users (id, username, password_hash, role, enabled, created_at, updated_at)
-                         VALUES ($1, $2, $3, 'admin', 1, $4, $4)
-                         ON CONFLICT (username) DO NOTHING"
-                    )
-                    .bind(&id)
-                    .bind(&req.username)
-                    .bind(&hash)
-                    .bind(t)
-                    .execute(pool)
-                    .await
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                }
-            }
-            UserModel {
-                id,
-                username: req.username.clone(),
-                password_hash: hash,
-                email: Some("admin@bck.local".into()),
-                role: "admin".into(),
-                enabled: true,
-                last_login: None,
-                created_at: t,
-                updated_at: t,
-            }
-        }
+        // No auto-provisioning of a default admin here anymore. The daemon
+        // seeds a generated password on first start (see bckd main.rs).
         _ => return Err(StatusCode::UNAUTHORIZED),
     };
 

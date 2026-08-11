@@ -37,8 +37,19 @@ struct AgentContext {
     hostname: String,
     api_addr: String,
     work_dir: String,
+    server_token: Option<String>,
     _server_addr: String,
     _capabilities: Vec<AgentCapability>,
+}
+
+fn auth_headers(ctx: &AgentContext) -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(token) = &ctx.server_token {
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)) {
+            headers.insert(reqwest::header::AUTHORIZATION, v);
+        }
+    }
+    headers
 }
 
 #[tokio::main]
@@ -87,6 +98,7 @@ async fn main() -> anyhow::Result<()> {
         _server_addr: server_addr.clone(),
         api_addr: api_addr.clone(),
         work_dir: cli.work_dir.clone(),
+        server_token: cli.server_token,
         _capabilities: capabilities,
     });
 
@@ -139,6 +151,7 @@ async fn run_heartbeat(ctx: Arc<AgentContext>) {
 
         match client
             .post(format!("{}/api/v1/agents/heartbeat", ctx.api_addr))
+            .headers(auth_headers(&ctx))
             .json(&heartbeat)
             .timeout(Duration::from_secs(10))
             .send()
@@ -168,6 +181,7 @@ async fn listen_for_commands(ctx: Arc<AgentContext>) {
 
         let tasks: Vec<serde_json::Value> = match client
             .get(format!("{}/api/v1/agents/{}/tasks/pending", ctx.api_addr, ctx.agent_id))
+            .headers(auth_headers(&ctx))
             .timeout(Duration::from_secs(10))
             .send()
             .await
@@ -250,6 +264,7 @@ async fn report_task(
     let body = serde_json::json!({ "status": status, "result": result });
     match client
         .post(format!("{}/api/v1/agents/{}/tasks/{}/report", ctx.api_addr, ctx.agent_id, task_id))
+        .headers(auth_headers(&ctx))
         .json(&body)
         .timeout(Duration::from_secs(10))
         .send()
@@ -399,13 +414,29 @@ async fn run_file_backup(payload: &serde_json::Value, work_dir_base: &str) -> an
 
     let storage = create_backend(config).await?;
 
+    // Encryption comes from the server via the task payload so agent backups
+    // are encrypted at the source (previously they were always plaintext).
+    let encryption = match payload["encryption"].as_str().unwrap_or("none") {
+        "aes-256-gcm" => bck_core::types::EncryptionAlgorithm::Aes256Gcm,
+        "chacha20-poly1305" => bck_core::types::EncryptionAlgorithm::ChaCha20Poly1305,
+        _ => bck_core::types::EncryptionAlgorithm::None,
+    };
+    let encryption_key = if encryption != bck_core::types::EncryptionAlgorithm::None {
+        use base64::Engine;
+        payload["encryption_key"]
+            .as_str()
+            .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok())
+    } else {
+        None
+    };
+
     let work_dir = std::path::PathBuf::from(work_dir_base).join(uuid::Uuid::new_v4().to_string());
     std::fs::create_dir_all(&work_dir)?;
 
     let pipeline_config = PipelineConfig {
         compression: bck_core::types::CompressionAlgorithm::Zstd { level: 3 },
-        encryption: bck_core::types::EncryptionAlgorithm::None,
-        encryption_key: None,
+        encryption,
+        encryption_key,
         chunk_size: ChunkSizeConfig::default(),
         throttle: None,
     };

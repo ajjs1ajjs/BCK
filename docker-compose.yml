@@ -6,9 +6,9 @@ services:
     environment:
       POSTGRES_DB: bck
       POSTGRES_USER: bck
-      POSTGRES_PASSWORD: bck_secret
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,11 +21,11 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: bckadmin
-      MINIO_ROOT_PASSWORD: bck_secret_key
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
 
@@ -40,7 +40,9 @@ services:
       minio:
         condition: service_started
     environment:
-      BCK_JWT_SECRET: "change-this-in-production-please"
+      # Never hardcode this; provide it via .env or a Docker secret.
+      BCK_JWT_SECRET: ${BCK_JWT_SECRET:?Set BCK_JWT_SECRET (openssl rand -hex 32) in .env}
+      BCK_AGENT_TOKEN: ${BCK_AGENT_TOKEN:?Set BCK_AGENT_TOKEN in .env}
       RUST_LOG: info
     ports:
       - "9440:9440"
@@ -50,7 +52,7 @@ services:
     command: [
       "bckd",
       "--config", "/etc/bck/config.toml",
-      "--database-url", "postgres://bck:bck_secret@postgres:5432/bck"
+      "--database-url", "postgres://bck:${POSTGRES_PASSWORD}@postgres:5432/bck"
     ]
 
 volumes:

@@ -34,6 +34,7 @@ pub struct AppState {
     pub job_manager: Arc<Mutex<JobManager>>,
     pub scheduler: Arc<Mutex<Scheduler>>,
     pub jwt: JwtManager,
+    pub agent_token: Option<String>,
     pub restore_tracker: RestoreTracker,
     pub instant_recovery: crate::restore::instant::InstantRecoveryRegistry,
     pub surebackup: SureBackupEngine,

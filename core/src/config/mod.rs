@@ -8,6 +8,11 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub encryption: EncryptionConfig,
     pub logging: LoggingConfig,
+    /// Pre-shared token agents must present (`Authorization: Bearer <token>`)
+    /// when calling agent endpoints. When empty the daemon auto-generates and
+    /// persists one on first start.
+    #[serde(default)]
+    pub agent_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +80,7 @@ impl Default for AppConfig {
                 json: false,
                 file: None,
             },
+            agent_token: None,
         }
     }
 }

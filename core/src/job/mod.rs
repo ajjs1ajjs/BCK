@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 use uuid::Uuid;
 
 use anyhow::Result;
@@ -96,6 +96,7 @@ pub struct JobManager {
     config: AppConfig,
     runtimes: Arc<RwLock<HashMap<String, JobRuntime>>>,
     handles: Arc<RwLock<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    cancels: Arc<RwLock<HashMap<String, tokio_util::sync::CancellationToken>>>,
 }
 
 fn now() -> i64 {
@@ -109,6 +110,7 @@ impl JobManager {
             config,
             runtimes: Arc::new(RwLock::new(HashMap::new())),
             handles: Arc::new(RwLock::new(HashMap::new())),
+            cancels: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -541,8 +543,10 @@ impl JobManager {
         let jm = self.clone();
         let run_id = id.to_string();
         let sess = session_id.clone();
+        let token = tokio_util::sync::CancellationToken::new();
+        self.cancels.write().await.insert(run_id.clone(), token.clone());
         let handle = tokio::spawn(async move {
-            jm.run_backup(job, sess, run_id).await;
+            jm.run_backup(job, sess, run_id, token).await;
         });
         self.handles.write().await.insert(id.to_string(), handle);
         info!("Started job {} (session {})", id, session_id);
@@ -579,8 +583,26 @@ impl JobManager {
         Ok(())
     }
 
-    async fn run_backup(&self, job: BackupJobModel, session_id: String, job_id: String) {
-        let result = self.run_backup_inner(&job, &session_id).await;
+    async fn run_backup(
+        &self,
+        job: BackupJobModel,
+        session_id: String,
+        job_id: String,
+        cancel: tokio_util::sync::CancellationToken,
+    ) {
+        // Check cancellation before doing any work so a cancelled job exits
+        // cleanly instead of being torn down by abort() mid-pipeline.
+        if cancel.is_cancelled() {
+            let t = now();
+            self.db_exec(
+                "UPDATE job_sessions SET status = 'cancelled', finished_at = ?, error_message = ? WHERE id = ?",
+                &[DbVal::Int(t), DbVal::Str("cancelled before start"), DbVal::Str(&session_id)],
+            ).await.ok();
+            self.finish_runtime(&job_id, JobStatus::Cancelled, None, Some(t), None).await;
+            return;
+        }
+
+        let result = self.run_backup_inner(&job, &session_id, &cancel).await;
 
         match result {
             Ok((snapshot, stats)) => {
@@ -622,9 +644,10 @@ impl JobManager {
         &self,
         job: &BackupJobModel,
         session_id: &str,
+        cancel: &tokio_util::sync::CancellationToken,
     ) -> Result<(Snapshot, BackupStats)> {
         if job.job_type == "vm" {
-            return self.run_vm_backup(job, session_id).await;
+            return self.run_vm_backup(job, session_id, cancel).await;
         }
 
         let repo = self.load_repository(&job.repository_id).await?
@@ -694,6 +717,7 @@ impl JobManager {
         &self,
         job: &BackupJobModel,
         session_id: &str,
+        cancel: &tokio_util::sync::CancellationToken,
     ) -> Result<(Snapshot, BackupStats)> {
         let cfg: serde_json::Value = serde_json::from_str(&job.source_config)
             .unwrap_or_else(|_| serde_json::json!({}));
@@ -717,7 +741,7 @@ impl JobManager {
         let mut pipeline = self.build_pipeline(job)?;
 
         let result = crate::backup::vm::VmBackupJob::new(connector.as_ref(), vm_ref)
-            .run(&mut pipeline, storage.as_ref())
+            .run(&mut pipeline, storage.as_ref(), cancel.clone())
             .await
             .map_err(|e| anyhow::anyhow!("VM backup failed for {}: {}", vm_ref, e))?;
 
@@ -790,9 +814,7 @@ impl JobManager {
         let key = if encryption != EncryptionAlgorithm::None {
             let key_path = self.config.encryption.key_path.clone()
                 .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| {
-                    self.config.storage.default_path.join("encryption.key")
-                });
+                .unwrap_or_else(|| crate::encrypt::default_key_path(&self.config));
             Some(crate::encrypt::load_or_create_key(&key_path)?)
         } else {
             None
@@ -1093,13 +1115,30 @@ impl JobManager {
             rt.progress = if rt.status == JobStatus::Completed { 100.0 } else { rt.progress };
         }
         self.handles.write().await.remove(job_id);
+        self.cancels.write().await.remove(job_id);
     }
 
     pub async fn cancel_job(&self, id: &str) -> Result<bool> {
-        let handle = self.handles.write().await.remove(id);
-        if let Some(h) = handle {
-            h.abort();
+        // Graceful cancellation: signal the job's token so it can finish its
+        // current step and clean up (e.g. remove the hypervisor snapshot).
+        let token = self.cancels.write().await.remove(id);
+        if let Some(tok) = token {
+            tok.cancel();
         }
+
+        let handle = self.handles.write().await.remove(id);
+        if let Some(mut h) = handle {
+            // Give the job a short grace period to observe the token and finish
+            // cleanly; abort() is only a last resort if it is stuck.
+            match tokio::time::timeout(std::time::Duration::from_secs(10), &mut h).await {
+                Ok(_) => info!("Job {} stopped gracefully", id),
+                Err(_) => {
+                    warn!("Job {} did not stop within grace period; aborting task", id);
+                    h.abort();
+                }
+            }
+        }
+
         let t = now();
         let exists = match &self.db {
             DbPool::Sqlite(pool) => {

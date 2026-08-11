@@ -24,6 +24,7 @@ impl<'a> VmBackupJob<'a> {
         &self,
         pipeline: &mut BackupPipeline,
         storage: &dyn StorageBackend,
+        cancel: tokio_util::sync::CancellationToken,
     ) -> Result<VmBackupResult> {
         // 1. Get VM info
         let vm = self.connector.get_vm(self.vm_ref).await?;
@@ -59,51 +60,63 @@ impl<'a> VmBackupJob<'a> {
         let mut total_disks = 0usize;
         let mut changed_disks = 0usize;
 
-        for disk in &vm.disks {
-            total_disks += 1;
+        let disk_result: Result<()> = async {
+            for disk in &vm.disks {
+                if cancel.is_cancelled() {
+                    return Err(anyhow::anyhow!("VM backup cancelled"));
+                }
+                total_disks += 1;
 
-            // Determine which byte ranges to read: CBT changed blocks when the
-            // hypervisor exposes a change id, otherwise the whole disk.
-            let change_id = self.connector.get_change_id(self.vm_ref, &disk.disk_id).await?;
-            let ranges = if let Some(cid) = &change_id {
-                let changed = self.connector.get_changed_blocks(self.vm_ref, &disk.disk_id, cid).await?;
-                if changed.is_empty() {
-                    info!("  Disk {}: CBT enabled, no changes, skipping", disk.label);
+                // Determine which byte ranges to read: CBT changed blocks when the
+                // hypervisor exposes a change id, otherwise the whole disk.
+                let change_id = self.connector.get_change_id(self.vm_ref, &disk.disk_id).await?;
+                let ranges = if let Some(cid) = &change_id {
+                    let changed = self.connector.get_changed_blocks(self.vm_ref, &disk.disk_id, cid).await?;
+                    if changed.is_empty() {
+                        info!("  Disk {}: CBT enabled, no changes, skipping", disk.label);
+                    } else {
+                        changed_disks += 1;
+                    }
+                    changed
                 } else {
-                    changed_disks += 1;
-                }
-                changed
-            } else {
-                warn!("  Disk {}: CBT not enabled, will do full backup", disk.label);
-                vec![ChangedBlock { offset: 0, length: disk.capacity_bytes }]
-            };
+                    warn!("  Disk {}: CBT not enabled, will do full backup", disk.label);
+                    vec![ChangedBlock { offset: 0, length: disk.capacity_bytes }]
+                };
 
-            let logical_path = format!("disks/{}", disk.label);
+                let logical_path = format!("disks/{}", disk.label);
 
-            for range in ranges {
-                let mut offset = range.offset;
-                let end = range.offset + range.length;
-                while offset < end {
-                    let len = READ_CHUNK.min(end - offset);
-                    let data = self.connector.read_disk_blocks(self.vm_ref, &disk.disk_path, offset, len).await?;
-                    stats.total_bytes += data.len() as u64;
-                    let blocks = pipeline.process_bytes(
-                        &logical_path,
-                        offset as u64,
-                        disk.capacity_bytes as u64,
-                        &data,
-                        storage,
-                        &mut stats,
-                    ).await?;
-                    all_blocks.extend(blocks);
-                    offset += len;
+                for range in ranges {
+                    let mut offset = range.offset;
+                    let end = range.offset + range.length;
+                    while offset < end {
+                        let len = READ_CHUNK.min(end - offset);
+                        let data = self.connector.read_disk_blocks(self.vm_ref, &disk.disk_path, offset, len).await?;
+                        stats.total_bytes += data.len() as u64;
+                        let blocks = pipeline.process_bytes(
+                            &logical_path,
+                            offset as u64,
+                            disk.capacity_bytes as u64,
+                            &data,
+                            storage,
+                            &mut stats,
+                        ).await?;
+                        all_blocks.extend(blocks);
+                        offset += len;
+                    }
                 }
+                stats.files_processed += 1;
             }
-            stats.files_processed += 1;
-        }
+            Ok(())
+        }.await;
 
-        // 4. Clean up the hypervisor snapshot
-        self.connector.remove_snapshot(self.vm_ref, &snapshot.id).await?;
+        // 4. Always try to remove the hypervisor snapshot, even on error or
+        //    cancellation — otherwise the snapshot leaks on the hypervisor.
+        let removal = self.connector.remove_snapshot(self.vm_ref, &snapshot.id).await;
+        if let Err(e) = disk_result {
+            warn!("VM backup failed; removed snapshot {}: {:?}", snapshot.id, removal.err());
+            return Err(e);
+        }
+        removal?;
         info!("Snapshot removed: {}", snapshot.id);
 
         stats.dedup_ratio = if stats.blocks_unique > 0 {
@@ -287,7 +300,8 @@ mod tests {
         let storage = LocalStorage::new(&store_dir.to_string_lossy()).unwrap();
 
         let job = VmBackupJob::new(&connector, "vm-1");
-        let result = job.run(&mut pipeline, &storage).await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = job.run(&mut pipeline, &storage, cancel).await.unwrap();
 
         assert_eq!(result.vm_name, "test-vm");
         assert_eq!(result.total_disks, 1);

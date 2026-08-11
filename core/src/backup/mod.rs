@@ -20,8 +20,9 @@ impl BackupOrchestrator {
         vm_ref: &str,
         storage: &dyn StorageBackend,
     ) -> Result<VmBackupResult, anyhow::Error> {
+        let cancel = tokio_util::sync::CancellationToken::new();
         let result = vm::VmBackupJob::new(connector, vm_ref)
-            .run(&mut self.pipeline, storage)
+            .run(&mut self.pipeline, storage, cancel)
             .await?;
         Ok(result)
     }
