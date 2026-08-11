@@ -30,24 +30,15 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "29.3"
+
       - name: Install build deps (Linux)
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
         if: matrix.os == 'ubuntu-latest'
-
-      - name: Install protoc (macOS)
-        shell: bash
-        run: brew install protobuf
-        if: matrix.os == 'macos-latest'
-
-      - name: Install protoc (Windows)
-        shell: pwsh
-        run: |
-          $v = "v29.3"
-          Invoke-WebRequest -Uri "https://github.com/protocolbuffers/protobuf/releases/download/$v/protoc-$v-win64.zip" -OutFile "$env:RUNNER_TEMP/protoc.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP/protoc.zip" -DestinationPath "$env:RUNNER_TEMP/protoc" -Force
-          echo "PROTOC=$env:RUNNER_TEMP/protoc/bin/protoc.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-        if: matrix.os == 'windows-latest'
 
       - name: Cache cargo
         uses: actions/cache@v4
