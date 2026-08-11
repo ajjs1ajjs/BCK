@@ -67,6 +67,18 @@ Default web console: `http://localhost:9440`.
 > TLS-terminated by the daemon; agents must authenticate with the shared
 > `BCK_AGENT_TOKEN`.
 
+> **Key protection:** the encryption key lives in `data/keys/encryption.key`
+> (outside the backups directory) with `0600` permissions. Set
+> `encryption.passphrase` in `config.toml` to wrap the key at rest with an
+> Argon2id-derived key — a backup-data or key-file compromise alone is then not
+> enough to decrypt your backups.
+
+> **Access control:** the REST API enforces role-based access control.
+> Everyone can read; **Operator**+ can create/run/delete jobs, **Operator** and
+> **RestoreOperator** can restore, and **Admin**/**SuperAdmin** manage tenants
+> and the admin portal. Cross-origin requests are denied unless the origin is
+> explicitly allowed via `server.allowed_origins`.
+
 ## One-line Install & Update
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.

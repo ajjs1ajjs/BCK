@@ -1068,7 +1068,10 @@ impl Agent for AgentService {
             let key_path = self.state.config.encryption.key_path.clone()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| crate::encrypt::default_key_path(&self.state.config));
-            if let Ok(key) = crate::encrypt::load_or_create_key(&key_path) {
+            if let Ok(key) = crate::encrypt::load_key(
+                &key_path,
+                self.state.config.encryption.passphrase.as_deref(),
+            ) {
                 use base64::Engine;
                 payload["encryption"] = serde_json::json!(enc_alg);
                 payload["encryption_key"] = serde_json::json!(

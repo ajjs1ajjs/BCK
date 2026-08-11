@@ -815,7 +815,7 @@ impl JobManager {
             let key_path = self.config.encryption.key_path.clone()
                 .filter(|p| !p.as_os_str().is_empty())
                 .unwrap_or_else(|| crate::encrypt::default_key_path(&self.config));
-            Some(crate::encrypt::load_or_create_key(&key_path)?)
+            Some(crate::encrypt::load_key(&key_path, self.config.encryption.passphrase.as_deref())?)
         } else {
             None
         };

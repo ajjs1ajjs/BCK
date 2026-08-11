@@ -81,33 +81,39 @@ impl RestoreOrchestrator {
             .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
 
         let total_bytes = manifest.total_size;
-        let mut processed: u64 = 0;
 
-        let files = assemble_files(&manifest, storage, key).await?;
-        for (path, data) in &files {
-            let target_path = PathBuf::from(target_datastore).join(path);
-            if let Some(parent) = target_path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-            tokio::fs::write(&target_path, data).await?;
-            processed += data.len() as u64;
-        }
+        // List of disk/config files for VM registration (paths only, cheap).
+        let mut disk_files: Vec<String> = manifest.blocks
+            .iter()
+            .map(|b| b.relative_path.clone())
+            .collect();
+        disk_files.sort();
+        disk_files.dedup();
+
+        // Stream blocks to disk (bounded memory — one block at a time).
+        let processed = stream_restore(
+            &manifest,
+            storage,
+            key,
+            &PathBuf::from(target_datastore),
+            true,
+            |_| true,
+        ).await?;
 
         // Register VM on the hypervisor if a connector was provided.
         if let Some(connector) = hypervisor_connector {
-            let disk_files: Vec<String> = files.keys()
+            let vm_disks: Vec<String> = disk_files.into_iter()
                 .filter(|p| {
                     let lower = p.to_lowercase();
                     lower.ends_with(".vhd") || lower.ends_with(".vhdx")
                         || lower.ends_with(".vmdk") || lower.ends_with(".vmx")
                 })
-                .cloned()
                 .collect();
-            if disk_files.is_empty() {
+            if vm_disks.is_empty() {
                 info!("No virtual disk/config files in snapshot {} — skipping VM registration", snapshot_id);
             } else {
                 let vm_ref = connector
-                    .register_vm(vm_name, &disk_files, target_datastore, power_on)
+                    .register_vm(vm_name, &vm_disks, target_datastore, power_on)
                     .await?;
                 info!("Registered restored VM '{}' on hypervisor as {}", vm_name, vm_ref);
             }
@@ -143,29 +149,14 @@ impl RestoreOrchestrator {
         let manifest = self.index.load_manifest(snapshot_id)?
             .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
 
-        let all = assemble_files(&manifest, storage, key).await?;
-        let mut processed = 0u64;
-
-        for (path, data) in &all {
-            // Check if this file is requested
-            let should_restore = files.is_empty() || files.iter().any(|f| path.contains(f.as_str()));
-            if !should_restore {
-                continue;
-            }
-
-            let target = PathBuf::from(target_path).join(path);
-            if target.exists() && !overwrite {
-                info!("Skipping existing file: {:?}", target);
-                continue;
-            }
-
-            if let Some(parent) = target.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-
-            tokio::fs::write(&target, data).await?;
-            processed += data.len() as u64;
-        }
+        let processed = stream_restore(
+            &manifest,
+            storage,
+            key,
+            &PathBuf::from(target_path),
+            overwrite,
+            |path| files.is_empty() || files.iter().any(|f| path.contains(f.as_str())),
+        ).await?;
 
         Ok(RestoreSession {
             id: session_id,
@@ -203,33 +194,50 @@ impl RestoreOrchestrator {
     }
 }
 
-/// Reassembles whole files from their chunks. Chunks are grouped by relative
-/// path, ordered by offset, then concatenated. Each stored block is decoded
-/// (decompressed / decrypted) using the shared block magic format.
-async fn assemble_files(
+/// Streams restored files to `base_dir`. Blocks are grouped by relative path,
+/// ordered by offset, and written sequentially so only one block is in memory
+/// at a time (previously the whole snapshot was reassembled in RAM).
+async fn stream_restore(
     manifest: &BackupManifest,
     storage: &dyn StorageBackend,
     key: Option<&[u8]>,
-) -> Result<HashMap<String, Vec<u8>>> {
+    base_dir: &std::path::Path,
+    overwrite: bool,
+    should_restore: impl Fn(&str) -> bool,
+) -> Result<u64> {
     use std::collections::BTreeMap;
+    use tokio::io::AsyncWriteExt;
 
-    let mut parts: HashMap<String, BTreeMap<u64, Vec<u8>>> = HashMap::new();
+    let mut by_path: HashMap<String, BTreeMap<u64, &crate::types::FileBlock>> = HashMap::new();
     for block in &manifest.blocks {
-        let raw = storage.read_block(&block.block_id.sha256).await?;
-        let data = crate::pipeline::decode_block(&raw, key)?;
-        parts
-            .entry(block.relative_path.clone())
-            .or_default()
-            .insert(block.offset, data);
+        if should_restore(&block.relative_path) {
+            by_path
+                .entry(block.relative_path.clone())
+                .or_default()
+                .insert(block.offset, block);
+        }
     }
 
-    let mut files = HashMap::new();
-    for (path, ordered) in parts {
-        let mut buf = Vec::new();
-        for (_, mut part) in ordered {
-            buf.append(&mut part);
+    let mut processed = 0u64;
+    for (path, ordered) in by_path {
+        let target = base_dir.join(&path);
+        if target.exists() && !overwrite {
+            info!("Skipping existing file: {:?}", target);
+            continue;
         }
-        files.insert(path, buf);
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+
+        let mut file = tokio::fs::File::create(&target).await?;
+        for (_, block) in ordered {
+            let raw = storage.read_block(&block.block_id.sha256).await?;
+            let data = crate::pipeline::decode_block(&raw, key)?;
+            file.write_all(&data).await?;
+            processed += data.len() as u64;
+        }
+        file.flush().await?;
     }
-    Ok(files)
+
+    Ok(processed)
 }

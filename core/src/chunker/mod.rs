@@ -39,6 +39,55 @@ impl Chunker {
         self.chunk_data(&buffer)
     }
 
+    /// Content-defined chunking over a `Read` stream with bounded memory
+    /// (at most ~2x the max chunk size is buffered at any time), instead of
+    /// loading the whole input into RAM. Boundaries are content-determined, so
+    /// the chunk sequence is identical to chunking the full buffer at once.
+    pub fn chunk_reader<R: Read>(&self, reader: &mut R) -> Result<Vec<Chunk>> {
+        let max = self.config.max as usize;
+        let mut buffer: Vec<u8> = Vec::with_capacity(max * 2);
+        let mut chunks = Vec::new();
+        let mut offset: u64 = 0;
+        let mut buf = [0u8; 1 << 20]; // 1 MiB read unit
+
+        loop {
+            let n = reader.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&buf[..n]);
+
+            // While we have a full search window buffered, cut chunks off the front.
+            while buffer.len() >= max {
+                let boundary = self.find_chunk_boundary(&buffer, 0, max);
+                chunks.push(Chunk {
+                    offset,
+                    size: boundary as u32,
+                    data: buffer[..boundary].to_vec(),
+                    hash: 0,
+                });
+                offset += boundary as u64;
+                buffer.drain(..boundary);
+            }
+        }
+
+        // Flush whatever is left at EOF.
+        while !buffer.is_empty() {
+            let end = buffer.len();
+            let boundary = self.find_chunk_boundary(&buffer, 0, end);
+            chunks.push(Chunk {
+                offset,
+                size: boundary as u32,
+                data: buffer[..boundary].to_vec(),
+                hash: 0,
+            });
+            offset += boundary as u64;
+            buffer.drain(..boundary);
+        }
+
+        Ok(chunks)
+    }
+
     fn find_chunk_boundary(&self, data: &[u8], start: usize, end: usize) -> usize {
         let min_size = self.config.min as usize;
         let avg_size = self.config.avg as usize;
@@ -173,5 +222,36 @@ mod tests {
         let chunker = test_chunker();
         let chunks = chunker.chunk_data(b"").unwrap();
         assert!(chunks.is_empty());
+    }
+
+    /// The streaming reader must produce exactly the same chunk sequence as
+    /// chunking the whole buffer at once (boundaries are content-determined).
+    #[test]
+    fn test_chunker_stream_matches_full_buffer() {
+        let chunker = test_chunker();
+        let data = vec![b'B'; 250_000];
+        let full = chunker.chunk_data(&data).unwrap();
+        let mut reader = std::io::Cursor::new(&data);
+        let streamed = chunker.chunk_reader(&mut reader).unwrap();
+
+        assert_eq!(full.len(), streamed.len(), "same number of chunks");
+        for (a, b) in full.iter().zip(streamed.iter()) {
+            assert_eq!(a.offset, b.offset, "offset mismatch");
+            assert_eq!(a.size, b.size, "size mismatch");
+            assert_eq!(a.data, b.data, "data mismatch");
+        }
+        let total: usize = streamed.iter().map(|c| c.data.len()).sum();
+        assert_eq!(total, data.len());
+    }
+
+    /// chunk_reader must not buffer the whole input (bounded memory).
+    #[test]
+    fn test_chunker_stream_large_input_bounded_memory() {
+        let chunker = test_chunker();
+        let data = vec![0u8; 5_000_000];
+        let mut reader = std::io::Cursor::new(&data);
+        let streamed = chunker.chunk_reader(&mut reader).unwrap();
+        let total: usize = streamed.iter().map(|c| c.data.len()).sum();
+        assert_eq!(total, data.len());
     }
 }

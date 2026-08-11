@@ -650,3 +650,97 @@ async fn oneshot_auth(
     let body = body.map(|s| Body::from(s.to_string())).unwrap_or_else(Body::empty);
     app.oneshot(builder.body(body).unwrap()).await.unwrap()
 }
+
+// --- RBAC ---
+
+fn jwt_for(state: &std::sync::Arc<crate::server::AppState>, role: crate::auth::UserRole) -> String {
+    let user = crate::auth::User {
+        id: uuid::Uuid::new_v4().to_string(),
+        username: format!("user-{}", role).to_lowercase(),
+        role,
+        email: None,
+        enabled: true,
+    };
+    state.jwt.generate(&user).unwrap()
+}
+
+#[tokio::test]
+async fn rbac_blocks_viewer_mutations_but_allows_reads() {
+    let state = test_state(&format!("{}\\rbac.db", temp_dir("rbac"))).await;
+    let app = crate::server::routes::api_routes(state.clone());
+
+    let viewer = jwt_for(&state, crate::auth::UserRole::Viewer);
+    let admin = jwt_for(&state, crate::auth::UserRole::Admin);
+
+    // Reads are allowed for a Viewer.
+    let resp = oneshot_auth(app.clone(), "GET", "/jobs", None, &format!("Bearer {viewer}")).await;
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN, "viewer must be able to read jobs");
+
+    // Mutations are forbidden for a Viewer.
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/jobs",
+        Some(r#"{"name":"job","source_path":"/tmp","repository_id":"repo-1"}"#),
+        &format!("Bearer {viewer}"),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "viewer must not create jobs");
+
+    // Deleting a job is also forbidden for a Viewer.
+    let resp = oneshot_auth(app.clone(), "DELETE", "/jobs/does-not-exist", None, &format!("Bearer {viewer}")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "viewer must not delete jobs");
+
+    // An Admin may create jobs (200/400, but not 403).
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/jobs",
+        Some(r#"{"name":"job","source_path":"/tmp","repository_id":"repo-1"}"#),
+        &format!("Bearer {admin}"),
+    ).await;
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN, "admin must be able to create jobs");
+}
+
+#[tokio::test]
+async fn rbac_restore_requires_restore_capability() {
+    let state = test_state(&format!("{}\\rbac-restore.db", temp_dir("rbac-restore"))).await;
+    let app = crate::server::routes::api_routes(state.clone());
+
+    let viewer = jwt_for(&state, crate::auth::UserRole::Viewer);
+    let restore_op = jwt_for(&state, crate::auth::UserRole::RestoreOperator);
+
+    // A Viewer cannot trigger a restore.
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/restore/file",
+        Some(r#"{"snapshot_id":"snap-x","files":[],"target_path":"/tmp","overwrite":false}"#),
+        &format!("Bearer {viewer}"),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "viewer must not restore");
+
+    // RestoreOperator is allowed past RBAC (the body may 400/404, not 403).
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/restore/file",
+        Some(r#"{"snapshot_id":"snap-x","files":[],"target_path":"/tmp","overwrite":false}"#),
+        &format!("Bearer {restore_op}"),
+    ).await;
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN, "restore_operator must be allowed");
+}
+
+#[tokio::test]
+async fn rbac_tenants_require_admin() {
+    let state = test_state(&format!("{}\\rbac-tenant.db", temp_dir("rbac-tenant"))).await;
+    let app = crate::server::routes::api_routes(state.clone());
+
+    let operator = jwt_for(&state, crate::auth::UserRole::Operator);
+    let admin = jwt_for(&state, crate::auth::UserRole::Admin);
+
+    let body = r#"{"name":"acme"}"#;
+    let resp = oneshot_auth(app.clone(), "POST", "/tenants", Some(body), &format!("Bearer {operator}")).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "operator must not manage tenants");
+    let resp = oneshot_auth(app.clone(), "POST", "/tenants", Some(body), &format!("Bearer {admin}")).await;
+    assert_ne!(resp.status(), StatusCode::FORBIDDEN, "admin must be able to manage tenants");
+}

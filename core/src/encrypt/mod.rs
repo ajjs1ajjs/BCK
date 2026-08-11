@@ -3,6 +3,7 @@ use aes_gcm::{
     Aes256Gcm, Nonce,
 };
 use anyhow::{Result, anyhow};
+use argon2::Argon2;
 use chacha20poly1305::ChaCha20Poly1305;
 use sha2::{Digest, Sha256};
 use crate::types::EncryptionAlgorithm;
@@ -133,13 +134,37 @@ impl Encryptor for ChaCha20Encryptor {
 /// stored material is shorter. The file is created with owner-only permissions
 /// (0600) so other local users cannot read the key material.
 pub fn load_or_create_key(path: &std::path::Path) -> Result<Vec<u8>> {
+    load_key(path, None)
+}
+
+/// Like `load_or_create_key`, but wraps the key at rest with a passphrase.
+/// When `passphrase` is set the stored key file is encrypted with a key derived
+/// from it via Argon2id; reading the file alone (or a backup-data compromise)
+/// is no longer sufficient to recover the key. A raw pre-existing key file is
+/// migrated to the wrapped format on next load.
+pub fn load_key(path: &std::path::Path, passphrase: Option<&str>) -> Result<Vec<u8>> {
     if path.exists() {
         let raw = std::fs::read(path)?;
         if !raw.is_empty() {
             tighten_permissions(path);
+            if is_wrapped(&raw) {
+                let pass = passphrase.ok_or_else(|| {
+                    anyhow!("encryption key is passphrase-protected but no passphrase is configured (set encryption.passphrase)")
+                })?;
+                return unwrap_key(&raw, pass);
+            }
+            // Raw key: migrate to the wrapped format when a passphrase is set.
+            if let Some(pass) = passphrase {
+                if raw.len() == 32 {
+                    let wrapped = wrap_key(&raw, pass)?;
+                    write_key_file(path, &wrapped)?;
+                    return Ok(raw);
+                }
+            }
             return Ok(raw);
         }
     }
+
     let mut key = vec![0u8; 32];
     use aes_gcm::aead::OsRng;
     use aes_gcm::aead::rand_core::RngCore;
@@ -147,8 +172,73 @@ pub fn load_or_create_key(path: &std::path::Path) -> Result<Vec<u8>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    write_key_file(path, &key)?;
+    match passphrase {
+        Some(pass) => write_key_file(path, &wrap_key(&key, pass)?)?,
+        None => write_key_file(path, &key)?,
+    }
     Ok(key)
+}
+
+// --- passphrase wrapping ---
+
+const WRAP_MAGIC: &[u8; 8] = b"BCKW1\0\0\0";
+const WRAP_SALT_LEN: usize = 16;
+const WRAP_NONCE_LEN: usize = 12;
+
+fn is_wrapped(data: &[u8]) -> bool {
+    data.len() >= WRAP_MAGIC.len() + WRAP_SALT_LEN + WRAP_NONCE_LEN + 32 && data.starts_with(WRAP_MAGIC)
+}
+
+fn derive_wrap_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
+    let mut out = [0u8; 32];
+    Argon2::default()
+        .hash_password_into(passphrase.as_bytes(), salt, &mut out)
+        .map_err(|e| anyhow!("encryption key derivation failed: {}", e))?;
+    Ok(out)
+}
+
+fn wrap_key(key: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    use aes_gcm::aead::{Aead, AeadCore, OsRng};
+    use aes_gcm::aead::rand_core::RngCore;
+    use aes_gcm::Nonce;
+
+    let mut salt = [0u8; WRAP_SALT_LEN];
+    OsRng.fill_bytes(&mut salt);
+    let wrap_key = derive_wrap_key(passphrase, &salt)?;
+    let cipher = Aes256Gcm::new_from_slice(&wrap_key)
+        .map_err(|e| anyhow!("wrap cipher init: {:?}", e))?;
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce), key)
+        .map_err(|e| anyhow!("key wrap failed: {:?}", e))?;
+
+    let mut blob = Vec::with_capacity(WRAP_MAGIC.len() + WRAP_SALT_LEN + WRAP_NONCE_LEN + ciphertext.len());
+    blob.extend_from_slice(WRAP_MAGIC);
+    blob.extend_from_slice(&salt);
+    blob.extend_from_slice(&nonce);
+    blob.extend_from_slice(&ciphertext);
+    Ok(blob)
+}
+
+fn unwrap_key(blob: &[u8], passphrase: &str) -> Result<Vec<u8>> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::Nonce;
+
+    let salt_start = WRAP_MAGIC.len();
+    let nonce_start = salt_start + WRAP_SALT_LEN;
+    if blob.len() <= nonce_start + WRAP_NONCE_LEN {
+        return Err(anyhow!("corrupted wrapped encryption key"));
+    }
+    let salt = &blob[salt_start..nonce_start];
+    let nonce = &blob[nonce_start..nonce_start + WRAP_NONCE_LEN];
+    let ciphertext = &blob[nonce_start + WRAP_NONCE_LEN..];
+
+    let wrap_key = derive_wrap_key(passphrase, salt)?;
+    let cipher = Aes256Gcm::new_from_slice(&wrap_key)
+        .map_err(|e| anyhow!("unwrap cipher init: {:?}", e))?;
+    cipher
+        .decrypt(Nonce::from_slice(nonce), ciphertext)
+        .map_err(|_| anyhow!("failed to unwrap encryption key: wrong passphrase or corrupted file"))
 }
 
 fn tighten_permissions(_path: &std::path::Path) {
@@ -290,5 +380,49 @@ mod tests {
         assert_eq!(aes.algorithm(), "aes-256-gcm");
         let chacha = create_encryptor(&EncryptionAlgorithm::ChaCha20Poly1305);
         assert_eq!(chacha.algorithm(), "chacha20-poly1305");
+    }
+
+    #[test]
+    fn test_key_passphrase_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("bck-key-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("enc.key");
+
+        // Create a wrapped key with a passphrase.
+        let key1 = load_key(&path, Some("hunter2")).unwrap();
+        assert_eq!(key1.len(), 32);
+        let blob = std::fs::read(&path).unwrap();
+        assert!(is_wrapped(&blob), "key file must be wrapped");
+
+        // Loading with the correct passphrase returns the same key.
+        let key2 = load_key(&path, Some("hunter2")).unwrap();
+        assert_eq!(key1, key2);
+
+        // Wrong passphrase must fail.
+        assert!(load_key(&path, Some("wrong")).is_err());
+
+        // No passphrase on a wrapped file must fail loudly.
+        assert!(load_key(&path, None).is_err());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_raw_key_migrates_to_wrapped() {
+        let dir = std::env::temp_dir().join(format!("bck-key-mig-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("enc.key");
+
+        // Create a raw key first (no passphrase).
+        let raw = load_key(&path, None).unwrap();
+        assert!(!is_wrapped(&std::fs::read(&path).unwrap()));
+
+        // Loading again with a passphrase migrates the file to wrapped and
+        // keeps the same key material.
+        let key = load_key(&path, Some("p@ss")).unwrap();
+        assert_eq!(key, raw);
+        assert!(is_wrapped(&std::fs::read(&path).unwrap()));
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

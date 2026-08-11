@@ -679,7 +679,7 @@ fn encryption_key(state: &AppState) -> Option<Vec<u8>> {
     let key_path = state.config.encryption.key_path.clone()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| crate::encrypt::default_key_path(&state.config));
-    std::fs::read(&key_path).ok()
+    crate::encrypt::load_key(&key_path, state.config.encryption.passphrase.as_deref()).ok()
 }
 
 async fn perform_vm_restore(

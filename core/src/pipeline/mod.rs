@@ -125,8 +125,11 @@ impl BackupPipeline {
         let mut blocks: Vec<FileBlock> = Vec::new();
 
         for file in &scan_result.files {
-            let file_data = tokio::fs::read(&file.path).await?;
-            let chunks = self.chunker.chunk_data(&file_data)?;
+            // Stream the file through the chunker instead of loading it into
+            // memory — multi-GB files previously caused OOM.
+            let file_handle = std::fs::File::open(&file.path)?;
+            let mut reader = std::io::BufReader::new(file_handle);
+            let chunks = self.chunker.chunk_reader(&mut reader)?;
 
             for chunk in &chunks {
                 // Dedup

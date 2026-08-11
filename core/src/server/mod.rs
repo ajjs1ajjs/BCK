@@ -53,12 +53,16 @@ pub struct AppState {
 pub fn create_router(state: Arc<AppState>) -> Router {
     let api = routes::api_routes(state.clone());
 
+    // Same-origin by default (the SPA is served by this daemon). Cross-origin
+    // is only allowed for explicitly configured origins — never `permissive()`.
+    let cors = cors_layer(&state.config.server.allowed_origins);
+
     // Serve the built web UI (SPA) if a directory is configured and exists.
     let mut router = Router::new()
         .nest("/api/v1", api)
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
-        .layer(CorsLayer::permissive());
+        .layer(cors);
 
     if let Some(web_dir) = &state.config.server.web_ui_dir {
         if Path::new(web_dir).is_dir() {
@@ -69,4 +73,29 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     }
 
     router
+}
+
+fn cors_layer(allowed: &[String]) -> CorsLayer {
+    if allowed.is_empty() {
+        return CorsLayer::new();
+    }
+    use tower_http::cors::AllowOrigin;
+    let origins: Vec<axum::http::HeaderValue> = allowed
+        .iter()
+        .filter_map(|o| o.parse().ok())
+        .collect();
+    if origins.is_empty() {
+        return CorsLayer::new();
+    }
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+        ])
+        .allow_headers([axum::http::header::AUTHORIZATION, axum::http::header::CONTENT_TYPE])
+        .allow_credentials(true)
 }

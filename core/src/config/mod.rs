@@ -23,6 +23,10 @@ pub struct ServerConfig {
     pub web_ui_dir: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    /// Cross-origin request allowlist (e.g. ["https://backups.example.com"]).
+    /// Empty (default) = same-origin only; the SPA is served by the daemon.
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +46,11 @@ pub struct StorageConfig {
 pub struct EncryptionConfig {
     pub key_path: Option<PathBuf>,
     pub algorithm: String,
+    /// Optional passphrase that wraps the encryption key at rest (Argon2-derived
+    /// key encrypts the stored key file). When set, the key file cannot be used
+    /// without it; when unset, a raw 32-byte key file is used.
+    #[serde(default)]
+    pub passphrase: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +70,7 @@ impl Default for AppConfig {
                 web_ui_dir: Some("./web-ui/dist".into()),
                 tls_cert: None,
                 tls_key: None,
+                allowed_origins: Vec::new(),
             },
             database: DatabaseConfig {
                 url: "sqlite://./data/bck.db?mode=rwc".into(),
@@ -74,6 +84,7 @@ impl Default for AppConfig {
             encryption: EncryptionConfig {
                 key_path: None,
                 algorithm: "aes-256-gcm".into(),
+                passphrase: None,
             },
             logging: LoggingConfig {
                 level: "info".into(),
