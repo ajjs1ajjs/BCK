@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     if config.database.migrate {
         info!("Running database migrations...");
         db.migrate().await?;
-        seed_default_admin(&db).await;
+        seed_default_admin(&db, &config).await;
     }
 
     // Initialize components
@@ -342,8 +342,10 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
 }
 
 /// Create the default admin user when no users exist yet. The initial password
-/// is randomly generated and printed once — never a hardcoded admin/admin.
-async fn seed_default_admin(db: &bck_core::db::DbPool) {
+/// is randomly generated, printed once, and persisted to a bootstrap file so
+/// the operator/installer can read it (it is never retrievable from the hashed
+/// database value afterwards).
+async fn seed_default_admin(db: &bck_core::db::DbPool, config: &AppConfig) {
     use bck_core::db::DbPool;
 
     let count: i64 = match db {
@@ -413,6 +415,35 @@ async fn seed_default_admin(db: &bck_core::db::DbPool) {
             eprintln!("  Change this password immediately after first login.");
             eprintln!("======================================================");
             info!("Seeded default admin user with a generated password.");
+
+            // Persist the password to a bootstrap file (0600) next to the data
+            // dir so the installer / operator can read it without scanning the
+            // journal. The file is intentionally NOT in the backups directory.
+            let bootstrap_path = config
+                .storage
+                .default_path
+                .parent()
+                .unwrap_or(&config.storage.default_path)
+                .join("bootstrap_admin.txt");
+            if let Some(parent) = bootstrap_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(
+                &bootstrap_path,
+                format!("username: admin\npassword: {}\n", password),
+            ) {
+                warn!("Failed to persist bootstrap admin password to {}: {}", bootstrap_path.display(), e);
+            } else {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &bootstrap_path,
+                        std::fs::Permissions::from_mode(0o600),
+                    );
+                }
+                info!("Bootstrap admin password written to {}", bootstrap_path.display());
+            }
         }
         Err(e) => warn!("Failed to seed default admin: {}", e),
     }

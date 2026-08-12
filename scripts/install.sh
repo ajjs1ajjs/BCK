@@ -355,6 +355,23 @@ EOF
     systemctl enable bckd 2>/dev/null || true
     systemctl restart bckd 2>/dev/null || true
     log "systemd service 'bckd' started. Status: systemctl status bckd"
+    # On a fresh install the daemon generates the admin password and writes it
+    # to a bootstrap file; surface it so the operator does not have to grep
+    # the journal. The file is removed after first login / password change.
+    BOOTSTRAP_FILE="$BCK_DATA_DIR/bootstrap_admin.txt"
+    if [ -n "$BOOTSTRAP_FILE" ]; then
+        for _ in $(seq 1 40); do
+            [ -f "$BOOTSTRAP_FILE" ] && break
+            sleep 0.5
+        done
+        if [ -f "$BOOTSTRAP_FILE" ]; then
+            BOOT_PW="$(sed -n 's/^password: //p' "$BOOTSTRAP_FILE" | head -n1)"
+            log "Bootstrap admin: username=admin  password=$BOOT_PW"
+            log "Change this password immediately after first login."
+        else
+            log "No bootstrap admin password found (already initialized?). See: sudo journalctl -u bckd | grep -i password"
+        fi
+    fi
 elif [ "$OS_LOWER" = "darwin" ]; then
     PLIST="$HOME/Library/LaunchAgents/com.bck.daemon.plist"
     cat > "$PLIST" <<EOF
@@ -382,7 +399,7 @@ log " BCK Enterprise Backup installed/updated"
 log "   Home:    $BCK_HOME"
 log "   Config:  $CONFIG"
 log "   Data:    $BCK_DATA_DIR"
-log "   Web UI:  http://localhost:${BCK_PORT}  (first admin password is generated & printed on first start)"
+log "   Web UI:  http://localhost:${BCK_PORT}  (bootstrap admin password is shown above / in $BCK_DATA_DIR/bootstrap_admin.txt)"
 log "   Binaries: ${BCK_HOME}/bin/{bckd,bck-agent,bck,bck-proxy}"
 log "   CLI:     bck --help"
 log "   Agent:   bck-agent --server <host> --port 9440"

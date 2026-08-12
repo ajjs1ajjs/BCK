@@ -54,8 +54,11 @@ bck --server http://127.0.0.1:9440 status
 Default web console: `http://localhost:9440`.
 
 > **First login:** on first start the daemon seeds an `admin` account with a
-> **randomly generated password** and prints it once to the console (there is
-> no hardcoded `admin/admin`). Change it immediately after the first login.
+> **randomly generated password**. The password is printed to the console once
+> **and written to `bootstrap_admin.txt`** (mode `0600`) next to the data
+> directory, so the one-line installer can display it on the terminal. Change
+> it immediately after the first login, then delete `bootstrap_admin.txt`.
+> There is no hardcoded `admin/admin`.
 
 > **Secrets:** `BCK_JWT_SECRET`, `BCK_AGENT_TOKEN` and the encryption key are
 > auto-generated and persisted with `0600` permissions under the data dir when

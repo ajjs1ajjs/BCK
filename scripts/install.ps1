@@ -204,13 +204,32 @@ sc.exe description bckd "BCK Enterprise Backup Daemon" | Out-Null
 Start-Service bckd
 Log "Service 'bckd' started."
 
+# On a fresh install the daemon generates the admin password and writes it to a
+# bootstrap file (Windows services have no stdout to read it from).
+$bootstrapFile = Join-Path $BCK_DATA "bootstrap_admin.txt"
+if ($bootstrapFile) {
+    $waited = 0
+    while (-not (Test-Path -LiteralPath $bootstrapFile) -and $waited -lt 20) {
+        Start-Sleep -Milliseconds 500
+        $waited++
+    }
+    if (Test-Path -LiteralPath $bootstrapFile) {
+        $pwLine = (Get-Content -LiteralPath $bootstrapFile | Where-Object { $_ -like "password:*" } | Select-Object -First 1)
+        $pw = $pwLine -replace "^password: ", ""
+        Log "Bootstrap admin: username=admin  password=$pw"
+        Log "Change this password immediately after first login."
+    } else {
+        Log "No bootstrap admin password found (already initialized?). See: $bootstrapFile"
+    }
+}
+
 # ---------------------------------------------------------------------------
 Log "==============================================="
 Log " BCK Enterprise Backup installed/updated"
 Log "   Home:    $BCK_HOME"
 Log "   Config:  $configPath"
 Log "   Data:    $BCK_DATA"
-Log "   Web UI:  http://localhost:$Port  (first admin password is generated & printed on first start)"
+Log "   Web UI:  http://localhost:$Port  (bootstrap admin password is shown above / in $BCK_DATA\bootstrap_admin.txt)"
 Log "   Binaries: $BCK_HOME\bin\bckd.exe, bck-agent.exe, bck.exe, bck-proxy.exe"
 Log "   CLI:     bck --help"
 Log "==============================================="
