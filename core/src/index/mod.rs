@@ -266,5 +266,6 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snapshot> {
         app_consistent: false,
         created_at: row.get(9)?,
         manifest_path: row.get(10)?,
+        tenant_id: None,
     })
 }

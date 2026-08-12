@@ -493,6 +493,54 @@ async fn tenant_admin_cannot_manage_other_tenants() {
 }
 
 #[tokio::test]
+async fn tenant_data_plane_isolation() {
+    let dir = temp_dir("tenant-dp");
+    let state = test_state(&format!("{}\\tenant-dp.db", dir)).await;
+    let app = crate::server::routes::api_routes(state.clone());
+
+    let tenant_a = jwt_for_tenant(&state, crate::auth::UserRole::Admin, "tenant-a");
+    let tenant_b = jwt_for_tenant(&state, crate::auth::UserRole::Admin, "tenant-b");
+
+    // Tenant A creates a local repository and a job against it.
+    let repo_body = format!(
+        r#"{{"name":"a-repo","repo_type":"local","path":"{}\\repo-a"}}"#,
+        dir.replace('\\', "/")
+    );
+    let resp = oneshot_auth(app.clone(), "POST", "/repositories", Some(&repo_body), &format!("Bearer {tenant_a}")).await;
+    assert_eq!(resp.status(), StatusCode::OK, "tenant A must create a repository");
+    let repo: serde_json::Value = read_json(resp).await;
+    let repo_id = repo["id"].as_str().unwrap().to_string();
+
+    let job_body = format!(
+        r#"{{"name":"a-job","source_path":"{}\\src","repository_id":"{}"}}"#,
+        dir.replace('\\', "/"),
+        repo_id
+    );
+    let resp = oneshot_auth(app.clone(), "POST", "/jobs", Some(&job_body), &format!("Bearer {tenant_a}")).await;
+    assert_eq!(resp.status(), StatusCode::OK, "tenant A must create a job");
+    let job: serde_json::Value = read_json(resp).await;
+    let job_id = job["id"].as_str().unwrap().to_string();
+
+    // Tenant B must not see or touch tenant A's data.
+    let resp = oneshot_auth(app.clone(), "GET", "/repositories", None, &format!("Bearer {tenant_b}")).await;
+    let repos: Vec<serde_json::Value> = read_json(resp).await;
+    assert!(repos.is_empty(), "tenant B must not list tenant A's repositories");
+    let resp = oneshot_auth(app.clone(), "GET", &format!("/repositories/{repo_id}"), None, &format!("Bearer {tenant_b}")).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "cross-tenant repo read must 404");
+    let resp = oneshot_auth(app.clone(), "GET", &format!("/jobs/{job_id}"), None, &format!("Bearer {tenant_b}")).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "cross-tenant job read must 404");
+    let resp = oneshot_auth(app.clone(), "POST", &format!("/jobs/{job_id}/run"), None, &format!("Bearer {tenant_b}")).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "cross-tenant job run must 404");
+
+    // Tenant A still sees its own data.
+    let resp = oneshot_auth(app.clone(), "GET", "/repositories", None, &format!("Bearer {tenant_a}")).await;
+    let repos: Vec<serde_json::Value> = read_json(resp).await;
+    assert_eq!(repos.len(), 1, "tenant A sees its own repository");
+    let resp = oneshot_auth(app.clone(), "GET", &format!("/jobs/{job_id}"), None, &format!("Bearer {tenant_a}")).await;
+    assert_eq!(resp.status(), StatusCode::OK, "tenant A reads its own job");
+}
+
+#[tokio::test]
 async fn portal_restore_request_lifecycle() {
     let state = test_state(&format!("{}\\portal.db", temp_dir("portal"))).await;
     let app = portal::router().with_state(state.clone());
@@ -688,27 +736,28 @@ async fn hypervisor_instant_recovery_routes() {
     let hv_id = hv["id"].as_str().unwrap().to_string();
 
     let app = restore::router().with_state(state.clone());
+    let claims = admin_claims();
 
     // Unknown hypervisor on the VM instant-recovery endpoint -> 404.
-    let resp = oneshot(app.clone(), "POST", "/instant/vm", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/instant/vm", Some(
         r#"{"snapshot_id":"snap-x","vm_name":"vm","hypervisor_id":"nope","protocol":"nfs","target_host":"127.0.0.1:2049"}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Invalid protocol is rejected before connecting to the hypervisor.
-    let resp = oneshot(app.clone(), "POST", "/instant/vm", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/instant/vm", Some(
         &format!(r#"{{"snapshot_id":"snap-x","vm_name":"vm","hypervisor_id":"{}","protocol":"bogus","target_host":"127.0.0.1:2049"}}"#, hv_id),
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     // The hypervisor exists now, so an unknown snapshot -> 404.
-    let resp = oneshot(app.clone(), "POST", "/instant/vm", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/instant/vm", Some(
         &format!(r#"{{"snapshot_id":"snap-x","vm_name":"vm","hypervisor_id":"{}","protocol":"nfs","target_host":"127.0.0.1:2049"}}"#, hv_id),
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Listing instant recovery sessions returns an empty list initially.
-    let resp = oneshot(app.clone(), "GET", "/instant", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/instant", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let sessions: Vec<serde_json::Value> = read_json(resp).await;
     assert!(sessions.is_empty());
@@ -826,6 +875,22 @@ fn jwt_for(state: &std::sync::Arc<crate::server::AppState>, role: crate::auth::U
         email: None,
         enabled: true,
         tenant_id: None,
+    };
+    state.jwt.generate(&user).unwrap()
+}
+
+fn jwt_for_tenant(
+    state: &std::sync::Arc<crate::server::AppState>,
+    role: crate::auth::UserRole,
+    tenant_id: &str,
+) -> String {
+    let user = crate::auth::User {
+        id: uuid::Uuid::new_v4().to_string(),
+        username: format!("user-{}-{}", tenant_id, role).to_lowercase(),
+        role,
+        email: None,
+        enabled: true,
+        tenant_id: Some(tenant_id.to_string()),
     };
     state.jwt.generate(&user).unwrap()
 }

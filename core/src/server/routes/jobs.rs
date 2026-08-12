@@ -1,12 +1,13 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     Json,
     http::StatusCode,
 };
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::job::JobView;
+use crate::auth::jwt::Claims;
+use crate::job::{JobManager, JobView};
 use crate::server::AppState;
 
 #[derive(Deserialize)]
@@ -40,6 +41,32 @@ fn default_backup_type() -> String {
     "full".into()
 }
 
+fn scoped_tenant(claims: &Claims) -> Option<String> {
+    if claims.role == "super_admin" {
+        None
+    } else {
+        claims.tenant_id.clone()
+    }
+}
+
+fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
+    match scoped_tenant(claims) {
+        None => true,
+        Some(mine) => owner == Some(mine.as_str()),
+    }
+}
+
+/// Does the caller's tenant own this job? Global/super-admins pass through.
+async fn job_owned(jm: &JobManager, claims: &Claims, id: &str) -> bool {
+    match jm.load_job_models().await {
+        Ok(models) => models
+            .iter()
+            .find(|m| m.id == id)
+            .map_or(false, |m| tenant_allows(claims, m.tenant_id.as_deref())),
+        Err(_) => false,
+    }
+}
+
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/", axum::routing::get(list_jobs).post(create_job))
@@ -50,14 +77,16 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 async fn list_jobs(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<JobView>>, StatusCode> {
     let jm = state.job_manager.lock().await;
     let jobs = jm.list_jobs().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(jobs))
+    Ok(Json(jobs.into_iter().filter(|v| tenant_allows(&claims, v.tenant_id.as_deref())).collect()))
 }
 
 async fn create_job(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<CreateJobRequest>,
 ) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
@@ -70,6 +99,7 @@ async fn create_job(
         &req.repository_id,
         req.schedule.as_deref(),
         req.retention_days,
+        scoped_tenant(&claims).as_deref(),
     ).await.map_err(|e| {
         tracing::error!("create job: {}", e);
         StatusCode::BAD_REQUEST
@@ -94,9 +124,13 @@ async fn create_job(
 
 async fn get_job(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
+    if !job_owned(&jm, &claims, &id).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let job = jm.get_job(&id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
@@ -105,10 +139,14 @@ async fn get_job(
 
 async fn update_job(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
     Json(req): Json<UpdateJobRequest>,
 ) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
+    if !job_owned(&jm, &claims, &id).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let found = jm.update_job(&id, req.name.as_deref(), req.schedule.as_deref().map(Some), req.enabled).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !found {
@@ -130,9 +168,13 @@ async fn update_job(
 
 async fn delete_job(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     let jm = state.job_manager.lock().await;
+    if !job_owned(&jm, &claims, &id).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let deleted = jm.delete_job(&id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !deleted {
@@ -147,9 +189,13 @@ async fn delete_job(
 
 async fn run_job(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
+    if !job_owned(&jm, &claims, &id).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     jm.start_job(&id).await
         .map_err(|e| {
             tracing::error!("run job {}: {}", id, e);
@@ -167,9 +213,13 @@ async fn run_job(
 
 async fn cancel_job(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<JobView>, StatusCode> {
     let jm = state.job_manager.lock().await;
+    if !job_owned(&jm, &claims, &id).await {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let found = jm.cancel_job(&id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if !found {

@@ -94,6 +94,7 @@ impl BackupEngine for BackupEngineImpl {
                 &config.destination.as_ref().map(|d| d.repository_id.clone()).unwrap_or_default(),
                 None,
                 retention_days(&config),
+                None, // gRPC is authenticated by the shared agent token (global scope)
             ).await.map_err(status_err)?
         };
 

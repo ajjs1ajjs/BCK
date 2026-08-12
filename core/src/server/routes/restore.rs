@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State, Query},
+    extract::{Extension, Path, State, Query},
     Json,
     body::Body,
     http::StatusCode,
@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::auth::jwt::Claims;
 use crate::db::models::snapshot::SnapshotModel;
 use crate::db::models::repository::RepositoryModel;
 use crate::db::DbPool;
@@ -23,6 +24,28 @@ pub struct VmRestoreRequest {
     pub vm_name: Option<String>,
     pub power_on: bool,
     pub hypervisor_id: Option<String>,
+}
+
+/// Does the caller's tenant own this snapshot? Super-admins and global users
+/// (no tenant) pass through; tenant-scoped callers are confined to their own.
+fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
+    if claims.role == "super_admin" {
+        return true;
+    }
+    match &claims.tenant_id {
+        None => true,
+        Some(mine) => owner == Some(mine.as_str()),
+    }
+}
+
+/// Load a snapshot and enforce the caller's tenant on it.
+async fn scoped_snapshot(state: &AppState, claims: &Claims, snapshot_id: &str) -> Result<SnapshotModel, StatusCode> {
+    let snapshot = lookup_snapshot(&state.db, snapshot_id).await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    if !tenant_allows(claims, snapshot.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(snapshot)
 }
 
 #[derive(Deserialize)]
@@ -89,10 +112,10 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 async fn restore_vm(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<VmRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
-    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
 
     let session = RestoreSession {
         id: uuid::Uuid::new_v4().to_string(),
@@ -139,10 +162,10 @@ async fn restore_vm(
 
 async fn restore_file(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<FileRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
-    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
 
     let session = RestoreSession {
         id: uuid::Uuid::new_v4().to_string(),
@@ -188,10 +211,10 @@ async fn restore_file(
 
 async fn instant_recovery(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<InstantRecoveryRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
-    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let storage = build_storage(&repo, encryption_key(&state)).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -316,6 +339,7 @@ async fn list_instant_recovery(
 /// unregisters the VM.
 async fn instant_recovery_vm(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<VmInstantRecoveryRequest>,
 ) -> Result<(StatusCode, Json<RestoreSessionResponse>), StatusCode> {
     let protocol = match req.protocol.to_lowercase().as_str() {
@@ -324,8 +348,7 @@ async fn instant_recovery_vm(
         _ => return Err(StatusCode::BAD_REQUEST),
     };
 
-    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let storage = build_storage(&repo, encryption_key(&state)).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -397,11 +420,11 @@ async fn instant_recovery_vm(
 
 async fn browse_snapshot(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(snapshot_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let _snapshot = lookup_snapshot(&state.db, &snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let _snapshot = scoped_snapshot(&state, &claims, &snapshot_id).await?;
 
     let dir = params.get("dir")
         .or_else(|| params.get("prefix"))
@@ -433,12 +456,12 @@ async fn browse_snapshot(
 /// block store on the fly.
 async fn download_file(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(snapshot_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, StatusCode> {
     let path = params.get("path").ok_or(StatusCode::BAD_REQUEST)?;
-    let snapshot = lookup_snapshot(&state.db, &snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let snapshot = scoped_snapshot(&state, &claims, &snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let storage = build_storage(&repo, encryption_key(&state)).await
@@ -476,12 +499,12 @@ pub struct SureBackupResponse {
 
 async fn start_surebackup(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<SureBackupRequest>,
 ) -> Result<Json<SureBackupResponse>, StatusCode> {
     use crate::restore::surebackup::{SureBackupStatus, TestResult};
 
-    let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let storage = build_storage(&repo, encryption_key(&state)).await
@@ -602,8 +625,8 @@ async fn lookup_snapshot(db: &DbPool, snapshot_id: &str) -> Result<SnapshotModel
             sqlx::query_as::<_, SnapshotModel>(
                 "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                         size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                        app_consistent, created_at
-                 FROM snapshots WHERE id = $1"
+                        app_consistent, created_at, tenant_id
+                 FROM snapshots WHERE id = ?1"
             )
             .bind(snapshot_id)
             .fetch_one(pool)
@@ -613,7 +636,7 @@ async fn lookup_snapshot(db: &DbPool, snapshot_id: &str) -> Result<SnapshotModel
             sqlx::query_as::<_, SnapshotModel>(
                 "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                         size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                        app_consistent, created_at
+                        app_consistent, created_at, tenant_id
                  FROM snapshots WHERE id = $1"
             )
             .bind(snapshot_id)
@@ -628,7 +651,7 @@ async fn lookup_repository(db: &DbPool, repo_id: &str) -> Result<RepositoryModel
         DbPool::Sqlite(pool) => {
             let row = sqlx::query_as::<_, RepositoryModel>(
                 "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                        free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                  FROM repositories WHERE id = ?1"
             )
             .bind(repo_id)
@@ -640,7 +663,7 @@ async fn lookup_repository(db: &DbPool, repo_id: &str) -> Result<RepositoryModel
         DbPool::Postgres(pool) => {
             let row = sqlx::query_as::<_, RepositoryModel>(
                 "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                        free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                  FROM repositories WHERE id = $1"
             )
             .bind(repo_id)

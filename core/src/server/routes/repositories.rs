@@ -1,11 +1,12 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     Json,
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::auth::jwt::Claims;
 use crate::db::models::repository::RepositoryModel;
 use crate::db::DbPool;
 use crate::server::AppState;
@@ -60,15 +61,37 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/:id", axum::routing::get(get_repository).delete(delete_repository))
 }
 
+/// The tenant a caller may operate on: super-admins (and global users with no
+/// tenant) see everything; everyone else is confined to their own tenant.
+fn scoped_tenant(claims: &Claims) -> Option<String> {
+    if claims.role == "super_admin" {
+        None
+    } else {
+        claims.tenant_id.clone()
+    }
+}
+
+fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
+    match scoped_tenant(claims) {
+        None => true,
+        Some(mine) => owner == Some(mine.as_str()),
+    }
+}
+
 async fn list_repositories(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<RepositoryResponse>>, StatusCode> {
     let repos = fetch_repositories(&state.db).await
         .map_err(|e| {
             tracing::error!("list repositories: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(repos.into_iter().map(RepositoryResponse::from).collect()))
+        })?
+        .into_iter()
+        .filter(|r| tenant_allows(&claims, r.tenant_id.as_deref()))
+        .map(RepositoryResponse::from)
+        .collect();
+    Ok(Json(repos))
 }
 
 #[derive(Deserialize)]
@@ -81,6 +104,7 @@ pub struct RepoConfig {
 
 async fn create_repository(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<CreateRepoRequest>,
 ) -> Result<Json<RepositoryResponse>, StatusCode> {
     // Validate that the storage backend can be created (creates dirs for local).
@@ -136,20 +160,22 @@ async fn create_repository(
 
     let id = uuid::Uuid::new_v4().to_string();
     let t = chrono::Utc::now().timestamp();
+    let tenant_id = scoped_tenant(&claims);
 
     match &state.db {
         DbPool::Sqlite(pool) => {
             sqlx::query(
                 "INSERT INTO repositories
                  (id, name, repo_type, config_json, capacity_bytes, used_bytes, free_bytes,
-                  encrypted, immutable, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, 0, 'ready', ?5, ?5)"
+                  encrypted, immutable, status, created_at, updated_at, tenant_id)
+                 VALUES (?1, ?2, ?3, ?4, 0, 0, 0, 0, 0, 'ready', ?5, ?5, ?6)"
             )
             .bind(&id)
             .bind(&req.name)
             .bind(&req.repo_type)
             .bind(config.to_string())
             .bind(t)
+            .bind(&tenant_id)
             .execute(pool)
             .await
             .map_err(|e| {
@@ -161,14 +187,15 @@ async fn create_repository(
             sqlx::query(
                 "INSERT INTO repositories
                  (id, name, repo_type, config_json, capacity_bytes, used_bytes, free_bytes,
-                  encrypted, immutable, status, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, 0, 0, 0, 0, 0, 'ready', $5, $5)"
+                  encrypted, immutable, status, created_at, updated_at, tenant_id)
+                 VALUES ($1, $2, $3, $4, 0, 0, 0, 0, 0, 'ready', $5, $5, $6)"
             )
             .bind(&id)
             .bind(&req.name)
             .bind(&req.repo_type)
             .bind(config.to_string())
             .bind(t)
+            .bind(&tenant_id)
             .execute(pool)
             .await
             .map_err(|e| {
@@ -195,18 +222,28 @@ async fn create_repository(
 
 async fn get_repository(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<RepositoryResponse>, StatusCode> {
     let repo = fetch_repository(&state.db, &id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .filter(|r| tenant_allows(&claims, r.tenant_id.as_deref()))
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(RepositoryResponse::from(repo)))
 }
 
 async fn delete_repository(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
+    // Verify the repository exists and belongs to the caller's tenant.
+    let owned = fetch_repository(&state.db, &id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_or(false, |r| tenant_allows(&claims, r.tenant_id.as_deref()));
+    if !owned {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let affected = match &state.db {
         DbPool::Sqlite(pool) => {
             sqlx::query("DELETE FROM repositories WHERE id = ?1")
@@ -245,7 +282,7 @@ pub async fn fetch_repositories(db: &DbPool) -> anyhow::Result<Vec<RepositoryMod
         DbPool::Sqlite(pool) => {
             let rows = sqlx::query_as::<_, RepositoryModel>(
                 "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                        free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                  FROM repositories ORDER BY created_at DESC"
             )
             .fetch_all(pool)
@@ -255,7 +292,7 @@ pub async fn fetch_repositories(db: &DbPool) -> anyhow::Result<Vec<RepositoryMod
         DbPool::Postgres(pool) => {
             let rows = sqlx::query_as::<_, RepositoryModel>(
                 "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                        free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                  FROM repositories ORDER BY created_at DESC"
             )
             .fetch_all(pool)
@@ -270,7 +307,7 @@ pub async fn fetch_repository(db: &DbPool, id: &str) -> anyhow::Result<Option<Re
         DbPool::Sqlite(pool) => {
             let row = sqlx::query_as::<_, RepositoryModel>(
                 "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                        free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                  FROM repositories WHERE id = ?1"
             )
             .bind(id)
@@ -281,7 +318,7 @@ pub async fn fetch_repository(db: &DbPool, id: &str) -> anyhow::Result<Option<Re
         DbPool::Postgres(pool) => {
             let row = sqlx::query_as::<_, RepositoryModel>(
                 "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                        free_bytes, encrypted, immutable, status, created_at, updated_at
+                        free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                  FROM repositories WHERE id = $1"
             )
             .bind(id)

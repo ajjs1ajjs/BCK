@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tracing::info;
 
+pub mod nbd;
+
 use crate::integrations::{
     ChangedBlock, HypervisorConnector, PowerState,
     VmDiskInfo, VmInfo, VmNetworkInfo, VmSnapshot,
@@ -341,10 +343,12 @@ impl HypervisorConnector for VSphereConnector {
         offset: i64,
         length: i64,
     ) -> Result<Vec<u8>> {
-        Err(anyhow!(
-            "Direct disk block read not supported. Use backup proxy. Disk: {} offset: {} len: {}",
-            disk_path, offset, length
-        ))
+        if length <= 0 || length > 64 * 1024 * 1024 {
+            return Err(anyhow!("Invalid read length: {}", length));
+        }
+        // The VMDK is served over NBD (port 902) while the snapshot exists.
+        let export = nbd::export_name(disk_path);
+        nbd::read(&self.host, 902, &export, offset as u64, length as u32).await
     }
 
     async fn register_vm(

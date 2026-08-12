@@ -88,6 +88,8 @@ pub struct JobView {
     pub finished_at: Option<i64>,
     pub created_at: i64,
     pub last_run_at: Option<i64>,
+    /// NULL = global/system job.
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -132,6 +134,7 @@ impl JobManager {
         repository_id: &str,
         schedule: Option<&str>,
         retention_days: Option<i32>,
+        tenant_id: Option<&str>,
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let source_config = serde_json::json!({ "path": source_path }).to_string();
@@ -146,8 +149,8 @@ impl JobManager {
                     "INSERT INTO backup_jobs
                      (id, name, description, job_type, backup_type, source_config, repository_id,
                       schedule, retention_config, compression, encryption, bandwidth_limit, enabled,
-                      last_run_at, next_run_at, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, NULL, ?14, ?14)"
+                      last_run_at, next_run_at, created_at, updated_at, tenant_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL, NULL, ?14, ?14, ?15)"
                 )
                 .bind(&id)
                 .bind(name)
@@ -163,6 +166,7 @@ impl JobManager {
                 .bind(0i64)
                 .bind(1i64)
                 .bind(t)
+                .bind(tenant_id.map(|s| s.to_string()))
                 .execute(pool)
                 .await?;
             }
@@ -171,8 +175,8 @@ impl JobManager {
                     "INSERT INTO backup_jobs
                      (id, name, description, job_type, backup_type, source_config, repository_id,
                       schedule, retention_config, compression, encryption, bandwidth_limit, enabled,
-                      last_run_at, next_run_at, created_at, updated_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, NULL, $14, $14)"
+                      last_run_at, next_run_at, created_at, updated_at, tenant_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NULL, NULL, $14, $14, $15)"
                 )
                 .bind(&id)
                 .bind(name)
@@ -188,6 +192,7 @@ impl JobManager {
                 .bind(0i64)
                 .bind(1i64)
                 .bind(t)
+                .bind(tenant_id.map(|s| s.to_string()))
                 .execute(pool)
                 .await?;
             }
@@ -397,7 +402,7 @@ impl JobManager {
                 let rows = sqlx::query_as::<_, BackupJobModel>(
                     "SELECT id, name, description, job_type, backup_type, source_config,
                             repository_id, schedule, retention_config, compression, encryption,
-                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at
+                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at, tenant_id
                      FROM backup_jobs ORDER BY created_at DESC"
                 )
                 .fetch_all(pool)
@@ -408,7 +413,7 @@ impl JobManager {
                 let rows = sqlx::query_as::<_, BackupJobModel>(
                     "SELECT id, name, description, job_type, backup_type, source_config,
                             repository_id, schedule, retention_config, compression, encryption,
-                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at
+                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at, tenant_id
                      FROM backup_jobs ORDER BY created_at DESC"
                 )
                 .fetch_all(pool)
@@ -424,7 +429,7 @@ impl JobManager {
                 let row = sqlx::query_as::<_, BackupJobModel>(
                     "SELECT id, name, description, job_type, backup_type, source_config,
                             repository_id, schedule, retention_config, compression, encryption,
-                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at
+                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at, tenant_id
                      FROM backup_jobs WHERE id = ?1"
                 )
                 .bind(id)
@@ -436,7 +441,7 @@ impl JobManager {
                 let row = sqlx::query_as::<_, BackupJobModel>(
                     "SELECT id, name, description, job_type, backup_type, source_config,
                             repository_id, schedule, retention_config, compression, encryption,
-                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at
+                            bandwidth_limit, enabled, last_run_at, next_run_at, created_at, updated_at, tenant_id
                      FROM backup_jobs WHERE id = $1"
                 )
                 .bind(id)
@@ -509,6 +514,7 @@ impl JobManager {
             finished_at,
             created_at: job.created_at,
             last_run_at: job.last_run_at,
+            tenant_id: job.tenant_id.clone(),
         })
     }
 
@@ -730,6 +736,7 @@ impl JobManager {
             app_consistent: false,
             created_at: t,
             manifest_path: self.index_path(),
+            tenant_id: job.tenant_id.clone(),
         };
         index.add_snapshot(&snapshot)?;
 
@@ -813,6 +820,7 @@ impl JobManager {
             app_consistent: true,
             created_at: t,
             manifest_path: self.index_path(),
+            tenant_id: job.tenant_id.clone(),
         };
         index.add_snapshot(&snapshot)?;
 
@@ -869,7 +877,7 @@ impl JobManager {
             DbPool::Sqlite(pool) => {
                 let row = sqlx::query_as::<_, RepositoryModel>(
                     "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                            free_bytes, encrypted, immutable, status, created_at, updated_at
+                            free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                      FROM repositories WHERE id = ?1"
                 )
                 .bind(id)
@@ -880,7 +888,7 @@ impl JobManager {
             DbPool::Postgres(pool) => {
                 let row = sqlx::query_as::<_, RepositoryModel>(
                     "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
-                            free_bytes, encrypted, immutable, status, created_at, updated_at
+                            free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
                      FROM repositories WHERE id = $1"
                 )
                 .bind(id)
@@ -908,8 +916,8 @@ impl JobManager {
                     "INSERT INTO snapshots
                      (id, job_id, session_id, repository_id, snapshot_type, parent_id,
                       size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                      app_consistent, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
+                      app_consistent, created_at, tenant_id)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
                 )
                 .bind(&snapshot.id)
                 .bind(&snapshot.job_id)
@@ -924,6 +932,7 @@ impl JobManager {
                 .bind(consistency_str(&snapshot.consistency))
                 .bind(snapshot.app_consistent)
                 .bind(snapshot.created_at)
+                .bind(&snapshot.tenant_id)
                 .execute(pool)
                 .await?;
             }
@@ -932,8 +941,8 @@ impl JobManager {
                     "INSERT INTO snapshots
                      (id, job_id, session_id, repository_id, snapshot_type, parent_id,
                       size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                      app_consistent, created_at)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+                      app_consistent, created_at, tenant_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"
                 )
                 .bind(&snapshot.id)
                 .bind(&snapshot.job_id)
@@ -948,6 +957,7 @@ impl JobManager {
                 .bind(consistency_str(&snapshot.consistency))
                 .bind(if snapshot.app_consistent { 1i64 } else { 0i64 })
                 .bind(snapshot.created_at)
+                .bind(&snapshot.tenant_id)
                 .execute(pool)
                 .await?;
             }
@@ -968,7 +978,7 @@ impl JobManager {
                 let rows = sqlx::query_as::<_, SnapshotModel>(
                     "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                             size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                            app_consistent, created_at
+                            app_consistent, created_at, tenant_id
                      FROM snapshots WHERE job_id = ?1 ORDER BY created_at DESC"
                 )
                 .bind(job_id)
@@ -980,7 +990,7 @@ impl JobManager {
                 let rows = sqlx::query_as::<_, SnapshotModel>(
                     "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                             size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                            app_consistent, created_at
+                            app_consistent, created_at, tenant_id
                      FROM snapshots WHERE job_id = $1 ORDER BY created_at DESC"
                 )
                 .bind(job_id)

@@ -1,11 +1,12 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
     Json,
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::auth::jwt::Claims;
 use crate::db::models::snapshot::SnapshotModel;
 use crate::db::DbPool;
 use crate::server::AppState;
@@ -57,8 +58,19 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/:id", axum::routing::get(get_snapshot).delete(delete_snapshot))
 }
 
+fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
+    if claims.role == "super_admin" {
+        return true;
+    }
+    match &claims.tenant_id {
+        None => true,
+        Some(mine) => owner == Some(mine.as_str()),
+    }
+}
+
 async fn list_snapshots(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Query(params): Query<SnapshotQueryParams>,
 ) -> Result<Json<Vec<SnapshotResponse>>, StatusCode> {
     let limit = params.limit.unwrap_or(100).min(1000);
@@ -66,28 +78,36 @@ async fn list_snapshots(
         .map_err(|e| {
             tracing::error!("list snapshots: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    Ok(Json(snapshots.into_iter().map(SnapshotResponse::from).collect()))
+        })?
+        .into_iter()
+        .filter(|s| tenant_allows(&claims, s.tenant_id.as_deref()))
+        .map(SnapshotResponse::from)
+        .collect();
+    Ok(Json(snapshots))
 }
 
 async fn get_snapshot(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<SnapshotResponse>, StatusCode> {
     let snapshot = fetch_snapshot(&state.db, &id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .filter(|s| tenant_allows(&claims, s.tenant_id.as_deref()))
         .ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(SnapshotResponse::from(snapshot)))
 }
 
 async fn delete_snapshot(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
     // Resolve the snapshot first so we can GC its blocks against the right
-    // repository. Deleting a snapshot now also releases unreferenced blocks.
+    // repository, and verify the caller's tenant owns it.
     let snapshot = fetch_snapshot(&state.db, &id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .filter(|s| tenant_allows(&claims, s.tenant_id.as_deref()))
         .ok_or(StatusCode::NOT_FOUND)?;
 
     state.job_manager.lock().await
@@ -117,7 +137,7 @@ pub async fn fetch_snapshots(db: &DbPool, job_id: Option<&str>, limit: i64) -> a
                     sqlx::query_as::<_, SnapshotModel>(
                         "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                                 size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                                app_consistent, created_at
+                                app_consistent, created_at, tenant_id
                          FROM snapshots WHERE job_id = ?1 ORDER BY created_at DESC LIMIT ?2"
                     )
                     .bind(jid)
@@ -129,7 +149,7 @@ pub async fn fetch_snapshots(db: &DbPool, job_id: Option<&str>, limit: i64) -> a
                     sqlx::query_as::<_, SnapshotModel>(
                         "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                                 size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                                app_consistent, created_at
+                                app_consistent, created_at, tenant_id
                          FROM snapshots ORDER BY created_at DESC LIMIT ?1"
                     )
                     .bind(limit)
@@ -145,7 +165,7 @@ pub async fn fetch_snapshots(db: &DbPool, job_id: Option<&str>, limit: i64) -> a
                     sqlx::query_as::<_, SnapshotModel>(
                         "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                                 size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                                app_consistent, created_at
+                                app_consistent, created_at, tenant_id
                          FROM snapshots WHERE job_id = $1 ORDER BY created_at DESC LIMIT $2"
                     )
                     .bind(jid)
@@ -157,7 +177,7 @@ pub async fn fetch_snapshots(db: &DbPool, job_id: Option<&str>, limit: i64) -> a
                     sqlx::query_as::<_, SnapshotModel>(
                         "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                                 size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                                app_consistent, created_at
+                                app_consistent, created_at, tenant_id
                          FROM snapshots ORDER BY created_at DESC LIMIT $1"
                     )
                     .bind(limit)
@@ -176,7 +196,7 @@ pub async fn fetch_snapshot(db: &DbPool, id: &str) -> anyhow::Result<Option<Snap
             let row = sqlx::query_as::<_, SnapshotModel>(
                 "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                         size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                        app_consistent, created_at
+                        app_consistent, created_at, tenant_id
                  FROM snapshots WHERE id = ?1"
             )
             .bind(id)
@@ -188,7 +208,7 @@ pub async fn fetch_snapshot(db: &DbPool, id: &str) -> anyhow::Result<Option<Snap
             let row = sqlx::query_as::<_, SnapshotModel>(
                 "SELECT id, job_id, session_id, repository_id, snapshot_type, parent_id,
                         size_bytes, unique_bytes, compressed_bytes, checksum, consistency,
-                        app_consistent, created_at
+                        app_consistent, created_at, tenant_id
                  FROM snapshots WHERE id = $1"
             )
             .bind(id)

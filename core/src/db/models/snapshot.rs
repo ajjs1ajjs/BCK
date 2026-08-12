@@ -17,4 +17,6 @@ pub struct SnapshotModel {
     #[sqlx(try_from = "i64")]
     pub app_consistent: bool,
     pub created_at: i64,
+    /// NULL = global/system snapshot.
+    pub tenant_id: Option<String>,
 }

@@ -44,6 +44,7 @@ impl SnapshotManager {
             app_consistent: false,
             created_at: now,
             manifest_path: format!("manifests/{}/{}.manifest", job_id, id),
+            tenant_id: None,
         };
 
         let manifest = BackupManifest {

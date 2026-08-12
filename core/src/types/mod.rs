@@ -46,6 +46,9 @@ pub struct Snapshot {
     pub app_consistent: bool,
     pub created_at: i64,
     pub manifest_path: String,
+    /// NULL = global/system snapshot.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

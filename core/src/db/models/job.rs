@@ -22,6 +22,8 @@ pub struct BackupJobModel {
     pub next_run_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// NULL = global/system job.
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

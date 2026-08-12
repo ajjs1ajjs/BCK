@@ -17,4 +17,6 @@ pub struct RepositoryModel {
     pub status: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// NULL = global/system repository.
+    pub tenant_id: Option<String>,
 }
