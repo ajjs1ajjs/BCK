@@ -32,9 +32,24 @@ jobs:
           toolchain: stable
 
       - name: Install protoc
-        uses: arduino/setup-protoc@f4d5893b897028ff5739576ea0409746887fa536
-        with:
-          version: "29.3"
+        shell: bash
+        run: |
+          set -eux
+          case "${{ matrix.os }}" in
+            ubuntu-latest)
+              curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
+              sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
+              ;;
+            macos-latest)
+              curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-osx-universal_binary.zip
+              sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
+              ;;
+            windows-latest)
+              curl -fsSL -o "$RUNNER_TEMP/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip
+              unzip -o "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc" include/* bin/protoc.exe
+              echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+              ;;
+          esac
 
       - name: Install build deps (Linux)
         shell: bash
