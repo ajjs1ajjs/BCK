@@ -89,8 +89,17 @@ async fn list_own(
 
 async fn cancel_request(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
+    // Only the submitter (or an approver) may cancel a request — otherwise any
+    // authenticated user could cancel another user's pending restore.
+    let owned = state.restore_requests.get(&id).await
+        .map(|r| r.user_id == claims.sub || APPROVER_ROLES.contains(&claims.role.as_str()))
+        .unwrap_or(false);
+    if !owned {
+        return Err(StatusCode::FORBIDDEN);
+    }
     if state.restore_requests.cancel(&id).await.unwrap_or(false) {
         Ok(StatusCode::OK)
     } else {

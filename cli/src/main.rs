@@ -501,6 +501,19 @@ fn print_json(v: &Value) {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Credentials must not travel over plaintext HTTP to a remote host.
+    let is_loopback = cli.server.contains("127.0.0.1") || cli.server.contains("localhost");
+    if !cli.server.starts_with("https://") && !is_loopback {
+        eprintln!(
+            "WARNING: {server} is not HTTPS and not loopback; credentials would be sent in plaintext.",
+            server = cli.server
+        );
+        return Err(anyhow!(
+            "Refusing to send credentials over plaintext HTTP. Use https://{host} or terminate TLS at a reverse proxy.",
+            host = cli.server.trim_start_matches("http://")
+        ));
+    }
+
     let token = match cli.token.clone() {
         Some(t) => t,
         None => {

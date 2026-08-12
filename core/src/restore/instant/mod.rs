@@ -414,11 +414,14 @@ impl InstantRecoveryManager {
 }
 
 fn parse_listen_addr(listen_addr: &str, default_port: u16) -> Result<SocketAddr> {
+    // Default to loopback, never 0.0.0.0. Instant recovery serves unencrypted
+    // backup data; binding to every interface without an explicit operator
+    // override would expose it to the whole network.
     if listen_addr.is_empty() {
-        return Ok(SocketAddr::from(([0, 0, 0, 0], default_port)));
+        return Ok(SocketAddr::from(([127, 0, 0, 1], default_port)));
     }
     if let Ok(port) = listen_addr.parse::<u16>() {
-        return Ok(SocketAddr::from(([0, 0, 0, 0], port)));
+        return Ok(SocketAddr::from(([127, 0, 0, 1], port)));
     }
     if let Ok(addr) = listen_addr.parse::<SocketAddr>() {
         return Ok(addr);
@@ -431,8 +434,12 @@ fn parse_listen_addr(listen_addr: &str, default_port: u16) -> Result<SocketAddr>
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         Ok(SocketAddr::new(ip, port))
     } else {
-        // default to 0.0.0.0 for hostname
-        Ok(SocketAddr::from(([0, 0, 0, 0], port)))
+        // Refuse to wildcard for a hostname — the operator must supply an
+        // explicit IP to expose instant recovery to remote hypervisors.
+        anyhow::bail!(
+            "listen address host '{}' is not an IP; use an explicit IP to expose instant recovery remotely",
+            host
+        )
     }
 }
 
@@ -671,5 +678,17 @@ mod tests {
         assert!(mgr.list_sessions().await.is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parse_listen_addr_defaults_to_loopback_never_wildcard() {
+        assert_eq!(parse_listen_addr("", 2049).unwrap(), SocketAddr::from(([127, 0, 0, 1], 2049)));
+        assert_eq!(parse_listen_addr("", 3260).unwrap(), SocketAddr::from(([127, 0, 0, 1], 3260)));
+        assert_eq!(parse_listen_addr("2049", 2049).unwrap(), SocketAddr::from(([127, 0, 0, 1], 2049)));
+        // An explicit IP is honored.
+        assert_eq!(parse_listen_addr("0.0.0.0:2049", 2049).unwrap(), SocketAddr::from(([0, 0, 0, 0], 2049)));
+        // A hostname that cannot resolve to an explicit IP is rejected instead
+        // of silently wildcarding to all interfaces.
+        assert!(parse_listen_addr("my-nfs-host:2049", 2049).is_err());
     }
 }

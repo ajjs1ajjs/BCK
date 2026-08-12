@@ -79,7 +79,7 @@ async fn get_restore(
 async fn list_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<CloudAccount>> {
-    Json(state.cloud.list_accounts().await)
+    Json(state.cloud.list_accounts().await.iter().map(redact_account).collect())
 }
 
 async fn register_account(
@@ -91,7 +91,7 @@ async fn register_account(
             tracing::error!("register cloud account: {}", e);
             StatusCode::BAD_REQUEST
         })?;
-    Ok((StatusCode::CREATED, Json(account)))
+    Ok((StatusCode::CREATED, Json(redact_account(&account))))
 }
 
 async fn get_account(
@@ -99,8 +99,18 @@ async fn get_account(
     Path(id): Path<String>,
 ) -> Result<Json<CloudAccount>, StatusCode> {
     state.cloud.get_account(&id).await
-        .map(Json)
+        .map(|a| Json(redact_account(&a)))
         .ok_or(StatusCode::NOT_FOUND)
+}
+
+/// Never serialize cloud credentials to API responses. The struct is the
+/// persistence entity, so secrets are stripped before it leaves the server.
+fn redact_account(a: &CloudAccount) -> CloudAccount {
+    let mut c = a.clone();
+    c.secret_key = None;
+    c.session_token = None;
+    c.client_secret = None;
+    c
 }
 
 async fn remove_account(

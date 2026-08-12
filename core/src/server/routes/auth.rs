@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::auth::{User, UserRole, verify_password};
+use crate::auth::{User, UserRole, hash_password, verify_password};
 use crate::db::models::user::UserModel;
 use crate::db::DbPool;
 use crate::server::AppState;
@@ -23,31 +23,79 @@ pub struct LoginResponse {
     pub user: User,
 }
 
+/// Public router (login only).
 pub fn router() -> axum::Router<Arc<AppState>> {
-    axum::Router::new()
-        .route("/login", axum::routing::post(login))
-        .route("/me", axum::routing::get(me))
+    axum::Router::new().route("/login", axum::routing::post(login))
+}
+
+/// JWT-protected router (`/me` requires a validated token).
+pub fn protected_router() -> axum::Router<Arc<AppState>> {
+    axum::Router::new().route("/me", axum::routing::get(me))
+}
+
+// --- login rate limiting (in-memory, per-username) ---
+
+const MAX_FAILED_ATTEMPTS: usize = 10;
+const FAILURE_WINDOW_SECS: i64 = 300;
+
+/// Rolling window of failed-login timestamps per username.
+fn login_attempts() -> &'static dashmap::DashMap<String, Vec<i64>> {
+    static MAP: std::sync::OnceLock<dashmap::DashMap<String, Vec<i64>>> = std::sync::OnceLock::new();
+    MAP.get_or_init(dashmap::DashMap::new)
+}
+
+fn rate_limited(username: &str) -> bool {
+    let now = chrono::Utc::now().timestamp();
+    let mut entry = login_attempts().entry(username.to_lowercase()).or_default();
+    entry.retain(|&t| now - t < FAILURE_WINDOW_SECS);
+    entry.len() >= MAX_FAILED_ATTEMPTS
+}
+
+fn record_failure(username: &str) {
+    let now = chrono::Utc::now().timestamp();
+    login_attempts().entry(username.to_lowercase()).or_default().push(now);
+}
+
+/// A valid Argon2 hash of a throwaway password, used to equalize the cost of a
+/// login attempt against an unknown username (prevents timing-based username
+/// enumeration).
+fn dummy_hash() -> &'static str {
+    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DUMMY.get_or_init(|| hash_password("bck-dummy-timing-equalizer"))
 }
 
 async fn login(
     State(state): State<Arc<AppState>>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, StatusCode> {
+    if rate_limited(&req.username) {
+        tracing::warn!("login rate limit hit for user {}", req.username);
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
     let user = find_user(&state.db, &req.username).await;
 
-    let user_model = match user {
+    // Unknown users still pay for a full Argon2 verification against a dummy
+    // hash so response timing does not reveal whether a username exists.
+    let (user_model, hash, enabled) = match user {
         Ok(Some(u)) => {
-            if !verify_password(&req.password, &u.password_hash) {
-                return Err(StatusCode::UNAUTHORIZED);
-            }
-            if !u.enabled {
-                return Err(StatusCode::FORBIDDEN);
-            }
-            u
+            let enabled = u.enabled;
+            let hash = u.password_hash.clone();
+            (Some(u), hash, enabled)
         }
-        // No auto-provisioning of a default admin here anymore. The daemon
-        // seeds a generated password on first start (see bckd main.rs).
-        _ => return Err(StatusCode::UNAUTHORIZED),
+        _ => (None, dummy_hash().to_string(), false),
+    };
+
+    if !verify_password(&req.password, &hash) {
+        record_failure(&req.username);
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let user_model = match user_model {
+        Some(u) if enabled => u,
+        _ => {
+            record_failure(&req.username);
+            return Err(StatusCode::FORBIDDEN);
+        }
     };
 
     let user = User {

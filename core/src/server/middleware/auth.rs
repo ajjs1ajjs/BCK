@@ -53,8 +53,47 @@ pub async fn auth_middleware(
 
     let claims: Claims = state.jwt.validate(token).map_err(|_| StatusCode::UNAUTHORIZED)?;
 
-    // Reads are allowed for any authenticated user.
+    // Reads are allowed for any authenticated user EXCEPT on sensitive surfaces
+    // that expose backup data, infrastructure details or credentials. Those are
+    // gated by role just like mutations.
     if matches!(req.method(), &Method::GET | &Method::HEAD | &Method::OPTIONS) {
+        let role = claims.role.as_str();
+        let path = req.uri().path();
+
+        // Restore data-plane reads (file download / browse, instant recovery,
+        // surebackup) and audit/events require restore capability.
+        if path.contains("/restore/explore")
+            || path.contains("/restore/instant")
+            || path.contains("/restore/surebackup")
+            || path.contains("/events")
+        {
+            if !can_restore(role) {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+
+        // Cloud / M365 configs are sensitive (they used to serialize secrets);
+        // keep them behind a restore-capable role.
+        if path.contains("/cloud") || path.contains("/m365") {
+            if !can_restore(role) {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+
+        // Agent metadata and task payloads may contain encryption material.
+        if path.contains("/agents") {
+            if !can_mutate(role) {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+
+        // Tenancy, admin portal and SSO provider management are admin-only.
+        if path.contains("/tenants") || path.contains("/portal/admin") || path.contains("/auth/sso/providers") {
+            if !is_admin(role) {
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+
         req.extensions_mut().insert(claims);
         return Ok(next.run(req).await);
     }

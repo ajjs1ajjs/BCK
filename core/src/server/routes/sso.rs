@@ -102,7 +102,7 @@ async fn register_provider(
 ) -> Result<Json<SsoProvider>, StatusCode> {
     let provider = sso(&state).register_provider(provider).await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-    Ok(Json(provider))
+    Ok(Json(redact_provider(&provider)))
 }
 
 async fn add_ldap(
@@ -114,5 +114,12 @@ async fn add_ldap(
 }
 
 async fn list_providers(State(state): State<Arc<AppState>>) -> Json<Vec<SsoProvider>> {
-    Json(sso(&state).list_providers().await)
+    Json(sso(&state).list_providers().await.iter().map(redact_provider).collect())
+}
+
+/// Never expose the IdP client secret through the API.
+fn redact_provider(p: &SsoProvider) -> SsoProvider {
+    let mut c = p.clone();
+    c.encrypted_client_secret.clear();
+    c
 }

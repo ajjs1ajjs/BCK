@@ -134,9 +134,16 @@ async fn cloud_accounts_crud() {
     assert_eq!(resp.status(), StatusCode::OK);
     let accounts: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(accounts.len(), 1);
+    // Credentials must never be serialized back through the API.
+    assert!(accounts[0]["secret_key"].is_null(), "secret_key must be redacted");
+    assert!(accounts[0]["session_token"].is_null(), "session_token must be redacted");
+    let raw = accounts[0].to_string();
+    assert!(!raw.contains("\"secret\""), "raw secret value must not leak in list");
 
     let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
     assert_eq!(resp.status(), StatusCode::OK);
+    let single: serde_json::Value = read_json(resp).await;
+    assert!(single["secret_key"].is_null(), "get_account must redact secret_key");
 
     let resp = oneshot(app.clone(), "DELETE", &format!("/{}", id), None).await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
@@ -223,6 +230,11 @@ async fn m365_tenant_and_job() {
     assert_eq!(resp.status(), StatusCode::OK);
     let tenants: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(tenants.len(), 1);
+    // The client secret must never be echoed back through the API.
+    assert!(
+        tenants[0]["encrypted_secret"].as_str().map_or(true, |s| s.is_empty()),
+        "M365 client secret must be redacted"
+    );
 
     // Starting a job for a missing tenant is rejected.
     let resp = oneshot(app.clone(), "POST", "/jobs", Some(
@@ -564,6 +576,59 @@ async fn portal_restore_request_lifecycle() {
 }
 
 #[tokio::test]
+async fn portal_cancel_requires_ownership() {
+    let state = test_state(&format!("{}\\portal-idor.db", temp_dir("portal-idor"))).await;
+    let app = portal::router().with_state(state.clone());
+
+    let victim = Claims {
+        sub: "user-victim".into(),
+        username: "victim".into(),
+        role: "operator".into(),
+        exp: usize::MAX,
+        iat: 0,
+    };
+    let attacker = Claims {
+        sub: "user-attacker".into(),
+        username: "attacker".into(),
+        role: "viewer".into(),
+        exp: usize::MAX,
+        iat: 0,
+    };
+
+    // Victim submits a restore request.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        "/restore-requests",
+        Some(r#"{"snapshot_id":"snap-v","files":[],"target_path":"/tmp/r"}"#),
+        &victim,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let req: serde_json::Value = read_json(resp).await;
+    let id = req["id"].as_str().unwrap().to_string();
+
+    // A different user cannot cancel it (IDOR / BOLA).
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/restore-requests/{}/cancel", id),
+        None,
+        &attacker,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // The owner can cancel it.
+    let resp = oneshot_with_claims(
+        app.clone(),
+        "POST",
+        &format!("/restore-requests/{}/cancel", id),
+        None,
+        &victim,
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn hypervisor_instant_recovery_routes() {
     use crate::server::routes::{hypervisors, restore};
 
@@ -649,6 +714,62 @@ async fn oneshot_auth(
     }
     let body = body.map(|s| Body::from(s.to_string())).unwrap_or_else(Body::empty);
     app.oneshot(builder.body(body).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn agent_task_creation_enforces_allowlist_and_registered_agent() {
+    let state = test_state(&format!("{}\\agent-tasks.db", temp_dir("agent-tasks"))).await;
+    let app = crate::server::routes::api_routes(state.clone());
+    let admin = jwt_for(&state, crate::auth::UserRole::Admin);
+
+    // Register an agent via heartbeat (agent token).
+    let hb = r#"{"agent_id":"agent-ok","hostname":"test"}"#;
+    let resp = oneshot_auth(app.clone(), "POST", "/agents/heartbeat", Some(hb), "Bearer test-agent-token").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Unknown agent -> task rejected.
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/agents/ghost/tasks",
+        Some(r#"{"task_type":"file_backup","payload":{}}"#),
+        &format!("Bearer {admin}"),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "task for unknown agent must be rejected");
+
+    // Disallowed / dangerous task type -> rejected.
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/agents/agent-ok/tasks",
+        Some(r#"{"task_type":"run_script","payload":{"script":"x"}}"#),
+        &format!("Bearer {admin}"),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "run_script task type must be rejected");
+
+    // Allowed task type on a registered agent -> accepted.
+    let resp = oneshot_auth(
+        app.clone(),
+        "POST",
+        "/agents/agent-ok/tasks",
+        Some(r#"{"task_type":"file_backup","payload":{"paths":["/tmp"]}}"#),
+        &format!("Bearer {admin}"),
+    ).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn login_rate_limits_after_repeated_failures() {
+    let state = test_state(&format!("{}\\login-rate.db", temp_dir("login-rate"))).await;
+    let app = crate::server::routes::api_routes(state.clone());
+
+    let body = r#"{"username":"rate-user","password":"wrong"}"#;
+    for _ in 0..10 {
+        let resp = oneshot(app.clone(), "POST", "/auth/login", Some(body)).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+    let resp = oneshot(app.clone(), "POST", "/auth/login", Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS, "login must be rate limited");
 }
 
 // --- RBAC ---

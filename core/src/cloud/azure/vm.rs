@@ -215,6 +215,9 @@ impl AzureVmBackup {
             .map(|s| s.to_string())
             .unwrap_or_else(|| disks_url.split('?').next().unwrap_or(&disks_url).to_string());
 
+        // Generate a fresh, cryptographically random admin password per restore.
+        // Never reuse a static credential across restored VMs.
+        let admin_password = crate::auth::generate_random_password(20);
         let vm_url = format!(
             "https://management.azure.com/subscriptions/{}/resourceGroups/{}/providers/Microsoft.Compute/virtualMachines/{new_vm_name}?api-version={API_VERSION}",
             self.subscription_id, self.resource_group
@@ -226,7 +229,7 @@ impl AzureVmBackup {
                 "osProfile": {
                     "computerName": new_vm_name,
                     "adminUsername": "bckadmin",
-                    "adminPassword": "BCK!Admin123"
+                    "adminPassword": admin_password
                 },
                 "storageProfile": {
                     "osDisk": {
@@ -237,7 +240,10 @@ impl AzureVmBackup {
                 }
             }
         });
-        info!("Creating restored VM {new_vm_name} from disk {new_disk_id}");
+        info!(
+            "Restored VM {new_vm_name}: admin user 'bckadmin', temporary password {}",
+            admin_password
+        );
         let resp = self
             .client
             .put(&vm_url)

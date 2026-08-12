@@ -384,7 +384,7 @@ impl BackupEngine for BackupEngineImpl {
                     &cfg.snapshot_id,
                     &if cfg.vm_name.is_empty() { "instant".into() } else { cfg.vm_name.clone() },
                     "",
-                    "0.0.0.0:2049",
+                    "",
                 ).await.ok(),
                 None => None,
             };
@@ -907,11 +907,15 @@ impl AgentService {
 }
 
 async fn upsert_agent(state: &AppState, hb: &PbHeartbeatRequest) -> Result<String, Status> {
-    let id = if hb.agent_id.is_empty() {
-        uuid::Uuid::new_v4().to_string()
-    } else {
-        hb.agent_id.clone()
-    };
+    // Only accept well-formed, non-empty agent ids so the table cannot be
+    // spammed with arbitrary garbage rows by a token holder.
+    if hb.agent_id.is_empty() || hb.agent_id.len() > 128 {
+        return Err(Status::invalid_argument("agent_id must be 1..128 chars"));
+    }
+    if !hb.agent_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err(Status::invalid_argument("agent_id has invalid characters"));
+    }
+    let id = hb.agent_id.clone();
     let now = chrono::Utc::now().timestamp();
     let capabilities = serde_json::to_string(&hb.capabilities)
         .unwrap_or_else(|_| "[]".into());
@@ -977,8 +981,14 @@ async fn upsert_agent(state: &AppState, hb: &PbHeartbeatRequest) -> Result<Strin
     Ok(id)
 }
 
-/// Insert a task into `agent_tasks` and return its id.
+/// Insert a task into `agent_tasks` and return its id. Only allowlisted task
+/// types may be queued — the server never dispatches arbitrary command
+/// execution (run_script / update) through the task queue.
 async fn insert_agent_task(state: &AppState, agent_id: &str, task_type: &str, payload: serde_json::Value) -> Result<String, Status> {
+    const ALLOWED_TASK_TYPES: [&str; 4] = ["file_backup", "sql_backup", "discover", "heartbeat_ack"];
+    if !ALLOWED_TASK_TYPES.contains(&task_type) {
+        return Err(Status::invalid_argument(format!("unsupported task type: {task_type}")));
+    }
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let payload = payload.to_string();
@@ -1123,21 +1133,13 @@ impl Agent for AgentService {
         request: Request<PbScriptRequest>,
     ) -> Result<Response<PbScriptResult>, Status> {
         let req = request.into_inner();
-        info!("gRPC agent execute_script: agent={} interpreter={}", req.agent_id, req.interpreter);
-
-        let _task_id = insert_agent_task(&self.state, &req.agent_id, "run_script", serde_json::json!({
-            "interpreter": req.interpreter,
-            "timeout": req.timeout,
-            "script": req.script_content,
-        })).await?;
-
-        // The script runs asynchronously on the agent; report it as queued.
-        Ok(Response::new(PbScriptResult {
-            exit_code: 0,
-            stdout: format!("script queued as task {}", _task_id),
-            stderr: String::new(),
-            timed_out: false,
-        }))
+        // Remote script execution is disabled by default: the task queue must
+        // never dispatch arbitrary command execution to protected machines.
+        warn!(
+            "gRPC execute_script rejected (disabled): agent={} interpreter={}",
+            req.agent_id, req.interpreter
+        );
+        Err(Status::unimplemented("remote script execution is disabled"))
     }
 
     async fn get_status(
@@ -1169,24 +1171,13 @@ impl Agent for AgentService {
         request: Request<PbUpdateRequest>,
     ) -> Result<Response<Self::UpdateAgentStream>, Status> {
         let req = request.into_inner();
-        info!("gRPC agent update_agent: agent={} target={}", req.agent_id, req.target_version);
-
-        let _ = insert_agent_task(&self.state, &req.agent_id, "update", serde_json::json!({
-            "target_version": req.target_version,
-            "package_url": req.package_url,
-            "checksum": hex::encode(&req.package_checksum),
-        })).await?;
-
-        let (tx, rx) = mpsc::channel(8);
-        tokio::spawn(async move {
-            let _ = tx.send(Ok(UpdateProgress {
-                progress_pct: 0.0,
-                phase: "queued".into(),
-                status: "queued".into(),
-                ..Default::default()
-            })).await;
-        });
-        Ok(Response::new(Box::pin(ReceiverStream::new(rx))))
+        // Agent update dispatch is disabled: it would install an unsigned
+        // package fetched from a caller-supplied URL (supply-chain risk).
+        warn!(
+            "gRPC update_agent rejected (disabled): agent={} target={}",
+            req.agent_id, req.target_version
+        );
+        Err(Status::unimplemented("agent update dispatch is disabled"))
     }
 }
 
@@ -1427,14 +1418,15 @@ mod tests {
         };
         assert_eq!(count, 1);
 
-        // ExecuteScript also queues a task.
-        let script = svc.execute_script(Request::new(PbScriptRequest {
+        // ExecuteScript is disabled (fail-closed): remote script execution is
+        // not dispatched through the task queue.
+        let err = svc.execute_script(Request::new(PbScriptRequest {
             agent_id: "agent-1".into(),
             script_content: "echo hi".into(),
             interpreter: "bash".into(),
             timeout: 30,
-        })).await.unwrap().into_inner();
-        assert!(script.stdout.contains("queued"));
+        })).await.err().expect("execute_script must be rejected");
+        assert_eq!(err.code(), tonic::Code::Unimplemented);
     }
 
     #[tokio::test]

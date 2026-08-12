@@ -61,6 +61,11 @@ pub struct CreateAgentTaskRequest {
     pub payload: serde_json::Value,
 }
 
+/// Task types the server will hand to an agent. Everything else is rejected so
+/// an operator (or a compromised operator session) cannot make agents run
+/// arbitrary commands through the management API.
+const ALLOWED_TASK_TYPES: [&str; 4] = ["file_backup", "sql_backup", "discover", "heartbeat_ack"];
+
 #[derive(Serialize)]
 pub struct AgentTaskResponse {
     pub id: String,
@@ -78,6 +83,16 @@ pub async fn create_agent_task(
     Path(id): Path<String>,
     Json(req): Json<CreateAgentTaskRequest>,
 ) -> Result<Json<AgentTaskResponse>, StatusCode> {
+    if !ALLOWED_TASK_TYPES.contains(&req.task_type.as_str()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    // Only accept tasks for agents the server has seen (heartbeated) before.
+    if !fetch_agents(&state.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .iter().any(|a| a.id == id)
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     let payload = req.payload.to_string();
@@ -296,8 +311,21 @@ async fn list_agent_tasks(
         .map_err(|e| {
             tracing::error!("list agent tasks: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        })?
+        .into_iter()
+        .map(redact_task_secrets)
+        .collect();
     Ok(Json(tasks))
+}
+
+/// Remove encryption material from task payloads before returning them to
+/// management API consumers (agents fetch the full payload via the gated
+/// `/tasks/pending` polling endpoint).
+fn redact_task_secrets(mut t: AgentTaskResponse) -> AgentTaskResponse {
+    if let Some(payload) = t.payload.as_object_mut() {
+        payload.remove("encryption_key");
+    }
+    t
 }
 
 async fn fetch_agent_tasks(db: &DbPool, agent_id: &str) -> anyhow::Result<Vec<AgentTaskResponse>> {
@@ -364,6 +392,11 @@ pub async fn heartbeat(
 ) -> StatusCode {
     let id = req.agent_id.clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    if id.is_empty() || id.len() > 128
+        || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return StatusCode::BAD_REQUEST;
+    }
     let now = chrono::Utc::now().timestamp();
     let capabilities = req.capabilities.clone()
         .map(|caps| serde_json::to_string(&caps).unwrap_or_else(|_| "[]".into()))

@@ -11,8 +11,8 @@ import { authApi, saveAuth } from '../api/client'
 
 export default function Login() {
   const navigate = useNavigate()
-  const [username, setUsername] = useState('admin')
-  const [password, setPassword] = useState('admin')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,7 +26,7 @@ export default function Login() {
       saveAuth(data.token, data.user)
       navigate('/dashboard', { replace: true })
     } catch {
-      setError('Invalid credentials. Default: admin / admin')
+      setError('Invalid credentials. Use the credentials provided by your administrator.')
     } finally {
       setLoading(false)
     }
@@ -92,7 +92,7 @@ export default function Login() {
             </Box>
 
             <Typography variant="caption" color="text.secondary" textAlign="center">
-              First login auto-provisions admin · admin / admin
+              Use the credentials provided by your administrator
             </Typography>
           </Stack>
         </CardContent>

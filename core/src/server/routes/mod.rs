@@ -58,6 +58,7 @@ pub fn protected_api_routes(state: Arc<AppState>) -> Router {
         .nest("/hypervisors", hypervisors::router())
         .nest("/events", events::router())
         .nest("/agents", agents::router())
+        .nest("/auth", auth::protected_router())
         .nest("/auth/sso", sso::protected_router())
         .nest("/sobr", sobr::router())
         .nest("/cloud", cloud::router())

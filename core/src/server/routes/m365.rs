@@ -18,7 +18,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 async fn list_tenants(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<M365Tenant>> {
-    Json(state.m365.list_tenants().await)
+    Json(state.m365.list_tenants().await.iter().map(redact_tenant).collect())
 }
 
 async fn register_tenant(
@@ -30,7 +30,15 @@ async fn register_tenant(
             tracing::error!("register M365 tenant: {}", e);
             StatusCode::BAD_REQUEST
         })?;
-    Ok((StatusCode::CREATED, Json(tenant)))
+    Ok((StatusCode::CREATED, Json(redact_tenant(&tenant))))
+}
+
+/// Strip the client secret from API responses — it is a credential and must
+/// never be echoed back through the management API.
+fn redact_tenant(t: &M365Tenant) -> M365Tenant {
+    let mut c = t.clone();
+    c.encrypted_secret.clear();
+    c
 }
 
 async fn list_jobs(

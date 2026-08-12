@@ -1,0 +1,11 @@
+target
+web-ui/node_modules
+web-ui/dist
+data
+*.db
+*.db-journal
+.env
+.env.*
+.git
+.idea
+.vscode

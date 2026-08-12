@@ -60,6 +60,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // Serve the built web UI (SPA) if a directory is configured and exists.
     let mut router = Router::new()
         .nest("/api/v1", api)
+        .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
         .layer(cors);
@@ -73,6 +74,25 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     }
 
     router
+}
+
+/// Adds baseline security headers to every response (CSP, nosniff, frame
+/// protection, referrer policy). Defense in depth against XSS/clickjacking.
+async fn security_headers(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static(
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+             img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; \
+             base-uri 'self'",
+        ),
+    );
+    headers.insert(axum::http::header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff"));
+    headers.insert(axum::http::header::X_FRAME_OPTIONS, axum::http::HeaderValue::from_static("DENY"));
+    headers.insert(axum::http::header::REFERRER_POLICY, axum::http::HeaderValue::from_static("same-origin"));
+    response
 }
 
 fn cors_layer(allowed: &[String]) -> CorsLayer {

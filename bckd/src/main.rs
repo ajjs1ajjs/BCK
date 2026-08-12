@@ -280,14 +280,58 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
     use bck_core::api::grpc::{
         BackupEngineImpl, SobrServiceService, CloudServiceService, M365ServiceService, AgentService,
     };
+    use tonic::service::interceptor::InterceptedService;
     use tonic::transport::Server;
+    use tonic::{Request, Status};
+
+    // Every gRPC method requires the pre-shared agent token (`Authorization:
+    // Bearer <token>`), exactly like the REST agent endpoints. Without a token
+    // the services fail closed. Tokens are compared in constant time.
+    let token = state.agent_token.clone();
+    let require_token = move |req: Request<()>| {
+        let expected = token.as_deref().ok_or_else(|| {
+            Status::unauthenticated("agent token not configured; refusing to serve gRPC")
+        })?;
+        let provided = req
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .ok_or_else(|| Status::unauthenticated("missing agent token"))?;
+        if provided.as_bytes().len() == expected.as_bytes().len()
+            && provided
+                .as_bytes()
+                .iter()
+                .zip(expected.as_bytes())
+                .all(|(a, b)| a == b)
+        {
+            Ok(req)
+        } else {
+            Err(Status::unauthenticated("invalid agent token"))
+        }
+    };
 
     Server::builder()
-        .add_service(BackupEngineServer::new(BackupEngineImpl::new(state.clone())))
-        .add_service(SobrServiceServer::new(SobrServiceService::new(state.clone())))
-        .add_service(CloudServiceServer::new(CloudServiceService::new(state.clone())))
-        .add_service(M365ServiceServer::new(M365ServiceService::new(state.clone())))
-        .add_service(AgentServer::new(AgentService::new(state.clone())))
+        .add_service(InterceptedService::new(
+            BackupEngineServer::new(BackupEngineImpl::new(state.clone())),
+            require_token.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            SobrServiceServer::new(SobrServiceService::new(state.clone())),
+            require_token.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            CloudServiceServer::new(CloudServiceService::new(state.clone())),
+            require_token.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            M365ServiceServer::new(M365ServiceService::new(state.clone())),
+            require_token.clone(),
+        ))
+        .add_service(InterceptedService::new(
+            AgentServer::new(AgentService::new(state.clone())),
+            require_token,
+        ))
         .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
         .await?;
 
