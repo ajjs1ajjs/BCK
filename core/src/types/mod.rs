@@ -188,3 +188,26 @@ impl From<EventModel> for EventInfo {
         }
     }
 }
+
+/// True for addresses a server-side outbound request should never be allowed to
+/// reach (SSRF guard): loopback, private, link-local (incl. cloud metadata
+/// 169.254.x.x), unspecified and multicast.
+pub fn is_private_or_blocked_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || v6.is_unique_local()
+                || v6.is_unicast_link_local()
+        }
+    }
+}

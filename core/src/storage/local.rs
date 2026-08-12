@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use sha2::{Digest, Sha256};
 
 use super::{StorageBackend, StorageStats};
@@ -33,7 +34,16 @@ impl StorageBackend for LocalStorage {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }
-        fs::write(&path, data).await?;
+        // Atomic write: write to a temp file, fsync, then rename. A crash in
+        // the middle can no longer leave a truncated block that a later backup
+        // would treat as a valid dedup match.
+        let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), id.len()));
+        {
+            let mut f = fs::File::create(&tmp).await?;
+            f.write_all(data).await?;
+            f.sync_all().await?;
+        }
+        fs::rename(&tmp, &path).await?;
         Ok(())
     }
 

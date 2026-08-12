@@ -74,15 +74,22 @@ fn collect_entries(
             .to_string_lossy()
             .to_string();
 
-        if path.is_dir() {
+        // Use symlink_metadata so symlinks are never followed: a symlink to a
+        // directory outside the source would otherwise (a) pull foreign data
+        // into the backup and (b) create an infinite loop on symlink cycles.
+        let meta = std::fs::symlink_metadata(&path)?;
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            continue;
+        }
+        if ft.is_dir() {
             dirs.push(relative);
             collect_entries(root, &path, entries, dirs)?;
-        } else if path.is_file() {
-            let metadata = std::fs::metadata(&path)?;
+        } else if ft.is_file() {
             let fmeta = FileMetadata {
                 path: path.to_string_lossy().to_string(),
-                size: metadata.len(),
-                modified_time: metadata.modified()
+                size: meta.len(),
+                modified_time: meta.modified()
                     .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64)
                     .unwrap_or(0),
                 mode: 0,

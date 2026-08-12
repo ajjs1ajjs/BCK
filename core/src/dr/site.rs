@@ -26,6 +26,7 @@ impl SiteConnector {
     /// with a health path), with a 5s timeout.
     pub async fn test_connection(&self, endpoint: &str) -> Result<bool> {
         let endpoint = normalize_endpoint(endpoint);
+        validate_endpoint(&endpoint)?;
         let health_url = if endpoint.ends_with("/api/v1/health") {
             endpoint
         } else {
@@ -63,15 +64,50 @@ impl SiteConnector {
     }
 }
 
-/// Normalize a site endpoint: prepend `http://` when no scheme is present and
+/// Normalize a site endpoint: prepend `https://` when no scheme is present and
 /// trim any trailing `/`.
 pub fn normalize_endpoint(endpoint: &str) -> String {
     let trimmed = endpoint.trim().trim_end_matches('/');
     if trimmed.contains("://") {
         trimmed.to_string()
     } else {
-        format!("http://{}", trimmed)
+        format!("https://{}", trimmed)
     }
+}
+
+/// Reject DR-site endpoints that would let the daemon be used for SSRF:
+/// loopback / link-local / metadata / unspecified addresses, or non-http(s)
+/// schemes. RFC1918 private ranges stay allowed (a DR site commonly lives on
+/// the LAN).
+fn validate_endpoint(endpoint: &str) -> Result<()> {
+    let u = reqwest::Url::parse(endpoint)
+        .map_err(|_| anyhow!("invalid DR site endpoint: {endpoint}"))?;
+    match u.scheme() {
+        "http" | "https" => {}
+        other => anyhow::bail!("unsupported DR site endpoint scheme: {other}"),
+    }
+    if let Some(host) = u.host_str() {
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let bad = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback()
+                        || v4.is_unspecified()
+                        || v4.is_link_local()
+                        || v4.is_multicast()
+                        || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+                }
+                std::net::IpAddr::V6(v6) => {
+                    v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() || v6.is_unicast_link_local()
+                }
+            };
+            if bad {
+                anyhow::bail!(
+                    "DR site endpoint must not point to a loopback/link-local address: {endpoint}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -79,8 +115,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_endpoint_adds_http_scheme() {
-        assert_eq!(normalize_endpoint("dr.example.com"), "http://dr.example.com");
+    fn normalize_endpoint_adds_https_scheme() {
+        assert_eq!(normalize_endpoint("dr.example.com"), "https://dr.example.com");
     }
 
     #[test]
@@ -93,10 +129,19 @@ mod tests {
 
     #[test]
     fn normalize_endpoint_trims_trailing_slash() {
-        assert_eq!(normalize_endpoint("dr.example.com/"), "http://dr.example.com");
+        assert_eq!(normalize_endpoint("dr.example.com/"), "https://dr.example.com");
         assert_eq!(
             normalize_endpoint("https://dr.example.com///"),
             "https://dr.example.com"
         );
+    }
+
+    #[test]
+    fn validate_endpoint_rejects_metadata_and_loopback() {
+        assert!(validate_endpoint("http://169.254.169.254").is_err());
+        assert!(validate_endpoint("http://127.0.0.1:9440").is_err());
+        assert!(validate_endpoint("gopher://dr.example.com").is_err());
+        // Private LAN endpoints are the legitimate DR use case.
+        assert!(validate_endpoint("http://192.168.1.20:9440").is_ok());
     }
 }

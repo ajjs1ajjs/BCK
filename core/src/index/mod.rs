@@ -13,6 +13,12 @@ impl BlockIndex {
     pub fn new(path: &str) -> Result<Self> {
         let db_path = Path::new(path).join("index.db");
         let conn = Connection::open(&db_path)?;
+        // WAL + busy timeout let parallel backup jobs share one index without
+        // random "database is locked" failures.
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS blocks (
@@ -134,27 +140,25 @@ impl BlockIndex {
              FROM snapshots ORDER BY created_at DESC",
         )?;
 
-        let snapshots = stmt.query_map([], |row| {
-            Ok(Snapshot {
-                id: row.get(0)?,
-                job_id: row.get(1)?,
-                repository_id: row.get(2)?,
-                snapshot_type: crate::types::SnapshotType::Full, // simplified
-                parent_id: row.get(4)?,
-                size_bytes: row.get(5)?,
-                unique_bytes: row.get(6)?,
-                compressed_bytes: row.get(7)?,
-                checksum: row.get(8)?,
-                consistency: crate::types::ConsistencyLevel::Consistent,
-                app_consistent: false,
-                created_at: row.get(9)?,
-                manifest_path: row.get(10)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+        let rows = stmt.query_map([], row_to_snapshot)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
+    }
 
-        Ok(snapshots)
+    /// Fetch a single snapshot by id (never by an empty job filter).
+    pub fn get_snapshot_by_id(&self, snapshot_id: &str) -> Result<Option<Snapshot>> {
+        let conn = self.db.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT id, job_id, repository_id, snapshot_type, parent_id, size_bytes,
+             unique_bytes, compressed_bytes, checksum, created_at, manifest_path
+             FROM snapshots WHERE id = ?1",
+            [snapshot_id],
+            row_to_snapshot,
+        );
+        match result {
+            Ok(s) => Ok(Some(s)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Backdate (or re-stamp) a snapshot's creation time, e.g. when importing
@@ -186,27 +190,8 @@ impl BlockIndex {
              ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         )?;
 
-        let snapshots = stmt.query_map(rusqlite::params![job_id, limit, offset], |row| {
-            Ok(Snapshot {
-                id: row.get(0)?,
-                job_id: row.get(1)?,
-                repository_id: row.get(2)?,
-                snapshot_type: crate::types::SnapshotType::Full, // simplified
-                parent_id: row.get(4)?,
-                size_bytes: row.get(5)?,
-                unique_bytes: row.get(6)?,
-                compressed_bytes: row.get(7)?,
-                checksum: row.get(8)?,
-                consistency: crate::types::ConsistencyLevel::Consistent,
-                app_consistent: false,
-                created_at: row.get(9)?,
-                manifest_path: row.get(10)?,
-            })
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
-
-        Ok(snapshots)
+        let rows = stmt.query_map(rusqlite::params![job_id, limit, offset], row_to_snapshot)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn save_manifest(&self, snapshot_id: &str, manifest: &BackupManifest) -> Result<()> {
@@ -253,4 +238,33 @@ impl BlockIndex {
         )?;
         Ok((total_refs as u64, unique as u64, total_size as u64))
     }
+}
+
+/// Parse the persisted lowercase snapshot-type string back into the enum.
+fn parse_snapshot_type(s: &str) -> crate::types::SnapshotType {
+    match s {
+        "incremental" => crate::types::SnapshotType::Incremental,
+        "differential" => crate::types::SnapshotType::Differential,
+        "syntheticfull" => crate::types::SnapshotType::SyntheticFull,
+        _ => crate::types::SnapshotType::Full,
+    }
+}
+
+fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snapshot> {
+    let snapshot_type: String = row.get(3)?;
+    Ok(Snapshot {
+        id: row.get(0)?,
+        job_id: row.get(1)?,
+        repository_id: row.get(2)?,
+        snapshot_type: parse_snapshot_type(&snapshot_type),
+        parent_id: row.get(4)?,
+        size_bytes: row.get(5)?,
+        unique_bytes: row.get(6)?,
+        compressed_bytes: row.get(7)?,
+        checksum: row.get(8)?,
+        consistency: crate::types::ConsistencyLevel::Consistent,
+        app_consistent: false,
+        created_at: row.get(9)?,
+        manifest_path: row.get(10)?,
+    })
 }

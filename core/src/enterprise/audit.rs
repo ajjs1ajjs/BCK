@@ -87,15 +87,25 @@ impl AuditLogger {
 
     pub async fn query(
         &self,
-        _user_id: Option<&str>,
-        _action: Option<&str>,
-        _resource_type: Option<&str>,
-        _from: Option<i64>,
-        _to: Option<i64>,
-        _limit: usize,
+        user_id: Option<&str>,
+        action: Option<&str>,
+        resource_type: Option<&str>,
+        from: Option<i64>,
+        to: Option<i64>,
+        limit: usize,
     ) -> Vec<AuditEvent> {
         let events = self.events.read().await;
-        events.iter().rev().take(_limit).cloned().collect()
+        events
+            .iter()
+            .rev()
+            .filter(|e| user_id.map_or(true, |u| e.user_id == u))
+            .filter(|e| action.map_or(true, |a| e.action == a))
+            .filter(|e| resource_type.map_or(true, |r| e.resource_type == r))
+            .filter(|e| from.map_or(true, |f| e.timestamp >= f))
+            .filter(|e| to.map_or(true, |t| e.timestamp <= t))
+            .take(limit)
+            .cloned()
+            .collect()
     }
 
     pub async fn log_access(
@@ -143,11 +153,15 @@ impl AuditLogger {
         }).await
     }
 
-    pub async fn export(&self, _from: i64, _to: i64, format: &str) -> Result<Vec<u8>> {
+    pub async fn export(&self, from: i64, to: i64, format: &str) -> Result<Vec<u8>> {
         let events = self.events.read().await;
+        let filtered: Vec<&AuditEvent> = events
+            .iter()
+            .filter(|e| e.timestamp >= from && e.timestamp <= to)
+            .collect();
         match format {
-            "json" => Ok(serde_json::to_vec_pretty(&*events)?),
-            _ => Ok(serde_json::to_vec(&*events)?),
+            "json" => Ok(serde_json::to_vec_pretty(&filtered)?),
+            _ => Ok(serde_json::to_vec(&filtered)?),
         }
     }
 

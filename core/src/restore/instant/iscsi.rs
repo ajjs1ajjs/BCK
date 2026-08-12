@@ -297,6 +297,14 @@ impl IscsiTarget {
         if blocks == 0 {
             return vec![self.scsi_response(itt, 0x00, 0x00)];
         }
+        // Cap a single SCSI READ so a hostile initiator cannot force a ~4 GiB
+        // allocation (memory-exhaustion DoS).
+        const MAX_READ_BYTES: u64 = 1024 * 1024;
+        let max_blocks = (MAX_READ_BYTES / (self.block_size as u64).max(1)) as u32;
+        if blocks > max_blocks {
+            warn!("iSCSI read too large: {} blocks", blocks);
+            return vec![self.scsi_response(itt, 0x02, 0x05)];
+        }
         let len = (blocks as u64) * (self.block_size as u64);
         if len > u32::MAX as u64 {
             warn!("iSCSI read too large: {} blocks", blocks);

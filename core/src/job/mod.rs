@@ -512,33 +512,62 @@ impl JobManager {
         })
     }
 
+    /// Mark sessions that were still "running" when the daemon restarted as
+    /// failed, and drop stale in-memory runtimes. Without this the UI would
+    /// show permanent "running" jobs that can never finish.
+    pub async fn reconcile_startup(&self) {
+        match &self.db {
+            DbPool::Sqlite(pool) => {
+                let _ = sqlx::query(
+                    "UPDATE job_sessions SET status = 'failed', error_message = 'interrupted by daemon restart'
+                     WHERE status = 'running'",
+                )
+                .execute(pool)
+                .await;
+            }
+            DbPool::Postgres(pool) => {
+                let _ = sqlx::query(
+                    "UPDATE job_sessions SET status = 'failed', error_message = 'interrupted by daemon restart'
+                     WHERE status = 'running'",
+                )
+                .execute(pool)
+                .await;
+            }
+        }
+        self.runtimes.write().await.clear();
+        self.cancels.write().await.clear();
+    }
+
     /// Start a backup job. Runs the real backup pipeline in the background and
     /// records the resulting snapshot in the database.
     pub async fn start_job(&self, id: &str) -> Result<()> {
         let job = self.load_job(id).await?
             .ok_or_else(|| anyhow::anyhow!("Job not found: {}", id))?;
 
+        // Check-and-insert under a single write lock so two concurrent callers
+        // cannot start the same job twice (TOCTOU).
         {
-            let runtimes = self.runtimes.read().await;
+            let mut runtimes = self.runtimes.write().await;
             if let Some(rt) = runtimes.get(id) {
                 if rt.status == JobStatus::Running {
                     anyhow::bail!("Job already running");
                 }
             }
+            runtimes.insert(
+                id.to_string(),
+                JobRuntime {
+                    status: JobStatus::Running,
+                    progress: 0.0,
+                    stats: None,
+                    started_at: Some(now()),
+                    finished_at: None,
+                },
+            );
         }
 
         let session_id = Uuid::new_v4().to_string();
         let t = now();
         self.insert_session(&session_id, id, &job.backup_type, t).await?;
-
-        let runtime = JobRuntime {
-            status: JobStatus::Running,
-            progress: 0.0,
-            stats: None,
-            started_at: Some(t),
-            finished_at: None,
-        };
-        self.runtimes.write().await.insert(id.to_string(), runtime);
 
         let jm = self.clone();
         let run_id = id.to_string();

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use tracing::info;
 
 use crate::cloud::aws::client::{parse_xml_tree, AwsClient, AwsSession};
@@ -67,8 +67,10 @@ impl RdsBackup {
     /// Export a snapshot to S3 for long-term retention (best-effort).
     pub async fn export_to_s3(&self, snapshot_id: &str, s3_bucket: &str) -> Result<()> {
         info!("Exporting RDS snapshot to S3: {}/{}", s3_bucket, snapshot_id);
+        // Fail fast instead of silently using placeholder credentials that
+        // would export to the wrong account or fail obscurely.
         let account_id = std::env::var("BCK_RDS_EXPORT_ACCOUNT_ID")
-            .unwrap_or_else(|_| "000000000000".to_string());
+            .map_err(|_| anyhow!("BCK_RDS_EXPORT_ACCOUNT_ID is required for RDS export"))?;
         let source_arn = format!(
             "arn:aws:rds:{}:{}:snapshot:{}",
             self.client.region(),
@@ -77,7 +79,7 @@ impl RdsBackup {
         );
         let export_id = format!("bck-{snapshot_id}");
         let role_arn = std::env::var("BCK_RDS_EXPORT_ROLE_ARN")
-            .unwrap_or_else(|_| "change-me".to_string());
+            .map_err(|_| anyhow!("BCK_RDS_EXPORT_ROLE_ARN is required for RDS export"))?;
         let kms_key_id = std::env::var("BCK_RDS_EXPORT_KMS_KEY").ok();
         let mut params: Vec<(&str, &str)> = vec![
             ("Action", "StartExportTask"),

@@ -121,6 +121,9 @@ async fn main() -> anyhow::Result<()> {
     // Start scheduler
     {
         let jm = job_manager.clone();
+        // A daemon restart mid-backup left some sessions "running"; mark them
+        // failed so the UI/state stay consistent.
+        jm.lock().await.reconcile_startup().await;
         let jm_guard = jm.lock().await;
         let jobs = jm_guard.load_job_models().await.unwrap_or_default();
         drop(jm_guard);

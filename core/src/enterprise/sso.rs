@@ -2,8 +2,10 @@ use anyhow::{Result, anyhow, bail};
 use base64::Engine;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::info;
 
@@ -19,6 +21,10 @@ pub struct SsoProvider {
     pub auto_provision: bool,
     pub default_role: String,
     pub enabled: bool,
+    /// Explicit allowlist of redirect URIs the IdP may send the auth code to.
+    /// Empty = require https (loopback http allowed).
+    #[serde(default)]
+    pub allowed_redirect_uris: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -117,8 +123,21 @@ struct Claims {
 pub struct SsoManager {
     providers: Arc<RwLock<HashMap<String, SsoProvider>>>,
     ldap_configs: Arc<RwLock<Vec<LdapConfig>>>,
+    /// One-time authorization flows awaiting their callback (state -> flow).
+    pending: Arc<RwLock<HashMap<String, PendingAuth>>>,
     http: reqwest::Client,
 }
+
+/// An OIDC authorization flow started by `initiate_auth`; consumed once by the
+/// matching callback. Carries the PKCE verifier so the code exchange binds to
+/// the original authorize request.
+struct PendingAuth {
+    redirect_uri: String,
+    code_verifier: String,
+    expires_at: Instant,
+}
+
+const PENDING_TTL: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl Default for SsoManager {
     fn default() -> Self {
@@ -131,6 +150,7 @@ impl SsoManager {
         Self {
             providers: Arc::new(RwLock::new(HashMap::new())),
             ldap_configs: Arc::new(RwLock::new(Vec::new())),
+            pending: Arc::new(RwLock::new(HashMap::new())),
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
@@ -140,6 +160,10 @@ impl SsoManager {
 
     /// Register an SSO provider
     pub async fn register_provider(&self, provider: SsoProvider) -> Result<SsoProvider> {
+        // Reject SSRF-prone issuer URLs (http, private/loopback/metadata hosts).
+        if !provider.issuer_url.is_empty() {
+            validate_https_url(&provider.issuer_url)?;
+        }
         let mut providers = self.providers.write().await;
         let provider = SsoProvider {
             id: uuid::Uuid::new_v4().to_string(),
@@ -162,10 +186,14 @@ impl SsoManager {
         let provider = providers.get(provider_id)
             .ok_or_else(|| anyhow!("SSO provider not found: {}", provider_id))?
             .clone();
+        drop(providers);
+
+        validate_redirect_uri(&provider, redirect_uri)?;
 
         let discovery = self.discovery(&provider).await?;
         let auth_endpoint = discovery.authorization_endpoint
             .ok_or_else(|| anyhow!("Provider {} has no authorization endpoint", provider.name))?;
+        validate_https_url(&auth_endpoint)?;
 
         let state = uuid::Uuid::new_v4().to_string();
         let mut scopes = provider.scopes.clone();
@@ -173,14 +201,26 @@ impl SsoManager {
             scopes.push("openid".into());
         }
 
+        // PKCE: a per-flow verifier is stored so the code exchange binds to the
+        // authorize request and a stolen code cannot be replayed from elsewhere.
+        let code_verifier = pkce_verifier();
+        let code_challenge = base64_url_nopad(&Sha256::digest(code_verifier.as_bytes()));
+
+        self.pending.write().await.insert(state.clone(), PendingAuth {
+            redirect_uri: redirect_uri.to_string(),
+            code_verifier,
+            expires_at: Instant::now() + PENDING_TTL,
+        });
+
         info!("Initiating OIDC auth for provider {}", provider.name);
         Ok(format!(
-            "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}",
+            "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
             auth_endpoint,
             urlencode(&provider.client_id),
             urlencode(redirect_uri),
             urlencode(&scopes.join(" ")),
             urlencode(&state),
+            urlencode(&code_challenge),
         ))
     }
 
@@ -190,7 +230,7 @@ impl SsoManager {
         &self,
         provider_id: &str,
         code: &str,
-        _state: &str,
+        state: &str,
         redirect_uri: &str,
     ) -> Result<SsoUser> {
         let providers = self.providers.read().await;
@@ -199,9 +239,19 @@ impl SsoManager {
             .clone();
         drop(providers);
 
+        // Consume the one-time flow: this defeats login CSRF and state replay.
+        let pending = self.pending.write().await.remove(state)
+            .filter(|p| p.expires_at >= Instant::now())
+            .ok_or_else(|| anyhow!("OIDC state mismatch, expired or replayed"))?;
+        if pending.redirect_uri != redirect_uri {
+            bail!("redirect_uri does not match the one used to authorize");
+        }
+        validate_redirect_uri(&provider, redirect_uri)?;
+
         let discovery = self.discovery(&provider).await?;
         let token_endpoint = discovery.token_endpoint
             .ok_or_else(|| anyhow!("Provider {} has no token endpoint", provider.name))?;
+        validate_https_url(&token_endpoint)?;
 
         let resp = self.http.post(&token_endpoint)
             .form(&[
@@ -210,6 +260,7 @@ impl SsoManager {
                 ("redirect_uri", redirect_uri),
                 ("client_id", provider.client_id.as_str()),
                 ("client_secret", provider.encrypted_client_secret.as_str()),
+                ("code_verifier", &pending.code_verifier),
             ])
             .send().await?;
 
@@ -256,13 +307,29 @@ impl SsoManager {
 
     async fn discovery(&self, provider: &SsoProvider) -> Result<Discovery> {
         let url = format!("{}/.well-known/openid-configuration", provider.issuer_url.trim_end_matches('/'));
+        validate_https_url(&url)?;
         let resp = self.http.get(&url).send().await?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             return Err(anyhow!("OIDC discovery failed ({}): {}", status, body));
         }
-        resp.json().await.map_err(Into::into)
+        let disc: Discovery = resp.json().await
+            .map_err(|e| anyhow!("OIDC discovery parse failed: {}", e))?;
+        // Never follow a discovery document that points the server at internal
+        // or non-TLS endpoints (SSRF / client-secret exfiltration).
+        for endpoint in [&disc.authorization_endpoint, &disc.token_endpoint, &disc.jwks_uri] {
+            if let Some(u) = endpoint {
+                validate_https_url(u)?;
+            }
+        }
+        if let Some(iss) = &disc.issuer {
+            let expected = provider.issuer_url.trim_end_matches('/');
+            if iss.trim_end_matches('/') != expected {
+                bail!("discovery issuer '{}' does not match configured issuer '{}'", iss, expected);
+            }
+        }
+        Ok(disc)
     }
 
     async fn validate_id_token(
@@ -283,6 +350,7 @@ impl SsoManager {
             "RS256" => {
                 let jwks_uri = jwks_uri
                     .ok_or_else(|| anyhow!("No jwks_uri available for RS256 validation"))?;
+                validate_https_url(jwks_uri)?;
                 let jwks: Jwks = self.http.get(jwks_uri).send().await?.json().await?;
                 let jwk = jwks.keys.iter()
                     .find(|k| match (&header.kid, &k.kid) {
@@ -298,7 +366,9 @@ impl SsoManager {
                 let pem = jwk_rsa_to_pem(n, e)?;
                 DecodingKey::from_rsa_pem(pem.as_bytes())?
             }
-            "HS256" => DecodingKey::from_secret(provider.encrypted_client_secret.as_bytes()),
+            // HS256 uses the client secret as the HMAC key and enables
+            // alg-confusion forgery; OIDC providers must use RS256 here.
+            "HS256" => bail!("HS256 id_tokens are not accepted; configure an RS256 provider"),
             other => bail!("Unsupported id_token alg: {}", other),
         };
 
@@ -336,8 +406,9 @@ async fn ldap_authenticate(cfg: &LdapConfig, username: &str, password: &str) -> 
     // Bind with the service account to search for the user.
     ldap.simple_bind(&cfg.bind_dn, &cfg.bind_password).await?.success()?;
 
-    // Find the user's DN.
-    let filter = cfg.user_filter.replace("{}", username);
+    // Find the user's DN. The username is escaped so a crafted value cannot
+    // rewrite the LDAP search filter (LDAP filter injection).
+    let filter = cfg.user_filter.replace("{}", &ldap_escape(username));
     let (rs, _) = ldap.search(&cfg.base_dn, Scope::Subtree, &filter, vec!["cn", "mail"])
         .await?.success()?;
     let entry = rs.into_iter().next()
@@ -350,7 +421,7 @@ async fn ldap_authenticate(cfg: &LdapConfig, username: &str, password: &str) -> 
 
     // Optionally load group memberships.
     let groups = if !cfg.group_filter.is_empty() {
-        let gfilter = cfg.group_filter.replace("{}", &user_dn);
+        let gfilter = cfg.group_filter.replace("{}", &ldap_escape(&user_dn));
         let (grs, _) = ldap.search(&cfg.base_dn, Scope::Subtree, &gfilter, vec!["cn"])
             .await?.success()?;
         grs.into_iter()
@@ -377,6 +448,79 @@ async fn ldap_authenticate(cfg: &LdapConfig, username: &str, password: &str) -> 
 }
 
 // ---- helpers ----
+
+/// A 43-char base64url PKCE code verifier from cryptographically random bytes.
+fn pkce_verifier() -> String {
+    base64_url_nopad(&crate::auth::random_bytes(32))
+}
+
+fn base64_url_nopad(data: &[u8]) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    URL_SAFE_NO_PAD.encode(data)
+}
+
+/// Validate that a URL uses https (loopback http allowed for local dev) and
+/// does not point at a private/loopback/link-local/metadata address (SSRF).
+fn validate_https_url(url: &str) -> Result<()> {
+    let u = reqwest::Url::parse(url).map_err(|_| anyhow!("invalid URL: {url}"))?;
+    if u.scheme() != "https" {
+        let is_loopback_http = u.scheme() == "http"
+            && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+        if !is_loopback_http {
+            anyhow::bail!("URL must use https: {url}");
+        }
+    }
+    if let Some(host) = u.host_str() {
+        if is_private_ip(host) {
+            anyhow::bail!("URL must not point to a private/loopback address: {url}");
+        }
+    }
+    Ok(())
+}
+
+fn is_private_ip(host: &str) -> bool {
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return crate::types::is_private_or_blocked_ip(ip);
+    }
+    false
+}
+
+/// Redirect URIs must be explicitly allowed when an allowlist is configured;
+/// otherwise https is required (loopback http allowed).
+fn validate_redirect_uri(provider: &SsoProvider, redirect_uri: &str) -> Result<()> {
+    if !provider.allowed_redirect_uris.is_empty() {
+        if provider.allowed_redirect_uris.iter().any(|u| u == redirect_uri) {
+            return Ok(());
+        }
+        bail!("redirect_uri not allowed for provider");
+    }
+    let u = reqwest::Url::parse(redirect_uri).map_err(|_| anyhow!("invalid redirect_uri"))?;
+    if u.scheme() != "https" {
+        let is_loopback_http = u.scheme() == "http"
+            && matches!(u.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+        if !is_loopback_http {
+            bail!("redirect_uri must use https (no allowlist configured for the provider)");
+        }
+    }
+    Ok(())
+}
+
+/// Escape LDAP filter special characters so user input cannot change the
+/// semantics of a search filter (LDAP filter injection).
+fn ldap_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\5c"),
+            '*' => out.push_str("\\2a"),
+            '(' => out.push_str("\\28"),
+            ')' => out.push_str("\\29"),
+            '\0' => out.push_str("\\00"),
+            c => out.push(c),
+        }
+    }
+    out
+}
 
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());

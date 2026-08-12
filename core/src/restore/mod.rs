@@ -6,6 +6,7 @@ pub mod requests;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tracing::info;
@@ -247,6 +248,16 @@ async fn stream_restore(
         for (_, block) in ordered {
             let raw = storage.read_block(&block.block_id.sha256).await?;
             let data = crate::pipeline::decode_block(&raw, key)?;
+            // The manifest pins the SHA-256 of the plaintext. A mismatch means
+            // a corrupted or swapped block — fail instead of restoring garbage
+            // (silent data corruption).
+            let actual = hex::encode(Sha256::digest(&data));
+            if actual != block.block_id.sha256 {
+                anyhow::bail!(
+                    "block integrity check failed for {} (data corruption)",
+                    block.block_id.sha256
+                );
+            }
             file.write_all(&data).await?;
             processed += data.len() as u64;
         }

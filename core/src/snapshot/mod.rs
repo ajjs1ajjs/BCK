@@ -65,8 +65,9 @@ impl SnapshotManager {
     }
 
     pub fn get_snapshot(&self, snapshot_id: &str) -> Result<Option<Snapshot>> {
-        let snapshots = self.index.list_snapshots("", 1, 0)?;
-        Ok(snapshots.into_iter().find(|s| s.id == snapshot_id))
+        // Direct lookup by id — the old implementation queried `WHERE job_id = ''`
+        // and therefore always returned None for real snapshots.
+        self.index.get_snapshot_by_id(snapshot_id)
     }
 
     pub fn get_manifest(&self, snapshot_id: &str) -> Result<Option<BackupManifest>> {

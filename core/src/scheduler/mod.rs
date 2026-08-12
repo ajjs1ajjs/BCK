@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{self, Duration, Instant};
@@ -111,15 +112,50 @@ impl Scheduler {
     }
 
     fn next_cron_time(expression: &str) -> Option<Instant> {
-        // Simplified: parse interval from cron, or default to 5 min
-        // Full cron parser would use a library like `cron`
         let parts: Vec<&str> = expression.split_whitespace().collect();
-        if parts.len() < 5 {
+        if parts.is_empty() {
             warn!("Invalid cron expression: {}", expression);
             return None;
         }
+        // The `cron` crate expects a seconds field first; accept standard
+        // 5-field cron expressions by prepending `0`.
+        let cron_expr = if parts.len() == 5 {
+            format!("0 {}", expression)
+        } else {
+            expression.to_string()
+        };
+        let schedule = cron::Schedule::from_str(&cron_expr).ok()?;
+        let now = chrono::Local::now();
+        let next = schedule.after(&now).next()?;
+        let secs = (next - now).num_seconds().max(0) as u64;
+        Some(Instant::now() + Duration::from_secs(secs))
+    }
+}
 
-        // Default: check every 5 minutes if cron is valid
-        Some(Instant::now() + Duration::from_secs(300))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_cron_returns_none() {
+        assert!(Scheduler::next_cron_time("").is_none());
+        assert!(Scheduler::next_cron_time("not a cron").is_none());
+    }
+
+    #[test]
+    fn valid_five_field_cron_returns_a_future_time() {
+        // Daily at 02:00 — must be in the future, and (now that cron is parsed)
+        // must be no more than ~24h away, not a fixed 5 minutes.
+        let next = Scheduler::next_cron_time("0 2 * * *").expect("cron must parse");
+        let delta = next.duration_since(Instant::now());
+        assert!(delta > Duration::from_secs(60), "next run must be in the future");
+        assert!(delta < Duration::from_secs(24 * 3600 + 120), "next run must respect the daily schedule");
+    }
+
+    #[test]
+    fn every_five_minutes_cron() {
+        let next = Scheduler::next_cron_time("*/5 * * * *").expect("cron must parse");
+        let delta = next.duration_since(Instant::now());
+        assert!(delta >= Duration::from_secs(0) && delta <= Duration::from_secs(300 + 5));
     }
 }

@@ -43,6 +43,11 @@ pub struct StorageConfig {
 }
 
 pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBackend>> {
+    // Custom object-storage endpoints are validated to stop the daemon being
+    // used to probe internal/cloud-metadata hosts (SSRF).
+    if let Some(endpoint) = &config.endpoint {
+        validate_storage_endpoint(endpoint)?;
+    }
     match config.backend_type.to_lowercase().as_str() {
         "local" | "filesystem" => {
             let path = config.path.unwrap_or_else(|| "./backup-store".into());
@@ -88,4 +93,39 @@ pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBack
         }
         _ => anyhow::bail!("Unsupported storage backend: {}", config.backend_type),
     }
+}
+
+/// Validate a custom object-storage endpoint (S3-compatible etc.). Only
+/// http/https are accepted and link-local/metadata/unspecified addresses are
+/// rejected so the daemon cannot be pointed at internal or cloud-metadata
+/// hosts (SSRF). Loopback and RFC1918 private addresses stay allowed for local
+/// dev / on-premise object storage.
+pub fn validate_storage_endpoint(endpoint: &str) -> Result<()> {
+    let u = reqwest::Url::parse(endpoint)
+        .map_err(|_| anyhow::anyhow!("invalid storage endpoint: {endpoint}"))?;
+    match u.scheme() {
+        "http" | "https" => {}
+        other => anyhow::bail!("unsupported storage endpoint scheme: {other}"),
+    }
+    if let Some(host) = u.host_str() {
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            let bad = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_unspecified()
+                        || v4.is_link_local()
+                        || v4.is_multicast()
+                        || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+                }
+                std::net::IpAddr::V6(v6) => {
+                    v6.is_unspecified() || v6.is_multicast() || v6.is_unicast_link_local()
+                }
+            };
+            if bad {
+                anyhow::bail!(
+                    "storage endpoint must not point to a link-local/metadata address: {endpoint}"
+                );
+            }
+        }
+    }
+    Ok(())
 }

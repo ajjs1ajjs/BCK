@@ -39,6 +39,10 @@ pub struct NfsExporter {
     port: u16,
 }
 
+/// Upper bound for a single NFS READ (1 MiB). Prevents a hostile client from
+/// requesting a ~4 GiB allocation.
+const MAX_READ_BYTES: u32 = 1024 * 1024;
+
 impl NfsExporter {
     pub fn new(port: u16) -> Self {
         let root = NfsFile {
@@ -351,7 +355,10 @@ impl NfsExporter {
     fn read(&self, reply: &mut Xdr, r: &mut XdrReader<'_>) {
         let fh = r.opaque().unwrap_or_default();
         let offset = r.uhyper().unwrap_or(0);
-        let count = r.uint().unwrap_or(0);
+        // Cap per-request reads so a hostile client cannot force a multi-GiB
+        // allocation (memory-exhaustion DoS). NFS allows a server to return
+        // fewer bytes than requested.
+        let count = r.uint().unwrap_or(0).min(MAX_READ_BYTES);
         match self.files.get(&fh) {
             Some(f) if f.is_dir => {
                 reply.int(5); // ISDIR

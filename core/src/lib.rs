@@ -10,7 +10,6 @@ pub mod compress;
 pub mod encrypt;
 pub mod storage;
 pub mod snapshot;
-pub mod recovery;
 pub mod stream;
 pub mod pipeline;
 pub mod scheduler;

@@ -103,7 +103,7 @@ pub async fn auth_middleware(
     let path = req.uri().path();
 
     // Admin-only management surfaces.
-    if path.contains("/tenants") || path.contains("/portal/admin") {
+    if path.contains("/tenants") || path.contains("/portal/admin") || path.contains("/auth/sso") {
         if !is_admin(role) {
             return Err(StatusCode::FORBIDDEN);
         }

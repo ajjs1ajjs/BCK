@@ -236,17 +236,14 @@ impl ReportEngine {
 
         match format {
             ReportFormat::Json => {
-                let path = std::env::temp_dir().join(format!("bck-report-{}.json", config_id));
-                std::fs::write(&path, &json)?;
+                let path = write_temp_report(&std::env::temp_dir(), "json", json.as_bytes())?;
                 info!("Report written (json): {}", path.display());
             }
             ReportFormat::Csv => {
-                let path = std::env::temp_dir().join(format!("bck-report-{}.csv", config_id));
-                std::fs::write(&path, summary_csv(data))?;
+                let path = write_temp_report(&std::env::temp_dir(), "csv", summary_csv(data).as_bytes())?;
                 info!("Report written (csv): {}", path.display());
             }
             ReportFormat::Html => {
-                let path = std::env::temp_dir().join(format!("bck-report-{}.html", config_id));
                 let escaped = json.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
                 let html = format!(
                     "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>{}</title></head><body><h1>{}</h1><pre>{}</pre></body></html>",
@@ -254,14 +251,13 @@ impl ReportEngine {
                     data.title,
                     escaped
                 );
-                std::fs::write(&path, html)?;
+                let path = write_temp_report(&std::env::temp_dir(), "html", html.as_bytes())?;
                 info!("Report written (html): {}", path.display());
             }
             ReportFormat::Pdf => {
                 // PDF rendering is not bundled; the data is persisted as JSON so
                 // the report content is never lost.
-                let path = std::env::temp_dir().join(format!("bck-report-{}.json", config_id));
-                std::fs::write(&path, &json)?;
+                let path = write_temp_report(&std::env::temp_dir(), "json", json.as_bytes())?;
                 info!(
                     "Report written (pdf requested; pdf rendering not bundled, wrote json): {}",
                     path.display()
@@ -309,11 +305,46 @@ fn summary_csv(data: &ReportData) -> String {
                     serde_json::Value::String(s) => s.clone(),
                     other => other.to_string(),
                 };
-                out.push_str(&format!("{},{}\n", k, value));
+                out.push_str(&format!("{},{}\n", csv_escape(k), csv_escape(&value)));
             }
         }
     }
     out
+}
+
+/// Escape a single CSV cell: neutralize spreadsheet formula injection and quote
+/// cells containing separators, quotes or newlines (proper RFC-4180 quoting).
+fn csv_escape(v: &str) -> String {
+    let dangerous = matches!(
+        v.as_bytes().first(),
+        Some(b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r')
+    );
+    let v = if dangerous {
+        format!("'{}", v)
+    } else {
+        v.to_string()
+    };
+    if v.contains(',') || v.contains('"') || v.contains('\n') || v.contains('\r') {
+        format!("\"{}\"", v.replace('"', "\"\""))
+    } else {
+        v
+    }
+}
+
+/// Write a report file to a temp dir with a unique name and `create_new`
+/// (no-follow / no-clobber), so a local attacker cannot pre-create a symlink at
+/// a predictable path and redirect the write.
+fn write_temp_report(dir: &std::path::Path, ext: &str, data: &[u8]) -> anyhow::Result<std::path::PathBuf> {
+    use std::io::Write;
+    let name = format!("bck-report-{}.{}", uuid::Uuid::new_v4(), ext);
+    let path = dir.join(name);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| anyhow::anyhow!("create temp report {}: {}", path.display(), e))?;
+    f.write_all(data).map_err(|e| anyhow::anyhow!("write temp report {}: {}", path.display(), e))?;
+    Ok(path)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

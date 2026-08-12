@@ -108,6 +108,13 @@ impl SureBackupEngine {
     pub async fn run_test(&self, vm_ip: &str, test_type: &str) -> Result<TestResult> {
         let start = std::time::Instant::now();
 
+        // vm_ip must be a literal IP: a leading '-' would be parsed by
+        // ping/ssh as a flag (flag injection), and arbitrary hostnames would
+        // let callers probe internal hosts through the daemon.
+        let _ip: std::net::IpAddr = vm_ip
+            .parse()
+            .map_err(|_| anyhow!("vm_ip must be a literal IP address, got: {vm_ip}"))?;
+
         let result = match test_type {
             "ping" => {
                 let (flag, count) = if cfg!(target_os = "windows") {
