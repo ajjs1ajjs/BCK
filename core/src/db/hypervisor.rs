@@ -57,11 +57,18 @@ pub async fn fetch_hypervisor(db: &DbPool, id: &str) -> Result<Option<Hypervisor
 }
 
 /// Build a hypervisor connector from a stored model (reads credentials).
-pub fn connector_from_model(m: &HypervisorModel) -> Result<Box<dyn HypervisorConnector>> {
+/// `key` decrypts credentials stored at rest with the application key.
+pub fn connector_from_model(m: &HypervisorModel, key: Option<&[u8]>) -> Result<Box<dyn HypervisorConnector>> {
     let creds: serde_json::Value = serde_json::from_str(&m.credentials_json)
         .unwrap_or_else(|_| serde_json::json!({}));
     let username = creds["username"].as_str().unwrap_or("").to_string();
-    let password = creds["password"].as_str().unwrap_or("").to_string();
+    let password = match creds["password"].as_str() {
+        Some(p) => match key {
+            Some(k) => crate::encrypt::decrypt_secret(k, p).unwrap_or_else(|_| p.to_string()),
+            None => p.to_string(),
+        },
+        None => String::new(),
+    };
     let ignore_ssl = creds["ignore_ssl"].as_bool().unwrap_or(false);
     let use_ssl = m.port == 5986 || m.port == 443;
 

@@ -104,6 +104,7 @@ async fn login(
         role: UserRole::from_str(&user_model.role).unwrap_or(UserRole::Operator),
         email: user_model.email.clone(),
         enabled: user_model.enabled,
+        tenant_id: user_model.tenant_id.clone(),
     };
 
     let token = state.jwt.generate(&user)
@@ -125,6 +126,7 @@ async fn me(
             role: UserRole::from_str(&u.role).unwrap_or(UserRole::Operator),
             email: u.email,
             enabled: u.enabled,
+            tenant_id: u.tenant_id,
         }));
     }
     Err(StatusCode::UNAUTHORIZED)
@@ -134,7 +136,7 @@ async fn find_user(db: &DbPool, username_or_id: &str) -> anyhow::Result<Option<U
     match db {
         DbPool::Sqlite(pool) => {
             let row = sqlx::query_as::<_, UserModel>(
-                "SELECT id, username, password_hash, email, role, enabled, last_login, created_at, updated_at
+                "SELECT id, username, password_hash, email, role, enabled, last_login, created_at, updated_at, tenant_id
                  FROM users WHERE username = ?1 OR id = ?1"
             )
             .bind(username_or_id)
@@ -144,7 +146,7 @@ async fn find_user(db: &DbPool, username_or_id: &str) -> anyhow::Result<Option<U
         }
         DbPool::Postgres(pool) => {
             let row = sqlx::query_as::<_, UserModel>(
-                "SELECT id, username, password_hash, email, role, enabled, last_login, created_at, updated_at
+                "SELECT id, username, password_hash, email, role, enabled, last_login, created_at, updated_at, tenant_id
                  FROM users WHERE username = $1 OR id = $1"
             )
             .bind(username_or_id)

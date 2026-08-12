@@ -11,6 +11,8 @@ pub struct Claims {
     pub role: String,
     pub exp: usize,
     pub iat: usize,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 pub struct JwtManager {
@@ -31,6 +33,7 @@ impl JwtManager {
             role: user.role.to_string(),
             exp: (now + chrono::Duration::hours(self.expiration_hours)).timestamp() as usize,
             iat: now.timestamp() as usize,
+            tenant_id: user.tenant_id.clone(),
         };
 
         let token = encode(
@@ -58,6 +61,7 @@ impl JwtManager {
             role: "api".into(),
             exp: (now + chrono::Duration::days(365)).timestamp() as usize,
             iat: now.timestamp() as usize,
+            tenant_id: None,
         };
 
         let token = encode(

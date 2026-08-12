@@ -17,6 +17,7 @@ fn admin_claims() -> Claims {
         role: "admin".into(),
         exp: usize::MAX,
         iat: 0,
+        tenant_id: None,
     }
 }
 
@@ -27,6 +28,7 @@ fn viewer_claims() -> Claims {
         role: "viewer".into(),
         exp: usize::MAX,
         iat: 0,
+        tenant_id: None,
     }
 }
 
@@ -376,17 +378,18 @@ async fn dr_sites_plans_and_test() {
 async fn tenant_lifecycle() {
     let state = test_state(&format!("{}\\tenants.db", temp_dir("tenants"))).await;
     let app = tenants::router().with_state(state.clone());
+    let claims = admin_claims();
 
     // No tenants initially.
-    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let tenants: Vec<serde_json::Value> = read_json(resp).await;
     assert!(tenants.is_empty());
 
     // Create a tenant.
-    let resp = oneshot(app.clone(), "POST", "/", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/", Some(
         r#"{"name":"Acme Corp","slug":"acme"}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let tenant: serde_json::Value = read_json(resp).await;
     let id = tenant["id"].as_str().unwrap().to_string();
@@ -398,56 +401,95 @@ async fn tenant_lifecycle() {
     assert_eq!(tenant["settings"]["default_retention_days"], 30);
 
     // List reflects the tenant.
-    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/", None, &claims).await;
     let tenants: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(tenants.len(), 1);
 
     // Get by id.
-    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/{}", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Suspend -> activate.
-    let resp = oneshot(app.clone(), "POST", &format!("/{}/suspend", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/{}/suspend", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/{}", id), None, &claims).await;
     let tenant: serde_json::Value = read_json(resp).await;
     assert_eq!(tenant["status"], "Suspended");
 
-    let resp = oneshot(app.clone(), "POST", &format!("/{}/activate", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/{}/activate", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Update quota.
-    let resp = oneshot(app.clone(), "PUT", &format!("/{}/quota", id), Some(
+    let resp = oneshot_with_claims(app.clone(), "PUT", &format!("/{}/quota", id), Some(
         r#"{"max_repositories":10,"max_vms":100,"max_users":25,"max_storage_gb":2048,
             "max_retention_days":180,"max_snapshots_per_vm":60,
             "allow_cloud_tiers":true,"allow_tape":true}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let tenant: serde_json::Value = read_json(resp).await;
     assert_eq!(tenant["quota"]["max_repositories"], 10);
 
     // Usage + quota check.
-    let resp = oneshot(app.clone(), "POST", &format!("/{}/usage", id), Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/{}/usage", id), Some(
         r#"{"repositories":3,"vms":0,"users":0,"storage_used_gb":0,"snapshots_total":0,
             "monthly_data_written_gb":0}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let resp = oneshot(app.clone(), "GET", &format!("/{}/usage", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/{}/usage", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let resp = oneshot(app.clone(), "GET", &format!("/{}/check-quota?resource=repository", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/{}/check-quota?resource=repository", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let check: serde_json::Value = read_json(resp).await;
     assert_eq!(check["within_quota"], true);
 
     // Delete -> not found.
-    let resp = oneshot(app.clone(), "DELETE", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "DELETE", &format!("/{}", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/{}", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Missing tenant operations are rejected.
-    let resp = oneshot(app.clone(), "POST", "/missing/suspend", None).await;
+    let resp = oneshot_with_claims(app.clone(), "POST", "/missing/suspend", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn tenant_admin_cannot_manage_other_tenants() {
+    let state = test_state(&format!("{}\\tenants-scope.db", temp_dir("tenants-scope"))).await;
+    let app = tenants::router().with_state(state.clone());
+
+    // Global admin creates a tenant.
+    let resp = oneshot_with_claims(app.clone(), "POST", "/", Some(
+        r#"{"name":"Acme","slug":"acme"}"#,
+    ), &admin_claims()).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let tenant: serde_json::Value = read_json(resp).await;
+    let id = tenant["id"].as_str().unwrap().to_string();
+
+    // A tenant-scoped admin (tenant_id = other) cannot read or manage it.
+    let other = Claims {
+        sub: "user-other".into(),
+        username: "other".into(),
+        role: "admin".into(),
+        exp: usize::MAX,
+        iat: 0,
+        tenant_id: Some("tenant-999".into()),
+    };
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/{}", id), None, &other).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "cross-tenant read must be forbidden");
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/{}/suspend", id), None, &other).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN, "cross-tenant mutation must be forbidden");
+
+    // A tenant-scoped admin only sees its own tenant in the list.
+    let resp = oneshot_with_claims(app.clone(), "GET", "/", None, &other).await;
+    let listed: Vec<serde_json::Value> = read_json(resp).await;
+    assert!(listed.is_empty(), "tenant-scoped admin must not list other tenants");
+
+    // Tenant-scoped admins cannot create tenants (global-only).
+    let resp = oneshot_with_claims(app.clone(), "POST", "/", Some(
+        r#"{"name":"Evil","slug":"evil"}"#,
+    ), &other).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -586,6 +628,7 @@ async fn portal_cancel_requires_ownership() {
         role: "operator".into(),
         exp: usize::MAX,
         iat: 0,
+        tenant_id: None,
     };
     let attacker = Claims {
         sub: "user-attacker".into(),
@@ -593,6 +636,7 @@ async fn portal_cancel_requires_ownership() {
         role: "viewer".into(),
         exp: usize::MAX,
         iat: 0,
+        tenant_id: None,
     };
 
     // Victim submits a restore request.
@@ -781,6 +825,7 @@ fn jwt_for(state: &std::sync::Arc<crate::server::AppState>, role: crate::auth::U
         role,
         email: None,
         enabled: true,
+        tenant_id: None,
     };
     state.jwt.generate(&user).unwrap()
 }

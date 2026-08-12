@@ -4,6 +4,7 @@ use aes_gcm::{
 };
 use anyhow::{Result, anyhow};
 use argon2::Argon2;
+use base64::Engine;
 use chacha20poly1305::ChaCha20Poly1305;
 use sha2::{Digest, Sha256};
 use crate::types::EncryptionAlgorithm;
@@ -307,6 +308,62 @@ pub fn create_encryptor(algorithm: &EncryptionAlgorithm) -> Box<dyn Encryptor> {
     }
 }
 
+/// Load the application encryption key for a config (the same key used for
+/// block data). Creates and persists it on first use.
+pub fn app_key(config: &crate::config::AppConfig) -> Result<Vec<u8>> {
+    let key_path = config.encryption.key_path.clone()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| default_key_path(config));
+    load_key(&key_path, config.encryption.passphrase.as_deref())
+}
+
+/// Encrypt a small credential (cloud secret, hypervisor password, connection
+/// string) for storage at rest. Format: `enc:` + base64url(nonce || ct).
+/// Uses the application key, so a DB-file compromise alone is not enough to
+/// recover the secret when the key is passphrase-wrapped.
+pub fn encrypt_secret(key: &[u8], plaintext: &str) -> Result<String> {
+    use aes_gcm::aead::{Aead, OsRng};
+    use aes_gcm::aead::rand_core::RngCore;
+    use aes_gcm::Nonce;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+
+    let cipher = Aes256Gcm::new_from_slice(&ensure_key_size::<32>(key))
+        .map_err(|e| anyhow!("secret cipher init: {:?}", e))?;
+    let mut nonce = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce);
+    let ct = cipher
+        .encrypt(Nonce::from_slice(&nonce), plaintext.as_bytes())
+        .map_err(|e| anyhow!("secret encrypt failed: {:?}", e))?;
+
+    let mut blob = Vec::with_capacity(12 + ct.len());
+    blob.extend_from_slice(&nonce);
+    blob.extend_from_slice(&ct);
+    Ok(format!("enc:{}", B64.encode(blob)))
+}
+
+/// Decrypt a value produced by `encrypt_secret`. Values without the `enc:`
+/// prefix are returned unchanged so previously stored plaintext credentials
+/// keep working until rewritten.
+pub fn decrypt_secret(key: &[u8], blob: &str) -> Result<String> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::Nonce;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+
+    let Some(payload) = blob.strip_prefix("enc:") else {
+        return Ok(blob.to_string());
+    };
+    let raw = B64.decode(payload).map_err(|e| anyhow!("secret decode failed: {e}"))?;
+    if raw.len() < 12 {
+        anyhow::bail!("corrupted encrypted secret");
+    }
+    let cipher = Aes256Gcm::new_from_slice(&ensure_key_size::<32>(key))
+        .map_err(|e| anyhow!("secret cipher init: {:?}", e))?;
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(&raw[..12]), &raw[12..])
+        .map_err(|_| anyhow!("failed to decrypt secret: wrong key or corrupted value"))?;
+    String::from_utf8(plaintext).map_err(|e| anyhow!("secret is not valid utf8: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,5 +481,28 @@ mod tests {
         assert!(is_wrapped(&std::fs::read(&path).unwrap()));
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_secret_roundtrip() {
+        let key = TEST_KEY;
+        let blob = encrypt_secret(key, "s3cr3t-credential").unwrap();
+        assert!(blob.starts_with("enc:"), "must be marked as encrypted");
+        assert!(!blob.contains("s3cr3t"), "ciphertext must not contain the plaintext");
+        assert_eq!(decrypt_secret(key, &blob).unwrap(), "s3cr3t-credential");
+    }
+
+    #[test]
+    fn test_secret_wrong_key_fails() {
+        let blob = encrypt_secret(TEST_KEY, "hunter2").unwrap();
+        let wrong = b"WRONG_KEY_32_BYTES_FOR_TEST____!";
+        assert!(decrypt_secret(wrong, &blob).is_err());
+    }
+
+    #[test]
+    fn test_secret_legacy_plaintext_passthrough() {
+        // Previously stored plaintext credentials must keep working.
+        assert_eq!(decrypt_secret(TEST_KEY, "legacy-plaintext").unwrap(), "legacy-plaintext");
+        assert!(decrypt_secret(TEST_KEY, "").unwrap().is_empty());
     }
 }

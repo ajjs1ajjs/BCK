@@ -259,7 +259,7 @@ impl BackupEngine for BackupEngineImpl {
                             None => None,
                         };
                         let storage = match repo {
-                            Some(r) => build_storage_from_repo(&r).await,
+                            Some(r) => build_storage_from_repo(&r, crate::encrypt::app_key(&state.config).ok()).await,
                             None => None,
                         };
                         match storage {
@@ -321,7 +321,7 @@ impl BackupEngine for BackupEngineImpl {
                             None => None,
                         };
                         let storage = match repo {
-                            Some(r) => build_storage_from_repo(&r).await,
+                            Some(r) => build_storage_from_repo(&r, crate::encrypt::app_key(&state.config).ok()).await,
                             None => None,
                         };
                         match storage {
@@ -374,7 +374,7 @@ impl BackupEngine for BackupEngineImpl {
                 None => None,
             };
             let storage = match repo {
-                Some(r) => build_storage_from_repo(&r).await,
+                Some(r) => build_storage_from_repo(&r, crate::encrypt::app_key(&state.config).ok()).await,
                 None => None,
             };
             let session = match storage {
@@ -1224,20 +1224,11 @@ fn policy_to_pb(p: crate::sobr::SobrPolicy) -> PbSobrPolicy {
 
 async fn build_storage_from_repo(
     repo: &crate::db::models::repository::RepositoryModel,
+    key: Option<Vec<u8>>,
 ) -> Option<Box<dyn crate::storage::StorageBackend>> {
     let cfg: serde_json::Value = serde_json::from_str(&repo.config_json).unwrap_or_else(|_| serde_json::json!({}));
-    let storage_config = crate::storage::StorageConfig {
-        backend_type: repo.repo_type.clone(),
-        path: cfg["path"].as_str().map(|s| s.to_string()),
-        bucket: cfg["bucket"].as_str().map(|s| s.to_string()),
-        region: cfg["region"].as_str().map(|s| s.to_string()),
-        endpoint: cfg["endpoint"].as_str().map(|s| s.to_string()),
-        access_key: cfg["access_key"].as_str().map(|s| s.to_string()),
-        secret_key: cfg["secret_key"].as_str().map(|s| s.to_string()),
-        container: cfg["container"].as_str().map(|s| s.to_string()),
-        connection_string: cfg["connection_string"].as_str().map(|s| s.to_string()),
-        account: cfg["account"].as_str().map(|s| s.to_string()),
-    };
+    let mut storage_config = crate::storage::storage_config_from_json(&cfg, key.as_deref());
+    storage_config.backend_type = repo.repo_type.clone();
     crate::storage::create_backend(storage_config).await.ok()
 }
 

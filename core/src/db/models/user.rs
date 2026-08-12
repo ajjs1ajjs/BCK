@@ -13,4 +13,6 @@ pub struct UserModel {
     pub last_login: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// NULL for global/system accounts (and single-tenant deployments).
+    pub tenant_id: Option<String>,
 }

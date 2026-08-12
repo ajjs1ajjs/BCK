@@ -84,27 +84,20 @@ async fn delete_snapshot(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    let affected = match &state.db {
-        DbPool::Sqlite(pool) => {
-            sqlx::query("DELETE FROM snapshots WHERE id = ?1")
-                .bind(&id)
-                .execute(pool)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .rows_affected()
-        }
-        DbPool::Postgres(pool) => {
-            sqlx::query("DELETE FROM snapshots WHERE id = $1")
-                .bind(&id)
-                .execute(pool)
-                .await
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-                .rows_affected()
-        }
-    };
-    if affected == 0 {
-        return Err(StatusCode::NOT_FOUND);
-    }
+    // Resolve the snapshot first so we can GC its blocks against the right
+    // repository. Deleting a snapshot now also releases unreferenced blocks.
+    let snapshot = fetch_snapshot(&state.db, &id).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    state.job_manager.lock().await
+        .delete_snapshot_with_gc(&id, &snapshot.repository_id)
+        .await
+        .map_err(|e| {
+            tracing::error!("delete snapshot with gc: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
     crate::db::record_event(
         &state.db,
         "snapshot_deleted",

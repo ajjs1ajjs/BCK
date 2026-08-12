@@ -15,7 +15,7 @@ use crate::db::models::repository::RepositoryModel;
 use crate::db::models::snapshot::SnapshotModel;
 use crate::index::BlockIndex;
 use crate::pipeline::BackupPipeline;
-use crate::storage::{create_backend, StorageConfig};
+use crate::storage::create_backend;
 use crate::types::{
     BackupManifest, BackupStats, ChunkSizeConfig, CompressionAlgorithm, ConsistencyLevel,
     EncryptionAlgorithm, JobStatus, PipelineConfig, Snapshot, SnapshotType,
@@ -762,7 +762,8 @@ impl JobManager {
 
         let hv = crate::db::hypervisor::fetch_hypervisor(&self.db, hypervisor_id).await?
             .ok_or_else(|| anyhow::anyhow!("Hypervisor not found: {}", hypervisor_id))?;
-        let connector = crate::db::hypervisor::connector_from_model(&hv)?;
+        let key = crate::encrypt::app_key(&self.config).ok();
+        let connector = crate::db::hypervisor::connector_from_model(&hv, key.as_deref())?;
 
         let repo = self.load_repository(&job.repository_id).await?
             .ok_or_else(|| anyhow::anyhow!("Repository not found: {}", job.repository_id))?;
@@ -894,19 +895,9 @@ impl JobManager {
         let cfg: serde_json::Value = serde_json::from_str(&repo.config_json)
             .unwrap_or_else(|_| serde_json::json!({}));
 
-        let path = cfg["path"].as_str().map(|s| s.to_string());
-        let storage_config = StorageConfig {
-            backend_type: repo.repo_type.clone(),
-            path,
-            bucket: cfg["bucket"].as_str().map(|s| s.to_string()),
-            region: cfg["region"].as_str().map(|s| s.to_string()),
-            endpoint: cfg["endpoint"].as_str().map(|s| s.to_string()),
-            access_key: cfg["access_key"].as_str().map(|s| s.to_string()),
-            secret_key: cfg["secret_key"].as_str().map(|s| s.to_string()),
-            container: cfg["container"].as_str().map(|s| s.to_string()),
-            connection_string: cfg["connection_string"].as_str().map(|s| s.to_string()),
-            account: cfg["account"].as_str().map(|s| s.to_string()),
-        };
+        let key = crate::encrypt::app_key(&self.config).ok();
+        let mut storage_config = crate::storage::storage_config_from_json(&cfg, key.as_deref());
+        storage_config.backend_type = repo.repo_type.clone();
         create_backend(storage_config).await
     }
 
@@ -1000,7 +991,32 @@ impl JobManager {
         }
     }
 
-    async fn delete_snapshot_row(&self, snapshot_id: &str) -> Result<()> {
+    /// Delete a snapshot and run garbage collection: decrement block refcounts
+    /// in the block index, drop the manifest, delete physical blocks that are
+    /// no longer referenced by any snapshot, and finally remove the row from
+    /// the application database. Without this the block store grew forever.
+    pub async fn delete_snapshot_with_gc(&self, snapshot_id: &str, repository_id: &str) -> Result<()> {
+        let index = BlockIndex::new(&self.index_path())?;
+        let mut orphans = Vec::new();
+        if let Some(manifest) = index.load_manifest(snapshot_id)? {
+            for block in &manifest.blocks {
+                if index.remove_block(&block.block_id.sha256)? {
+                    orphans.push(block.block_id.sha256.clone());
+                }
+            }
+        }
+        index.delete_snapshot(snapshot_id)?;
+
+        if !orphans.is_empty() {
+            if let Some(repo) = self.load_repository(repository_id).await? {
+                if let Ok(storage) = self.build_storage(&repo).await {
+                    for id in &orphans {
+                        let _ = storage.delete_block(id).await;
+                    }
+                }
+            }
+        }
+
         match &self.db {
             DbPool::Sqlite(pool) => {
                 sqlx::query("DELETE FROM snapshots WHERE id = ?1")
@@ -1084,7 +1100,7 @@ impl JobManager {
         );
 
         for s in &removed {
-            self.delete_snapshot_row(&s.id).await?;
+            self.delete_snapshot_with_gc(&s.id, &s.repository_id).await?;
             crate::db::record_event(
                 &self.db,
                 "snapshot_pruned",

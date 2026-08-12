@@ -422,7 +422,7 @@ if ($disk -and (Test-Path $disk.Path)) {{
 
     async fn read_disk_blocks(
         &self,
-        _vm_ref: &str,
+        vm_ref: &str,
         disk_path: &str,
         offset: i64,
         length: i64,
@@ -430,9 +430,21 @@ if ($disk -and (Test-Path $disk.Path)) {{
         if length <= 0 || length > 64 * 1024 * 1024 {
             return Err(anyhow!("Invalid read length: {}", length));
         }
+        // Read from the most recent checkpoint's differencing disk when one
+        // exists: the live VHDX changes while the VM writes, so reading it
+        // directly produces a torn/inconsistent image. Falls back to the live
+        // path when no checkpoint is present.
         let script = format!(
             r#"$ErrorActionPreference = 'Stop'
 $path = '{path}'
+$vm = '{vm_ref}'
+try {{
+    $snap = Get-VMSnapshot -VMName $vm | Sort-Object CreationTime -Descending | Select-Object -First 1
+    if ($snap) {{
+        $drive = $snap.HardDrives | Where-Object {{ $_.Path -eq $path }} | Select-Object -First 1
+        if ($drive) {{ $path = $drive.Path }}
+    }}
+}} catch {{ }}
 if (-not (Test-Path $path)) {{ throw "Disk not accessible: $path" }}
 $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
 try {{
@@ -442,6 +454,7 @@ try {{
     [Convert]::ToBase64String($buf, 0, $read)
 }} finally {{ $fs.Dispose() }}"#,
             path = disk_path.replace('\'', "''"),
+            vm_ref = vm_ref.replace('\'', "''"),
             offset = offset,
             len = length,
         );

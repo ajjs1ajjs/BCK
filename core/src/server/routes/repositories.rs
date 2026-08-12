@@ -83,18 +83,6 @@ async fn create_repository(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateRepoRequest>,
 ) -> Result<Json<RepositoryResponse>, StatusCode> {
-    let config = serde_json::json!({
-        "path": req.path,
-        "bucket": req.bucket,
-        "region": req.region,
-        "endpoint": req.endpoint,
-        "access_key": req.access_key,
-        "secret_key": req.secret_key,
-        "container": req.container,
-        "connection_string": req.connection_string,
-        "account": req.account,
-    });
-
     // Validate that the storage backend can be created (creates dirs for local).
     let storage_config = crate::storage::StorageConfig {
         backend_type: req.repo_type.clone(),
@@ -112,6 +100,39 @@ async fn create_repository(
         tracing::error!("repository storage init: {}", e);
         return Err(StatusCode::BAD_REQUEST);
     }
+
+    // Credentials are encrypted at rest with the application key, so a DB-file
+    // compromise alone does not expose them.
+    let key = crate::encrypt::app_key(&state.config).map_err(|e| {
+        tracing::error!("repository credential encryption key: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let secret_key_enc = req.secret_key.as_deref()
+        .map(|s| crate::encrypt::encrypt_secret(&key, s))
+        .transpose()
+        .map_err(|e| {
+            tracing::error!("encrypt repository secret: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let connection_string_enc = req.connection_string.as_deref()
+        .map(|s| crate::encrypt::encrypt_secret(&key, s))
+        .transpose()
+        .map_err(|e| {
+            tracing::error!("encrypt repository connection string: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let config = serde_json::json!({
+        "path": req.path,
+        "bucket": req.bucket,
+        "region": req.region,
+        "endpoint": req.endpoint,
+        "access_key": req.access_key,
+        "secret_key": secret_key_enc,
+        "container": req.container,
+        "connection_string": connection_string_enc,
+        "account": req.account,
+    });
 
     let id = uuid::Uuid::new_v4().to_string();
     let t = chrono::Utc::now().timestamp();

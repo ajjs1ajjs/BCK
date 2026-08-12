@@ -194,7 +194,7 @@ async fn instant_recovery(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let storage = build_storage(&repo).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let storage = build_storage(&repo, encryption_key(&state)).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
 
@@ -328,12 +328,12 @@ async fn instant_recovery_vm(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let storage = build_storage(&repo).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let storage = build_storage(&repo, encryption_key(&state)).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let hv = crate::server::routes::hypervisors::fetch_hypervisor(&state.db, &req.hypervisor_id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let connector = crate::server::routes::hypervisors::connector_from_model(&hv)
+    let connector = crate::server::routes::hypervisors::connector_from_model(&hv, encryption_key(&state).as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
@@ -441,7 +441,7 @@ async fn download_file(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let storage = build_storage(&repo).await
+    let storage = build_storage(&repo, encryption_key(&state)).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let key = encryption_key(&state);
 
@@ -484,7 +484,7 @@ async fn start_surebackup(
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let storage = build_storage(&repo).await
+    let storage = build_storage(&repo, encryption_key(&state)).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let job = state.surebackup.start_verification(&req.snapshot_id, &req.vm_name).await
@@ -652,34 +652,21 @@ async fn lookup_repository(db: &DbPool, repo_id: &str) -> Result<RepositoryModel
     }
 }
 
-fn build_storage(repo: &RepositoryModel) -> impl std::future::Future<Output = anyhow::Result<Box<dyn crate::storage::StorageBackend>>> + 'static {
+fn build_storage(repo: &RepositoryModel, key: Option<Vec<u8>>) -> impl std::future::Future<Output = anyhow::Result<Box<dyn crate::storage::StorageBackend>>> + 'static {
     let repo_type = repo.repo_type.clone();
     let config_json = repo.config_json.clone();
     async move {
         let cfg: serde_json::Value = serde_json::from_str(&config_json)
             .unwrap_or_else(|_| serde_json::json!({}));
 
-        let storage_config = crate::storage::StorageConfig {
-            backend_type: repo_type,
-            path: cfg["path"].as_str().map(|s| s.to_string()),
-            bucket: cfg["bucket"].as_str().map(|s| s.to_string()),
-            region: cfg["region"].as_str().map(|s| s.to_string()),
-            endpoint: cfg["endpoint"].as_str().map(|s| s.to_string()),
-            access_key: cfg["access_key"].as_str().map(|s| s.to_string()),
-            secret_key: cfg["secret_key"].as_str().map(|s| s.to_string()),
-            container: cfg["container"].as_str().map(|s| s.to_string()),
-            connection_string: cfg["connection_string"].as_str().map(|s| s.to_string()),
-            account: cfg["account"].as_str().map(|s| s.to_string()),
-        };
+        let mut storage_config = crate::storage::storage_config_from_json(&cfg, key.as_deref());
+        storage_config.backend_type = repo_type;
         crate::storage::create_backend(storage_config).await
     }
 }
 
 fn encryption_key(state: &AppState) -> Option<Vec<u8>> {
-    let key_path = state.config.encryption.key_path.clone()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| crate::encrypt::default_key_path(&state.config));
-    crate::encrypt::load_key(&key_path, state.config.encryption.passphrase.as_deref()).ok()
+    crate::encrypt::app_key(&state.config).ok()
 }
 
 async fn perform_vm_restore(
@@ -690,8 +677,8 @@ async fn perform_vm_restore(
 
     let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await?;
-    let storage = build_storage(&repo).await?;
-    let key = encryption_key(state);
+    let storage = build_storage(&repo, encryption_key(&state)).await?;
+    let key = encryption_key(&state);
 
     // Optional: build a hypervisor connector so the restored VM can be
     // re-registered on the source hypervisor.
@@ -699,7 +686,7 @@ async fn perform_vm_restore(
         Some(hv_id) => {
             let hv = super::hypervisors::fetch_hypervisor(&state.db, hv_id).await?
                 .ok_or_else(|| anyhow::anyhow!("Hypervisor not found: {}", hv_id))?;
-            Some(super::hypervisors::connector_from_model(&hv)?)
+            Some(super::hypervisors::connector_from_model(&hv, encryption_key(&state).as_deref())?)
         }
         None => None,
     };
@@ -739,8 +726,8 @@ async fn perform_file_restore(
 
     let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await?;
-    let storage = build_storage(&repo).await?;
-    let key = encryption_key(state);
+    let storage = build_storage(&repo, encryption_key(&state)).await?;
+    let key = encryption_key(&state);
 
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let orchestrator = RestoreOrchestrator::new(&index_str)?;

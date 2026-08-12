@@ -128,8 +128,12 @@ fn connector_from_request(req: &AddHypervisorRequest) -> Result<Box<dyn Hypervis
     }
 }
 
-pub(crate) fn connector_from_model(m: &HypervisorModel) -> Result<Box<dyn HypervisorConnector>> {
-    crate::db::hypervisor::connector_from_model(m)
+pub(crate) fn connector_from_model(m: &HypervisorModel, key: Option<&[u8]>) -> Result<Box<dyn HypervisorConnector>> {
+    crate::db::hypervisor::connector_from_model(m, key)
+}
+
+fn app_key(state: &AppState) -> Option<Vec<u8>> {
+    crate::encrypt::app_key(&state.config).ok()
 }
 
 async fn list_hypervisors(
@@ -163,9 +167,22 @@ async fn add_hypervisor(
 
     let id = uuid::Uuid::new_v4().to_string();
     let t = chrono::Utc::now().timestamp();
+    // The password is encrypted at rest with the application key so the DB file
+    // alone does not expose hypervisor credentials.
+    let password_enc = crate::encrypt::app_key(&state.config)
+        .map_err(|e| {
+            tracing::error!("hypervisor credential encryption key: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })
+        .and_then(|key| {
+            crate::encrypt::encrypt_secret(&key, &req.password).map_err(|e| {
+                tracing::error!("encrypt hypervisor password: {}", e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })
+        })?;
     let credentials = serde_json::json!({
         "username": req.username,
-        "password": req.password,
+        "password": password_enc,
         "ignore_ssl": req.ignore_ssl.unwrap_or(false),
     });
 
@@ -283,7 +300,7 @@ async fn test_hypervisor(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let connector = connector_from_model(&model)
+    let connector = connector_from_model(&model, app_key(&state).as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let (ok, status, message) = match connector.test_connection().await {
@@ -306,7 +323,7 @@ async fn list_vms(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let connector = connector_from_model(&model)
+    let connector = connector_from_model(&model, app_key(&state).as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let vms = connector.list_vms().await

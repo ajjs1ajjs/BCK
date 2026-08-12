@@ -42,6 +42,31 @@ pub struct StorageConfig {
     pub account: Option<String>,
 }
 
+/// Build a `StorageConfig` from a stored JSON config, decrypting the secret
+/// fields (`secret_key`, `connection_string`) with the application key when it
+/// is provided. Plaintext legacy values decrypt transparently.
+pub fn storage_config_from_json(cfg: &serde_json::Value, key: Option<&[u8]>) -> StorageConfig {
+    let decrypt = |v: Option<&str>| -> Option<String> {
+        let v = v?;
+        match key {
+            Some(k) => crate::encrypt::decrypt_secret(k, v).ok(),
+            None => Some(v.to_string()),
+        }
+    };
+    StorageConfig {
+        backend_type: cfg["backend_type"].as_str().unwrap_or_default().to_string(),
+        path: cfg["path"].as_str().map(str::to_string),
+        bucket: cfg["bucket"].as_str().map(str::to_string),
+        region: cfg["region"].as_str().map(str::to_string),
+        endpoint: cfg["endpoint"].as_str().map(str::to_string),
+        access_key: cfg["access_key"].as_str().map(str::to_string),
+        secret_key: decrypt(cfg["secret_key"].as_str()),
+        container: cfg["container"].as_str().map(str::to_string),
+        connection_string: decrypt(cfg["connection_string"].as_str()),
+        account: cfg["account"].as_str().map(str::to_string),
+    }
+}
+
 pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBackend>> {
     // Custom object-storage endpoints are validated to stop the daemon being
     // used to probe internal/cloud-metadata hosts (SSRF).

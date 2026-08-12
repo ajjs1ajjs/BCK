@@ -16,6 +16,9 @@ pub struct User {
     pub role: UserRole,
     pub email: Option<String>,
     pub enabled: bool,
+    /// NULL for global/system accounts (and single-tenant deployments).
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
