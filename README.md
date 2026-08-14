@@ -1,8 +1,35 @@
 # BCK Enterprise — Backup & Disaster Recovery
 
-Enterprise-grade backup and disaster recovery system (Veeam / Nakivo alternative), built entirely in Rust.
+<p align="center">
+  <img src="docs/banner.svg" width="100%" alt="BCK Enterprise">
+</p>
 
-> **Status: all phases complete.** Core engine, storage, REST + gRPC APIs, Web UI, CLI, agent, proxy, VMware/Hyper-V backup + instant recovery, SOBR, Tape, M365, Cloud (AWS/Azure/GCP/K8s), CDP, DR, SSO, audit, reports and multi-tenancy are implemented and covered by 154 passing tests.
+**BCK Enterprise** — enterprise-grade backup and disaster recovery system (Veeam / Nakivo alternative), built entirely in Rust. Core engine, storage, REST + gRPC APIs, Web UI, CLI, agent and proxy; VMware/Hyper-V backup + instant recovery, SOBR, Tape, M365, Cloud, CDP, DR, SSO, audit, reports and multi-tenancy — all phases complete and covered by **154 passing tests**.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white" alt="Rust">
+  <img src="https://img.shields.io/badge/status-all%20phases%20complete-blue" alt="Status">
+  <img src="https://img.shields.io/badge/tests-154%20passing-green" alt="Tests">
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
+  <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
+</p>
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" width="48%" alt="Dashboard">
+  <img src="docs/screenshots/jobs.png" width="48%" alt="Backup Jobs">
+  <img src="docs/screenshots/repositories.png" width="48%" alt="Repositories">
+  <img src="docs/screenshots/snapshots.png" width="48%" alt="Snapshots">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/login.png" width="48%" alt="Login">
+</p>
+
+---
 
 ## Features
 

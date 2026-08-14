@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a1e30"/>
+      <stop offset="0.5" stop-color="#0f3350"/>
+      <stop offset="1" stop-color="#0a1e30"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1E88E5"/>
+      <stop offset="1" stop-color="#00ACC1"/>
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#42a5f5"/>
+      <stop offset="1" stop-color="#00acc1"/>
+    </linearGradient>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="textGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="360" fill="url(#bg)"/>
+
+  <g opacity="0.06" stroke="#42a5f5" stroke-width="1">
+    <path d="M0 90H1280M0 180H1280M0 270H1280M320 0V360M640 0V360M960 0V360"/>
+  </g>
+
+  <g transform="translate(64,96)">
+    <path d="M96 6 L176 34 L176 128 Q176 196 96 224 Q16 196 16 128 L16 34 Z" fill="none" stroke="url(#shieldGrad)" stroke-width="6" stroke-linejoin="round" filter="url(#glow)"/>
+    <path d="M96 20 L164 43 L164 130 Q164 185 96 210 Q28 185 28 130 L28 43 Z" fill="url(#shieldGrad)" opacity="0.16"/>
+    <path d="M62 108 L88 134 L132 84" fill="none" stroke="#00e5ff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+    <rect x="196" y="34" width="30" height="130" rx="5" fill="url(#brand)" opacity="0.85" filter="url(#glow)"/>
+    <circle cx="211" cy="60" r="5" fill="#00e5ff"/>
+    <rect x="242" y="70" width="30" height="94" rx="5" fill="url(#brand)" opacity="0.55"/>
+    <rect x="288" y="106" width="30" height="58" rx="5" fill="url(#brand)" opacity="0.3"/>
+  </g>
+
+  <text x="356" y="148" font-family="Segoe UI, sans-serif" font-size="62" font-weight="700" fill="#ffffff" filter="url(#textGlow)">BCK <tspan fill="url(#brand)">Enterprise</tspan></text>
+  <text x="360" y="196" font-family="Segoe UI, sans-serif" font-size="23" fill="#9fc7e8">Backup &amp; Disaster Recovery — built in Rust, built to restore</text>
+
+  <g transform="translate(356,236)">
+    <rect x="0" y="0" width="96" height="34" rx="17" fill="#1E88E5" opacity="0.14" stroke="#1E88E5" stroke-width="1"/>
+    <text x="48" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#64b5f6" text-anchor="middle">Rust</text>
+    <rect x="108" y="0" width="176" height="34" rx="17" fill="#00ACC1" opacity="0.14" stroke="#00ACC1" stroke-width="1"/>
+    <text x="196" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#4dd0e1" text-anchor="middle">Dedup · AES-256 · Zstd</text>
+    <rect x="296" y="0" width="196" height="34" rx="17" fill="#7c4dff" opacity="0.15" stroke="#7c4dff" stroke-width="1"/>
+    <text x="394" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#b388ff" text-anchor="middle">VMware · Hyper-V · CDP</text>
+    <rect x="504" y="0" width="226" height="34" rx="17" fill="#26a69a" opacity="0.13" stroke="#26a69a" stroke-width="1"/>
+    <text x="617" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#4db6ac" text-anchor="middle">SOBR · Tape LTFS · M365</text>
+    <rect x="742" y="0" width="150" height="34" rx="17" fill="#ffb300" opacity="0.13" stroke="#ffb300" stroke-width="1"/>
+    <text x="817" y="23" font-family="Segoe UI, sans-serif" font-size="16" font-weight="600" fill="#ffd54f" text-anchor="middle">Cloud · DR</text>
+  </g>
+
+  <g transform="translate(984,60)">
+    <rect x="0" y="0" width="212" height="52" rx="12" fill="#1E88E5" opacity="0.14" stroke="#1E88E5" stroke-width="2"/>
+    <text x="106" y="22" font-family="Segoe UI, sans-serif" font-size="14" fill="#64b5f6" text-anchor="middle" font-weight="600">154 passing tests</text>
+    <text x="106" y="42" font-family="Segoe UI, sans-serif" font-size="14" fill="#9fc7e8" text-anchor="middle">all phases complete</text>
+  </g>
+
+  <path d="M0 320 Q64 310 128 320 T256 320 T384 320 T512 320 T640 320 T768 320 T896 320 T1024 320 T1152 320 T1280 320" fill="none" stroke="url(#brand)" stroke-width="2" opacity="0.4"/>
+</svg>
