@@ -10,19 +10,7 @@ jobs:
   build:
     permissions:
       contents: read
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: linux
-            ext: ""
-          - os: windows-latest
-            target: windows
-            ext: ".exe"
-          - os: macos-latest
-            target: darwin
-            ext: ""
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
@@ -35,26 +23,12 @@ jobs:
         shell: bash
         run: |
           set -eux
-          case "${{ matrix.os }}" in
-            ubuntu-latest)
-              curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
-              sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
-              ;;
-            macos-latest)
-              curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-osx-universal_binary.zip
-              sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
-              ;;
-            windows-latest)
-              curl -fsSL -o "$RUNNER_TEMP/protoc.zip" https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip
-              unzip -o "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc" include/* bin/protoc.exe
-              echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
-              ;;
-          esac
+          curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
 
-      - name: Install build deps (Linux)
+      - name: Install build deps
         shell: bash
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
-        if: matrix.os == 'ubuntu-latest'
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -62,7 +36,7 @@ jobs:
           path: |
             ~/.cargo/registry
             target
-          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Setup Node (for web UI)
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -73,53 +47,26 @@ jobs:
         shell: bash
         run: cargo build --release --workspace --bins
 
-      - name: Build web UI (linux only)
+      - name: Build web UI
         shell: bash
         run: |
           (cd web-ui && npm ci --silent && npm run build)
-        if: matrix.os == 'ubuntu-latest'
 
-      - name: Build web UI (windows)
-        shell: pwsh
-        run: |
-          Push-Location web-ui
-          try { npm ci --silent; npm run build | Out-Null } finally { Pop-Location }
-        if: matrix.os == 'windows-latest'
-
-      - name: Assemble archive (linux)
+      - name: Assemble archive
         shell: bash
         run: |
           mkdir -p staging/bin staging/web-ui
           cp target/release/bckd target/release/bck-agent target/release/bck target/release/bck-proxy staging/bin/
           cp -r web-ui/dist staging/web-ui/
-          tar -czf bck-linux-${{ matrix.ext == '' && 'x86_64' || matrix.target }}.tar.gz -C staging .
+          tar -czf bck-linux-x86_64.tar.gz -C staging .
           echo "ARCH=bck-linux-x86_64.tar.gz" >> $GITHUB_ENV
-        if: matrix.os == 'ubuntu-latest'
-
-      - name: Assemble archive (windows)
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force staging/bin | Out-Null
-          Copy-Item target/release/bckd.exe, target/release/bck-agent.exe, target/release/bck.exe, target/release/bck-proxy.exe staging/bin/
-          Copy-Item web-ui/dist staging/web-ui -Recurse
-          Compress-Archive -Path staging/bin, staging/web-ui -DestinationPath bck-windows-x86_64.zip
-        if: matrix.os == 'windows-latest'
-
-      - name: Assemble archive (darwin)
-        shell: bash
-        run: |
-          mkdir -p staging/bin
-          cp target/release/bckd target/release/bck-agent target/release/bck target/release/bck-proxy staging/bin/
-          tar -czf bck-darwin-x86_64.tar.gz -C staging .
-        if: matrix.os == 'macos-latest'
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: bck-${{ matrix.target }}
+          name: bck-linux
           path: |
             bck-*.tar.gz
-            bck-*.zip
 
   publish:
     needs: build
@@ -135,5 +82,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
-          files: artifacts/**/bck-*.tar.gz, artifacts/**/bck-*.zip
+          files: artifacts/**/bck-*.tar.gz
           generate_release_notes: true

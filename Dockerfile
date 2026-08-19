@@ -1,7 +1,9 @@
 # ---- Build Stage ----
-FROM rust:1.85-slim-bookworm AS builder
+FROM ubuntu:24.04 AS builder
 
-RUN apt-get update && apt-get install -y pkg-config libssl-dev protobuf-compiler && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY . .
@@ -9,7 +11,7 @@ COPY . .
 RUN cargo build --release --workspace
 
 # ---- Runtime ----
-FROM debian:bookworm-slim AS bckd
+FROM ubuntu:24.04 AS bckd
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/* \
     && useradd --system --create-home --shell /usr/sbin/nologin bck \
     && mkdir -p /data && chown -R bck:bck /data
@@ -23,10 +25,10 @@ USER bck
 EXPOSE 9440 9441
 CMD ["bckd"]
 
-FROM debian:bookworm-slim AS agent
+FROM ubuntu:24.04 AS agent
 COPY --from=builder /app/target/release/bck-agent /usr/local/bin/bck-agent
 CMD ["bck-agent"]
 
-FROM debian:bookworm-slim AS cli
+FROM ubuntu:24.04 AS cli
 COPY --from=builder /app/target/release/bck /usr/local/bin/bck
 ENTRYPOINT ["bck"]

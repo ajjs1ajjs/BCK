@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# BCK Enterprise Backup — one-line installer (Linux / macOS)
+# BCK Enterprise Backup — one-line installer (Ubuntu / Debian)
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 #
 # Re-running the same command performs an UPDATE (binaries + web UI are
 # replaced, configuration and backup data are preserved).
@@ -12,7 +12,7 @@
 #   1. Download the latest release archive from GitHub Releases.
 #      If no release exists yet (or --from-source is passed), build from source.
 #   2. Install binaries, web UI and default config to BCK_HOME (/opt/bck).
-#   3. Create systemd service (Linux) / launchd plist (macOS).
+#   3. Create systemd service.
 #   4. Idempotent: safe to re-run, acts as an upgrade.
 
 set -euo pipefail
@@ -39,13 +39,8 @@ log()  { printf '\033[1;34m[BCK]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[BCK]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[BCK]\033[0m %s\n' "$*" >&2; exit 1; }
 
-OS="$(uname -s)"
+OS_LOWER="linux"
 ARCH="$(uname -m)"
-case "$OS" in
-    Linux)  OS_LOWER="linux" ;;
-    Darwin) OS_LOWER="darwin" ;;
-    *)      fail "Unsupported OS: $OS" ;;
-esac
 case "$ARCH" in
     x86_64|amd64) ARCH_LOWER="x86_64" ;;
     aarch64|arm64) ARCH_LOWER="aarch64" ;;
@@ -53,7 +48,6 @@ case "$ARCH" in
 esac
 
 # Re-exec as root so system deps + /opt install + service registration work.
-# Only applies to the Linux/macOS flow; sudo is used when available.
 if [ "$(id -u)" -ne 0 ]; then
     if command -v sudo >/dev/null 2>&1; then
         log "Not running as root — re-executing installer with sudo..."
@@ -115,11 +109,8 @@ ensure_rust() {
     log "Rust toolchain ready (cargo $(cargo --version | awk '{print $2}'))."
 }
 
-# Install build prerequisites (Linux): C toolchain + OpenSSL + protoc + node.
+# Install build prerequisites (Ubuntu / Debian): C toolchain + OpenSSL + protoc + node.
 ensure_build_deps() {
-    if [ "$OS_LOWER" != "linux" ]; then
-        return 0
-    fi
     # Only the packages that are actually missing get installed, so distro
     # repos that already provide node (e.g. nodesource) are never disturbed.
     local missing=""
@@ -132,33 +123,25 @@ ensure_build_deps() {
 
     if [ -n "$missing" ]; then
         log "Installing build dependencies:$missing ..."
-        local ok=0
-        if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apt-get update -y >/dev/null 2>&1
-            apt-get install -y $missing && ok=1
-        elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            dnf install -y gcc gcc-c++ cmake pkg-config openssl-devel libzstd-devel protobuf-compiler 2>&1 | tail -n 2 && ok=1
-        elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apk add --no-cache build-base cmake pkgconf openssl-dev zstd-dev protobuf 2>&1 | tail -n 2 && ok=1
-        fi
-        if [ "$ok" -ne 1 ]; then
-            warn "Failed to install build dependencies automatically."
-            warn "Install them manually and re-run, e.g.:"
+        if ! command -v apt-get >/dev/null 2>&1; then
+            warn "apt-get not found — this installer requires Ubuntu / Debian."
+            warn "Install the dependencies manually and re-run, e.g.:"
             warn "  sudo apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler"
             return 1
         fi
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y $missing || {
+            warn "Failed to install build dependencies automatically."
+            warn "Install them manually and re-run:"
+            warn "  sudo apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler"
+            return 1
+        }
     fi
 
     # Node.js for the web console — best effort, never blocks the install.
     if ! command -v npm >/dev/null 2>&1; then
         log "Installing Node.js (for web console) ..."
-        if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apt-get install -y nodejs npm >/dev/null 2>&1 || true
-        elif command -v dnf >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            dnf install -y nodejs npm >/dev/null 2>&1 || true
-        elif command -v apk >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-            apk add --no-cache nodejs npm >/dev/null 2>&1 || true
-        fi
+        apt-get install -y nodejs npm >/dev/null 2>&1 || true
         command -v npm >/dev/null 2>&1 || warn "npm still not available — web console will be skipped (daemon/CLI/agent work)."
     fi
 
@@ -335,7 +318,7 @@ done
 chown -R "$BCK_USER:$BCK_GROUP" "$BCK_HOME" "$BCK_DATA_DIR" "$BCK_CONFIG_DIR" 2>/dev/null || true
 
 # ------------------------------------------------------------- service ---------
-if [ "$OS_LOWER" = "linux" ] && command -v systemctl >/dev/null 2>&1; then
+if command -v systemctl >/dev/null 2>&1; then
     cat > /etc/systemd/system/bckd.service <<EOF
 [Unit]
 Description=BCK Enterprise Backup Daemon
@@ -372,23 +355,8 @@ EOF
             log "No bootstrap admin password found (already initialized?). See: sudo journalctl -u bckd | grep -i password"
         fi
     fi
-elif [ "$OS_LOWER" = "darwin" ]; then
-    PLIST="$HOME/Library/LaunchAgents/com.bck.daemon.plist"
-    cat > "$PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-    <key>Label</key><string>com.bck.daemon</string>
-    <key>ProgramArguments</key>
-    <array><string>${BCK_HOME}/bin/bckd</string><string>-c</string><string>${CONFIG}</string></array>
-    <key>KeepAlive</key><true/>
-</dict></plist>
-EOF
-    launchctl unload "$PLIST" 2>/dev/null || true
-    launchctl load "$PLIST" 2>/dev/null || true
-    log "launchd agent installed. Status: launchctl list | grep com.bck.daemon"
 else
-    warn "No service manager detected — run the daemon manually:"
+    warn "systemd not found — run the daemon manually:"
     warn "  ${BCK_HOME}/bin/bckd -c ${CONFIG}"
 fi
 

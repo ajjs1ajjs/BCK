@@ -23,7 +23,7 @@ E:\Code\BCK\
 ├── proxy/         # backup proxy
 ├── cli/           # CLI інструмент
 ├── web-ui/        # React фронтенд
-├── scripts/       # installers (sh/ps1), build/check helpers
+├── scripts/       # install.sh (Ubuntu/Debian), build/check helpers
 ├── Cargo.toml     # workspace
 └── docker-compose.yml
 ```
@@ -54,7 +54,7 @@ E:\Code\BCK\
 | Enterprise | ✅ | Reports (SLA/CSV), SSO, audit log, **multi-tenancy (REST + Web UI + CLI)** |
 | Agent | ✅ | file_backup, app-aware (VSS, SQL, Oracle archivelog) |
 | Proxy | ✅ | backup proxy |
-| CI/CD | ✅ | release.yml (GitHub Actions), install.sh/ps1, Dockerfile, docker-compose |
+| CI/CD | ✅ | release.yml (GitHub Actions, Ubuntu), install.sh, Dockerfile, docker-compose |
 
 ## Чек-лист фаз
 

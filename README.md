@@ -64,6 +64,9 @@
 
 ## Quick Start
 
+> **Target platform:** the system installs and runs on **Ubuntu / Debian** servers
+> and is managed entirely from there via the web console (`http://<host>:9440`).
+
 ```bash
 # Build
 cargo build --release
@@ -113,22 +116,17 @@ Default web console: `http://localhost:9440`.
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.
 
-**Linux / macOS** (one command — installs Rust, all system build dependencies, the daemon/agent/CLI/proxy, web console and registers the service):
+**Ubuntu / Debian** (one command — installs Rust, all system build dependencies, the daemon/agent/CLI/proxy, web console and registers the systemd service):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
-**Windows (PowerShell)** — run in an **Administrator** PowerShell (auto-elevates if needed):
-```powershell
-powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex"
-```
-
 What the installer does:
 
-1. Downloads the latest GitHub release for your OS/arch. When no release exists yet (or `--from-source` / `-FromSource` is passed) it **builds from source** — installing the Rust toolchain and system build dependencies automatically on a fresh Linux/macOS machine (requires root for `apt`/`dnf`/`apk` installs).
-2. Installs `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console to `BCK_HOME` (`/opt/bck` on Linux/macOS, `%ProgramFiles%\BCK` on Windows).
-3. Creates a default config (`/etc/bck/config.toml` on Linux, `%ProgramData%\BCK\config.toml` on Windows) — existing config is **preserved** on update.
-4. Registers `bckd` as a systemd service (Linux), launchd agent (macOS) or Windows service (with restart-on-failure).
+1. Downloads the latest GitHub release for Linux/amd64. When no release exists yet (or `--from-source` is passed) it **builds from source** — installing the Rust toolchain and system build dependencies automatically on a fresh Ubuntu machine (requires root for `apt` installs).
+2. Installs `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console to `BCK_HOME` (`/opt/bck`).
+3. Creates a default config (`/etc/bck/config.toml`) — existing config is **preserved** on update.
+4. Registers `bckd` as a systemd service (with restart-on-failure).
 5. Symlinks the binaries into `PATH`.
 
 > **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates. Build prerequisites (installed automatically when running as root) are: `build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler`.
@@ -142,7 +140,7 @@ What the installer does:
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
 ```bash
-# Add a weekly update (Linux/macOS)
+# Add a weekly update
 0 3 * * 0  curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
