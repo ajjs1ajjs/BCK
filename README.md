@@ -1,4 +1,8 @@
-# BCK Enterprise — Backup & Disaster Recovery
+<div align="center">
+
+# BCK Enterprise
+
+### Backup & Disaster Recovery for modern infrastructure
 
 <p align="center">
   <img src="docs/banner.svg" width="100%" alt="BCK Enterprise">
@@ -14,9 +18,11 @@
   <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
 </p>
 
+</div>
+
 ---
 
-## Screenshots
+## 🖼️ Screenshots
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" width="48%" alt="Dashboard">
@@ -31,7 +37,7 @@
 
 ---
 
-## Features
+## ✨ Features
 
 | Area | Capabilities |
 |------|--------------|
