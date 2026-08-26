@@ -8,12 +8,12 @@
   <img src="docs/banner.svg" width="100%" alt="BCK Enterprise">
 </p>
 
-**BCK Enterprise** — enterprise-grade backup and disaster recovery system (Veeam / Nakivo alternative), built entirely in Rust. Core engine, storage, REST + gRPC APIs, Web UI, CLI, agent and proxy; VMware/Hyper-V backup + instant recovery, SOBR, Tape, M365, Cloud, CDP, DR, SSO, audit, reports and multi-tenancy — all phases complete and covered by **154 passing tests**.
+**BCK Enterprise** — enterprise-grade backup and disaster recovery system (Veeam / Nakivo alternative), built entirely in Rust. Core engine, storage, REST + gRPC APIs, Web UI, CLI, agent and proxy; VMware/Hyper-V backup + instant recovery, SOBR, Tape, M365, Cloud, CDP, DR, SSO, audit, reports and multi-tenancy — all phases complete and covered by **188 passing tests**.
 
 <p align="center">
   <img src="https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/status-all%20phases%20complete-blue" alt="Status">
-  <img src="https://img.shields.io/badge/tests-154%20passing-green" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-188%20passing-green" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
 </p>
@@ -22,7 +22,7 @@
 
 ---
 
-## 🖼️ Screenshots
+## Screenshots
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" width="48%" alt="Dashboard">
@@ -37,7 +37,7 @@
 
 ---
 
-## ✨ Features
+## Features
 
 | Area | Capabilities |
 |------|--------------|
@@ -70,8 +70,8 @@
 
 ## Quick Start
 
-> **Target platform:** the system installs and runs on **Ubuntu / Debian** servers
-> and is managed entirely from there via the web console (`http://<host>:9440`).
+> **Target platforms:** **Ubuntu / Debian** (primary) and **Windows Server / Windows 10+**.
+> Managed via the web console (`http://<host>:9440`).
 
 ```bash
 # Build
@@ -122,26 +122,22 @@ Default web console: `http://localhost:9440`.
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.
 
-**Ubuntu / Debian** (one command — installs Rust, all system build dependencies, the daemon/agent/CLI/proxy, web console and registers the systemd service):
+**Ubuntu / Debian** (installs Rust, build dependencies, binaries, web console, registers the systemd service):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
-What the installer does:
+**Windows** (elevated PowerShell; installs to `C:\Program Files\BCK`, data in `%ProgramData%\bck`, registers the `bckd` Windows service):
+```powershell
+irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
+```
 
-1. Downloads the latest GitHub release for Linux/amd64. When no release exists yet (or `--from-source` is passed) it **builds from source** — installing the Rust toolchain and system build dependencies automatically on a fresh Ubuntu machine (requires root for `apt` installs).
-2. Installs `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console to `BCK_HOME` (`/opt/bck`).
-3. Creates a default config (`/etc/bck/config.toml`) — existing config is **preserved** on update.
-4. Registers `bckd` as a systemd service (with restart-on-failure).
-5. Symlinks the binaries into `PATH`.
+Both installers:
 
-> **Note on source builds:** if npm/Node.js is not installed the web console is skipped (daemon + CLI + agent still work, REST API and gRPC are available). The first source build takes several minutes as it compiles all crates. Build prerequisites (installed automatically when running as root) are: `build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler`.
-
-> **If the installer stops at "Required tool not found: cargo":** you are likely running an old cached copy of the script (GitHub raw sometimes caches for a few minutes after a commit). Verify you have the latest and re-run (use `sudo bash` so system deps can be installed):
-> ```bash
-> curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | grep -q ensure_rust && echo "script is up to date"
-> curl -fsSL "https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh?ts=$(date +%s)" | sudo bash
-> ```
+1. Download the latest GitHub release for the platform (or **build from source** when no release exists).
+2. Install `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console.
+3. Create a default config — existing config is **preserved** on update.
+4. Register `bckd` as a service (systemd on Linux, Windows Service on Windows) with restart-on-failure.
 
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
@@ -179,154 +175,17 @@ bck restore <snapshot_id> <target> --files <file1,file2> --overwrite
 # System
 bck status
 bck logs --tail
-
-# Phase 4-6 management
-bck sobr tiers
-bck sobr tier add <name> --tier-type Capacity --backend local --capacity 1000000000000
-bck sobr policies
-bck sobr policy add <name> --performance-tier-id <id> --capacity-tier-id <id>
-bck cloud list
-bck cloud register <name> --provider aws --auth-type access_key --region us-east-1
-bck m365 tenants
-bck m365 tenant add <name> --tenant-id <tid> --client-id <cid> --client-secret <sec>
-bck m365 jobs
-bck dr sites
-bck dr plans
-bck dr failover <plan_id>
-bck tenant list
-bck tenant add <name> <slug>
-bck portal my-requests
-bck portal requests
-
-# VMware / Hyper-V
-bck hypervisor list
-bck hypervisor vms <hypervisor_id>
-bck hypervisor backup <hypervisor_id> --vm-ref <ref> --repo <repo_id>
-bck hypervisor instant-recover <hypervisor_id> --snapshot <id> --vm-name <name> --protocol nfs
-bck hypervisor instant-list
-bck hypervisor instant-stop <session_id>
 ```
+
+Enterprise management commands (SOBR, cloud, M365, DR, tenants, portal, hypervisors): see `bck --help`.
 
 ## Web UI
 
 13 pages: Dashboard, Backup Jobs, Repositories, Snapshots, Restore, SOBR, Cloud, Microsoft 365, Tape Library, Disaster Recovery, Tenants, Hypervisors & VMs, Self-service portal (plus Administration with SSO / audit / reports).
 
-## API Endpoints
+## API
 
-```
-POST   /api/v1/auth/login
-GET    /api/v1/dashboard/stats
-
-GET    /api/v1/jobs
-POST   /api/v1/jobs
-GET    /api/v1/jobs/:id
-PUT    /api/v1/jobs/:id
-DELETE /api/v1/jobs/:id
-POST   /api/v1/jobs/:id/run
-POST   /api/v1/jobs/:id/cancel
-
-GET    /api/v1/repositories
-POST   /api/v1/repositories
-GET    /api/v1/snapshots
-GET    /api/v1/snapshots/:id
-DELETE /api/v1/snapshots/:id
-
-POST   /api/v1/restore/file
-POST   /api/v1/restore/vm
-POST   /api/v1/restore/instant
-POST   /api/v1/restore/instant/vm
-GET    /api/v1/restore/instant
-POST   /api/v1/restore/instant/:id/stop
-GET    /api/v1/restore/explore/:snapshot_id
-GET    /api/v1/restore/explore/:snapshot_id/file
-POST   /api/v1/restore/surebackup
-GET    /api/v1/restore/surebackup
-GET    /api/v1/restore/session/:id
-
-GET    /api/v1/hypervisors
-POST   /api/v1/hypervisors
-GET    /api/v1/hypervisors/:id
-DELETE /api/v1/hypervisors/:id
-POST   /api/v1/hypervisors/:id/test
-GET    /api/v1/hypervisors/:id/vms
-POST   /api/v1/hypervisors/:id/vms/:vm_ref/backup
-
-GET    /api/v1/sobr
-POST   /api/v1/sobr/tiers
-GET    /api/v1/sobr/policies
-POST   /api/v1/sobr/policies
-POST   /api/v1/sobr/policies/:id/execute
-
-GET    /api/v1/cloud
-POST   /api/v1/cloud
-GET    /api/v1/cloud/:id
-DELETE /api/v1/cloud/:id
-GET    /api/v1/cloud/:id/restorable
-POST   /api/v1/cloud/:id/restore
-GET    /api/v1/cloud/:id/restores
-GET    /api/v1/cloud/restores
-GET    /api/v1/cloud/restores/:rid
-
-GET    /api/v1/m365/tenants
-POST   /api/v1/m365/tenants
-GET    /api/v1/m365/jobs
-POST   /api/v1/m365/jobs
-
-GET    /api/v1/tape/drives
-POST   /api/v1/tape/drives
-GET    /api/v1/tape/media
-POST   /api/v1/tape/media
-POST   /api/v1/tape/retention
-
-GET    /api/v1/cdp/policies
-POST   /api/v1/cdp/policies
-POST   /api/v1/cdp/policies/:id/start
-GET    /api/v1/cdp/sessions
-POST   /api/v1/cdp/sessions/:id/stop
-
-GET    /api/v1/dr/status
-GET    /api/v1/dr/sites
-POST   /api/v1/dr/sites
-GET    /api/v1/dr/plans
-POST   /api/v1/dr/plans
-POST   /api/v1/dr/plans/:id/failover
-POST   /api/v1/dr/plans/:id/failback
-POST   /api/v1/dr/plans/:id/test
-
-GET    /api/v1/tenants
-POST   /api/v1/tenants
-GET    /api/v1/tenants/:id
-DELETE /api/v1/tenants/:id
-POST   /api/v1/tenants/:id/suspend
-PUT    /api/v1/tenants/:id/quota
-PUT    /api/v1/tenants/:id/settings
-GET    /api/v1/tenants/:id/usage
-
-GET    /api/v1/portal/me
-GET    /api/v1/portal/restore-requests
-POST   /api/v1/portal/restore-requests
-POST   /api/v1/portal/restore-requests/:id/cancel
-GET    /api/v1/portal/admin/restore-requests
-POST   /api/v1/portal/admin/restore-requests/:id/approve
-POST   /api/v1/portal/admin/restore-requests/:id/reject
-POST   /api/v1/portal/admin/restore-requests/:id/complete
-
-GET    /api/v1/events
-GET    /api/v1/agents
-POST   /api/v1/agents/:id/tasks
-```
-
-## gRPC
-
-The daemon exposes the following services on port **9441** (all backed by the real engine / database):
-
-| Service | Methods |
-|---------|---------|
-| `BackupEngine` | StartJob, CancelJob, StreamProgress, ListSnapshots, ValidateConfig, Restore, RestoreFile, InstantRecovery, GetStats, CheckHealth, GetRepositoryStats |
-| `SobrService` | ListTiers, AddTier, ListPolicies, CreatePolicy, GetTierStats |
-| `CloudService` | ListAccounts, RegisterAccount, RemoveAccount, GetAccount, ListRestorableKinds, SubmitRestore, ListRestores |
-| `M365Service` | ListTenants, RegisterTenant, ListBackupJobs, StartBackup |
-| `Agent` | Heartbeat, StartBackup, StartRestore, ExecuteScript, GetStatus, UpdateAgent |
+REST endpoints and gRPC service reference: [docs/API.md](docs/API.md).
 
 ## Development
 
@@ -334,7 +193,7 @@ The daemon exposes the following services on port **9441** (all backed by the re
 # Check compilation
 cargo check
 
-# Run tests (154 in bck-core)
+# Run tests (188 in bck-core)
 cargo test
 
 # Run daemon in dev mode

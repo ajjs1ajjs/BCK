@@ -1237,7 +1237,7 @@ pub fn job_status_string(status: &JobStatus) -> String {
         JobStatus::Pending => "pending".into(),
         JobStatus::Running => "running".into(),
         JobStatus::Completed => "completed".into(),
-        JobStatus::Failed(ref e) => format!("failed: {}", e),
+        JobStatus::Failed(e) => format!("failed: {}", e),
         JobStatus::Cancelled => "cancelled".into(),
     }
 }

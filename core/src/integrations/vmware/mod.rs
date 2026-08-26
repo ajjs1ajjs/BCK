@@ -560,7 +560,7 @@ fn parse_changed_disk_areas_response(xml: &str) -> Result<Vec<ChangedBlock>> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) => {
+            Ok(Event::Start(e)) => {
                 let name_bytes = e.name().as_ref().to_vec();
                 let name_str = String::from_utf8_lossy(&name_bytes);
                 match name_str.as_ref() {
@@ -570,13 +570,13 @@ fn parse_changed_disk_areas_response(xml: &str) -> Result<Vec<ChangedBlock>> {
                     _ => {}
                 }
             }
-            Ok(Event::Text(ref e)) => {
+            Ok(Event::Text(e)) => {
                 if let Ok(text) = e.unescape() {
                     if in_offset { current_offset = text.parse().unwrap_or(0); }
                     if in_length { current_length = text.parse().unwrap_or(0); }
                 }
             }
-            Ok(Event::End(ref e)) => {
+            Ok(Event::End(e)) => {
                 let name_bytes = e.name().as_ref().to_vec();
                 let name_str = String::from_utf8_lossy(&name_bytes);
                 match name_str.as_ref() {

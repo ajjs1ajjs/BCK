@@ -63,7 +63,7 @@ impl AuditLogger {
         info!("AUDIT: user={} action={} resource={}/{} outcome={:?}",
             event.user_id, event.action, event.resource_type, event.resource_id, event.outcome);
 
-        if let Some(ref path) = self.log_path {
+        if let Some(path) = &self.log_path {
             if let Ok(json) = serde_json::to_string(&event) {
                 if let Ok(mut file) = std::fs::OpenOptions::new()
                     .create(true)

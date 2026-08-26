@@ -16,6 +16,7 @@ import SelfService from './pages/SelfService'
 import Login from './pages/Login'
 import Layout from './components/Layout'
 import { getToken } from './api/client'
+import type { JSX } from 'react'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   if (!getToken()) {

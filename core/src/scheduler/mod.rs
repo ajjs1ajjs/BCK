@@ -32,7 +32,7 @@ impl Scheduler {
     }
 
     pub async fn add_job(&self, job: &BackupJobModel) {
-        if let Some(ref schedule) = job.schedule {
+        if let Some(schedule) = &job.schedule {
             let scheduled = ScheduledJob {
                 job_id: job.id.clone(),
                 cron_expression: schedule.clone(),

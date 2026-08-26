@@ -3,8 +3,8 @@ members = ["core", "bckd", "agent", "proxy", "cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
-edition = "2021"
+version = "0.7.0"
+edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
@@ -19,8 +19,9 @@ tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
-tonic = "0.12"
-prost = "0.13"
+tonic = "0.14"
+prost = "0.14"
+tonic-prost = "0.14"
 async-trait = "0.1"
 sha2 = "0.10"
 hex = "0.4"
