@@ -3,15 +3,18 @@
     BCK Enterprise Backup - one-line installer for Windows (PowerShell).
 
 .DESCRIPTION
-    Mirrors scripts/install.sh for Ubuntu/Debian.
+    Mirrors scripts/install.sh for Ubuntu/Debian. Fully automatic:
 
-    Usage:
       irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
 
     Or locally:
       powershell -ExecutionPolicy Bypass -File scripts\install.ps1
       powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -FromSource
-      powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Version v0.1.0
+      powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Version v0.7.0
+
+    Anything that is missing is downloaded and installed automatically:
+    release archive -> binaries; otherwise build tools (Rust, Git, protoc,
+    Node.js, MSVC Build Tools) via rustup / winget / direct download.
 
     Re-running performs an UPDATE (binaries + web UI replaced, config and
     backup data preserved). Registers a Windows service 'bckd'.
@@ -32,10 +35,11 @@ $ErrorActionPreference = "Stop"
 
 # ---------------------------------------------------------------- settings ---
 $Repo       = "ajjs1ajjs/BCK"
-$BckHome    = if ($env:BCK_HOME)        { $env:BCK_HOME }        else { Join-Path $env:ProgramFiles "BCK" }
-$BckDataDir = if ($env:BCK_DATA_DIR)    { $env:BCK_DATA_DIR }    else { Join-Path $env:ProgramData "bck" }
-$BckPort    = if ($env:BCK_PORT)        { $env:BCK_PORT }        else { "9440" }
+$BckHome    = if ($env:BCK_HOME)     { $env:BCK_HOME }     else { Join-Path $env:ProgramFiles "BCK" }
+$BckDataDir = if ($env:BCK_DATA_DIR) { $env:BCK_DATA_DIR } else { Join-Path $env:ProgramData "bck" }
+$BckPort    = if ($env:BCK_PORT)     { $env:BCK_PORT }     else { "9440" }
 $BinNames   = @("bckd.exe", "bck-agent.exe", "bck.exe", "bck-proxy.exe")
+$ProtocVer  = "29.3"
 
 function Log  { param($m) Write-Host "[BCK] $m" -ForegroundColor Cyan }
 function Warn { param($m) Write-Host "[BCK] $m" -ForegroundColor Yellow }
@@ -53,6 +57,27 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 
 # --------------------------------------------------------------- helpers -----
+function Refresh-Path {
+    $machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+    $userPath    = [Environment]::GetEnvironmentVariable("PATH", "User")
+    $env:PATH = "$machinePath;$userPath"
+}
+
+function Invoke-WingetInstall {
+    param([string]$Id, [string]$Override = "")
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Warn "winget not available - cannot auto-install $Id."
+        return $false
+    }
+    Log "Installing $Id via winget (this may take a while)..."
+    $args = @("install", "--id", $Id, "-e", "--silent",
+              "--accept-source-agreements", "--accept-package-agreements")
+    if ($Override) { $args += "--override"; $args += $Override }
+    & winget @args | Out-Null
+    Refresh-Path
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Get-LatestRelease {
     try {
         $r = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -TimeoutSec 20
@@ -60,6 +85,7 @@ function Get-LatestRelease {
     } catch { return "" }
 }
 
+# ------------------------------------------------- auto-install build deps ---
 function Ensure-Rust {
     if (Get-Command cargo -ErrorAction SilentlyContinue) {
         Log "Rust toolchain present ($(cargo --version))."
@@ -75,23 +101,82 @@ function Ensure-Rust {
     }
 }
 
-function Ensure-BuildDeps {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Fail "git not found. Install it: winget install Git.Git   (then re-run)"
+function Ensure-Git {
+    if (Get-Command git -ErrorAction SilentlyContinue) { return }
+    if (Invoke-WingetInstall -Id "Git.Git") {
+        if (Get-Command git -ErrorAction SilentlyContinue) { Log "Git installed."; return }
     }
+    Fail "git could not be installed automatically. Install it manually and re-run."
+}
+
+function Ensure-Node {
+    if (Get-Command npm -ErrorAction SilentlyContinue) { return }
+    Warn "npm not found - installing Node.js for the web console..."
+    if (-not (Invoke-WingetInstall -Id "OpenJS.NodeJS.LTS")) {
+        Warn "Node.js could not be installed automatically - web console will be skipped (daemon/CLI/agent work)."
+    }
+}
+
+function Ensure-Protoc {
+    if (Get-Command protoc -ErrorAction SilentlyContinue) {
+        Log "protoc present ($(protoc --version))."
+        return
+    }
+    # Direct download of the official prebuilt binary - no package manager needed.
+    $toolsDir = Join-Path $BckDataDir "tools\protoc"
+    if (-not (Test-Path (Join-Path $toolsDir "bin\protoc.exe"))) {
+        Log "Downloading protoc v$ProtocVer..."
+        $zip = Join-Path $env:TEMP "protoc-$ProtocVer-win64.zip"
+        Invoke-WebRequest `
+            -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v$ProtocVer/protoc-$ProtocVer-win64.zip" `
+            -OutFile $zip -TimeoutSec 180
+        New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
+        Expand-Archive $zip -DestinationPath $toolsDir -Force
+        Remove-Item $zip -Force
+    }
+    $binDir = Join-Path $toolsDir "bin"
+    $machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+    if (($machinePath -split ";") -notcontains $binDir) {
+        [Environment]::SetEnvironmentVariable("PATH", "$binDir;$machinePath", "Machine")
+    }
+    [Environment]::SetEnvironmentVariable("PROTOC", (Join-Path $binDir "protoc.exe"), "Machine")
+    $env:PATH   = "$binDir;$env:PATH"
+    $env:PROTOC = Join-Path $binDir "protoc.exe"
     if (-not (Get-Command protoc -ErrorAction SilentlyContinue)) {
-        Warn "protoc not found. Install it: winget install protobuf  OR choco install protoc"
-        Fail "protoc is required to build bck-core."
+        Fail "protoc was downloaded but is not reachable on PATH. Re-run the installer."
     }
-    # MSVC linker comes with Visual Studio Build Tools; warn early if missing.
-    if (-not (Get-Command link.exe -ErrorAction SilentlyContinue) -and -not (Test-Path "$env:ProgramFiles\Microsoft Visual Studio")) {
-        Warn "MSVC Build Tools may be missing. If the build fails, run:"
-        Warn "  winget install Microsoft.VisualStudio.2022.BuildTools --override '--add Microsoft.VisualStudio.Workload.VCTools'"
+    Log "protoc v$ProtocVer installed to $binDir."
+}
+
+function Ensure-Msvc {
+    # The MSVC linker ships with Visual Studio Build Tools. Only needed for
+    # source builds; detection: cl/link on PATH or an existing VS install.
+    $vsRoots = @("$env:ProgramFiles\Microsoft Visual Studio", "${env:ProgramFiles(x86)}\Microsoft Visual Studio")
+    foreach ($root in $vsRoots) {
+        if (Test-Path $root) { return }
     }
-    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        Warn "npm not found - web console will be skipped (daemon/CLI/agent still work)."
-        Warn "Install Node.js for the web UI: winget install OpenJS.NodeJS.LTS"
+    if ((Get-Command link.exe -ErrorAction SilentlyContinue) -and (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
+        return
     }
+    Warn "MSVC Build Tools not found - they are required to link Rust programs."
+    Warn "Installing Microsoft.VisualStudio.2022.BuildTools (several GB, takes a while)..."
+    $override = "--quiet --wait --norestart --nocache " +
+                "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+    if (-not (Invoke-WingetInstall -Id "Microsoft.VisualStudio.2022.BuildTools" -Override $override)) {
+        Fail "MSVC Build Tools could not be installed automatically."
+        Warn "Install manually: winget install Microsoft.VisualStudio.2022.BuildTools"
+        Warn "Then re-run this installer."
+    }
+    # New toolchains are added to PATH by vsdevcmd at compile time via cargo;
+    # a fresh shell picks them up automatically.
+}
+
+function Ensure-BuildDeps {
+    Ensure-Rust
+    Ensure-Git
+    Ensure-Protoc
+    Ensure-Node
+    Ensure-Msvc
 }
 
 # ------------------------------------------------------------- download ------
@@ -112,7 +197,7 @@ try {
                 Expand-Archive -Path (Join-Path $TmpDir $Archive) -DestinationPath $TmpDir -Force
                 Log "Release binaries staged."
             } catch {
-                Warn "Release download failed; building from source instead."
+                Warn "Release download failed ($Archive); building from source instead."
                 $Mode = "source"
             }
         } else {
@@ -121,9 +206,13 @@ try {
         }
     }
 
-    if ($Mode -eq "source") {
-        Log "Building from source (Rust + MSVC required)..."
-        Ensure-Rust
+    $BinDir  = $null
+    $WebDist = $null
+    if ($Mode -eq "release") {
+        if (Test-Path (Join-Path $TmpDir "bin")) { $BinDir = Join-Path $TmpDir "bin" } else { $BinDir = $TmpDir }
+        $WebDist = Join-Path $TmpDir "web-ui\dist"
+    } else {
+        Log "Building from source (all missing tools will be installed automatically)..."
         Ensure-BuildDeps
         $SrcDir = Join-Path $TmpDir "BCK"
         if (Test-Path (Join-Path $SrcDir ".git")) {
@@ -149,14 +238,11 @@ try {
                 Pop-Location
                 Copy-Item "web-ui\dist" (Join-Path $TmpDir "web-ui-dist") -Recurse
             } elseif (Test-Path "web-ui") {
-                Warn "npm not found - skipping web UI build."
+                Warn "npm not available - skipping web UI build."
             }
         } finally { Pop-Location }
-        $BinDir = Join-Path $TmpDir "bin"
+        $BinDir  = Join-Path $TmpDir "bin"
         $WebDist = Join-Path $TmpDir "web-ui-dist"
-    } else {
-        if (Test-Path (Join-Path $TmpDir "bin")) { $BinDir = Join-Path $TmpDir "bin" } else { $BinDir = $TmpDir }
-        $WebDist = $null
     }
 
     foreach ($b in $BinNames) {
@@ -176,15 +262,11 @@ try {
     }
 
     # Web UI
-    $UiCandidates = @()
-    if ($WebDist -and (Test-Path $WebDist)) { $UiCandidates += $WebDist }
-    $releaseUi = Join-Path $TmpDir "web-ui"
-    if (Test-Path $releaseUi) { $UiCandidates += $releaseUi }
-    foreach ($ui in $UiCandidates) {
-        if (Test-Path (Join-Path $ui "dist") ) {
-            Copy-Item (Join-Path $ui "dist") (Join-Path $BckHome "web-ui\dist") -Recurse -Force
-            break
-        }
+    if ($WebDist -and (Test-Path $WebDist)) {
+        New-Item -ItemType Directory -Path (Join-Path $BckHome "web-ui") -Force | Out-Null
+        Copy-Item $WebDist (Join-Path $BckHome "web-ui\dist") -Recurse -Force
+    } else {
+        Warn "No web UI build found - daemon will run without the console UI."
     }
 
     # Config (preserve existing on update)
@@ -192,8 +274,8 @@ try {
     if (-not (Test-Path $Config)) {
         $homeWin    = $BckHome
         $dataFwd    = $BckDataDir.Replace('\', '/')
-        $backupsWin = (Join-Path $BckDataDir "backups")
-        $tmpWin     = (Join-Path $BckDataDir "tmp")
+        $backupsWin = Join-Path $BckDataDir "backups"
+        $tmpWin     = Join-Path $BckDataDir "tmp"
         @"
 [server]
 host = "0.0.0.0"
