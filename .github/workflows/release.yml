@@ -57,6 +57,7 @@ jobs:
           cp target/release/bckd target/release/bck-agent target/release/bck target/release/bck-proxy staging/bin/
           cp -r web-ui/dist staging/web-ui/
           tar -czf bck-linux-x86_64.tar.gz -C staging .
+          sha256sum bck-linux-x86_64.tar.gz > bck-linux-x86_64.tar.gz.sha256
           echo "ARCH=bck-linux-x86_64.tar.gz" >> $GITHUB_ENV
 
       - name: Upload artifact
@@ -65,6 +66,7 @@ jobs:
           name: bck-linux
           path: |
             bck-*.tar.gz
+            bck-*.tar.gz.sha256
 
   build-windows:
     permissions:
@@ -118,6 +120,7 @@ jobs:
           Copy-Item target/release/bckd.exe, target/release/bck-agent.exe, target/release/bck.exe, target/release/bck-proxy.exe staging/bin/
           Copy-Item web-ui/dist staging/web-ui/dist -Recurse
           Compress-Archive -Path staging/* -DestinationPath bck-windows-x86_64.zip
+          (Get-FileHash bck-windows-x86_64.zip -Algorithm SHA256).Hash.ToLower() + "  bck-windows-x86_64.zip" | Out-File -Encoding ascii bck-windows-x86_64.zip.sha256
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -125,6 +128,7 @@ jobs:
           name: bck-windows
           path: |
             bck-*.zip
+            bck-*.zip.sha256
 
   publish:
     needs: [build-linux, build-windows]
@@ -137,10 +141,18 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@fe965f7af51af5f2602596916f38a38df2e33de0
-        with:
-          files: |
-            artifacts/**/bck-*.tar.gz
-            artifacts/**/bck-*.zip
-          generate_release_notes: true
+      - name: Publish release to public distribution repository
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+          PUBLIC_REPO: ajjs1ajjs/BCK
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || { echo "PUBLIC_RELEASE_TOKEN is not configured" >&2; exit 1; }
+          mapfile -t FILES < <(find artifacts -type f \( -name 'bck-*.tar.gz' -o -name 'bck-*.zip' -o -name 'bck-*.sha256' \) -print)
+          test "${#FILES[@]}" -gt 0 || { echo "No release files were produced" >&2; exit 1; }
+          gh release create "$TAG" "${FILES[@]}" \
+            --repo "$PUBLIC_REPO" \
+            --title "BCK $TAG" \
+            --generate-notes
