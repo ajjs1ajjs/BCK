@@ -24,6 +24,8 @@
   <img src="https://img.shields.io/badge/tests-188%20passing-green" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
+  <img src="https://img.shields.io/badge/Platform-Ubuntu%20%2F%20Debian-orange" alt="Platform">
+  <img src="https://img.shields.io/badge/PWA-offline-cyan" alt="PWA">
 </p>
 
 </div>
@@ -78,7 +80,7 @@
 
 ## Quick Start
 
-> **Target platforms:** **Ubuntu / Debian** (primary) and **Windows Server / Windows 10+**.
+> **Target platform:** **Ubuntu / Debian** only.
 > Managed via the web console (`http://<host>:9440`).
 
 ```bash
@@ -87,9 +89,6 @@ cargo build --release
 
 # Run daemon (SQLite standalone)
 ./target/release/bckd
-
-# Or with PostgreSQL + MinIO (Docker)
-docker compose up -d
 
 # Login via CLI and check status
 bck --server http://127.0.0.1:9440 status
@@ -106,8 +105,8 @@ Default web console: `http://localhost:9440`.
 
 > **Secrets:** `BCK_JWT_SECRET`, `BCK_AGENT_TOKEN` and the encryption key are
 > auto-generated and persisted with `0600` permissions under the data dir when
-> not configured explicitly. For production set them explicitly (e.g. via a
-> `.env` file for docker-compose, or `config.toml` / environment for the daemon).
+> not configured explicitly. For production set them explicitly (e.g. via
+> `config.toml` / environment for the daemon).
 
 > **TLS:** set `server.tls_cert` / `server.tls_key` in `config.toml` to serve
 > HTTPS. Otherwise terminate TLS at a reverse proxy. gRPC (agents) is not
@@ -135,17 +134,12 @@ Install **and update** with a single command — re-running the same command upg
 curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
-**Windows** (elevated PowerShell; installs to `C:\Program Files\BCK`, data in `%ProgramData%\bck`, registers the `bckd` Windows service):
-```powershell
-irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
-```
-
-Both installers:
+The installer:
 
 1. Download the latest GitHub release for the platform (or **build from source** when no release exists).
 2. Install `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console.
 3. Create a default config — existing config is **preserved** on update.
-4. Register `bckd` as a service (systemd on Linux, Windows Service on Windows) with restart-on-failure.
+4. Register `bckd` as a systemd service with restart-on-failure.
 
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
@@ -190,6 +184,10 @@ Enterprise management commands (SOBR, cloud, M365, DR, tenants, portal, hypervis
 ## Web UI
 
 13 pages: Dashboard, Backup Jobs, Repositories, Snapshots, Restore, SOBR, Cloud, Microsoft 365, Tape Library, Disaster Recovery, Tenants, Hypervisors & VMs, Self-service portal (plus Administration with SSO / audit / reports).
+
+## PWA (Progressive Web App)
+
+Веб-консоль BCK — це повноцінний **PWA**: встановлюється на телефон/планшет/ПК як окремий застосунок, працює офлайн із закешованими assets через Service Worker (`vite-plugin-pwa`). Для встановлення відкрийте консоль `http://<host>:9440` у браузері та оберіть "Встановити додаток" / "Add to Home Screen".
 
 ## API
 
