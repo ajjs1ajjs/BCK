@@ -1,9 +1,17 @@
-<div align="center">
+﻿<div align="center">
 
-# BCK Enterprise
+# BCK Enterprise Backup — Source Code
+
+[![Deployed to](https://img.shields.io/badge/Deployed_to-BCK-blue)](https://github.com/ajjs1ajjs/BCK)
+[![Website](https://img.shields.io/badge/Website-ajjs1ajjs.github.io%2FBCK-green)](https://ajjs1ajjs.github.io/BCK/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/BCK-source/ci.yml?label=CI)](https://github.com/ajjs1ajjs/BCK-source/actions)
+
+> **Це репозиторій з вихідним кодом BCK Enterprise Backup.**
+> Готовий продукт деплоїться в: **https://github.com/ajjs1ajjs/BCK**
+> Офіційний сайт: **https://ajjs1ajjs.github.io/BCK/**
 
 ### Backup & Disaster Recovery for modern infrastructure
-
 <p align="center">
   <img src="docs/banner.svg" width="100%" alt="BCK Enterprise">
 </p>
