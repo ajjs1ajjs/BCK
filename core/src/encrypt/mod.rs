@@ -158,6 +158,7 @@ pub fn load_key(path: &std::path::Path, passphrase: Option<&str>) -> Result<Vec<
             if let Some(pass) = passphrase {
                 if raw.len() == 32 {
                     let wrapped = wrap_key(&raw, pass)?;
+                    std::fs::remove_file(path).ok();
                     write_key_file(path, &wrapped)?;
                     return Ok(raw);
                 }
