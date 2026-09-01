@@ -451,6 +451,8 @@ mod tests {
         assert_eq!(key1.len(), 32);
         let blob = std::fs::read(&path).unwrap();
         assert!(is_wrapped(&blob), "key file must be wrapped");
+        let file_size = blob.len();
+        assert!(file_size >= 64, "wrapped key file should be at least 64 bytes, got {}", file_size);
 
         // Loading with the correct passphrase returns the same key.
         let key2 = load_key(&path, Some("hunter2")).unwrap();
@@ -460,6 +462,10 @@ mod tests {
         assert!(load_key(&path, Some("wrong")).is_err());
 
         // No passphrase on a wrapped file must fail loudly.
+        // Verify file still exists and is still wrapped before attempting load.
+        assert!(path.exists(), "key file should still exist");
+        let blob2 = std::fs::read(&path).unwrap();
+        assert!(is_wrapped(&blob2), "key file should still be wrapped before load attempt");
         assert!(load_key(&path, None).is_err());
 
         std::fs::remove_dir_all(&dir).ok();
