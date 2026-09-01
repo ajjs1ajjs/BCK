@@ -32,7 +32,7 @@ impl AzureConnector {
     async fn oauth_token(&self) -> Result<(String, i64)> {
         let tenant_id = self
             .account
-            .tenant_id
+            .azure_tenant_id
             .as_deref()
             .ok_or_else(|| anyhow!("Azure tenant_id not configured"))?;
         let client_id = self

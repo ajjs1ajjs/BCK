@@ -690,6 +690,7 @@ impl CloudService for CloudServiceService {
             access_key: None,
             secret_key: None,
             session_token: None,
+            azure_tenant_id: None,
             tenant_id: None,
             client_id: None,
             client_secret: None,
@@ -819,7 +820,7 @@ fn parse_m365_bt(s: &str) -> Result<crate::m365::M365BackupType, Status> {
 fn tenant_to_pb(t: &crate::m365::M365Tenant) -> PbM365Tenant {
     PbM365Tenant {
         id: t.id.clone(),
-        tenant_id: t.tenant_id.clone(),
+        tenant_id: t.tenant_id.clone().unwrap_or_default(),
         name: t.name.clone(),
         auth_type: m365_auth_str(&t.auth_type).into(),
         status: m365_status_str(&t.status),
@@ -829,7 +830,7 @@ fn tenant_to_pb(t: &crate::m365::M365Tenant) -> PbM365Tenant {
 fn job_to_pb(j: &crate::m365::M365BackupJob) -> PbM365BackupJob {
     PbM365BackupJob {
         id: j.id.clone(),
-        tenant_id: j.tenant_id.clone(),
+        tenant_id: j.tenant_id.clone().unwrap_or_default(),
         backup_type: m365_bt_str(&j.backup_type).into(),
         status: j.status.clone(),
         items_processed: j.items_processed,
@@ -858,7 +859,8 @@ impl M365Service for M365ServiceService {
         let pb = request.into_inner();
         let tenant = crate::m365::M365Tenant {
             id: String::new(),
-            tenant_id: pb.tenant_id,
+            tenant_id: Some(pb.tenant_id.clone()),
+            azure_tenant_id: pb.tenant_id,
             name: pb.name,
             auth_type: match pb.auth_type.to_lowercase().as_str() {
                 "delegated" => crate::m365::AuthType::Delegated,

@@ -208,7 +208,7 @@ async fn run_provider_restore(
                 .get("resource_group")
                 .ok_or_else(|| anyhow!("Azure resource_group param is required"))?
                 .clone();
-            let tenant_id = account.tenant_id.clone()
+            let tenant_id = account.azure_tenant_id.clone()
                 .ok_or_else(|| anyhow!("Azure tenant_id not configured"))?;
             let client_id = account.client_id.clone()
                 .ok_or_else(|| anyhow!("Azure client_id not configured"))?;
@@ -289,6 +289,7 @@ mod tests {
             secret_key: None,
             session_token: None,
             tenant_id: None,
+            azure_tenant_id: None,
             client_id: None,
             client_secret: None,
             project_id: None,

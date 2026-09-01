@@ -18,7 +18,11 @@ use tracing::info;
 pub struct M365Tenant {
     #[serde(default)]
     pub id: String,
-    pub tenant_id: String,
+    /// Owning tenant; `None` = global (super-admin only).
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    /// Azure AD tenant id (distinct from the owning BCK tenant).
+    pub azure_tenant_id: String,
     pub name: String,
     pub auth_type: AuthType,
     pub client_id: String,
@@ -43,7 +47,11 @@ pub enum TenantStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct M365BackupJob {
     pub id: String,
-    pub tenant_id: String,
+    /// Owning tenant of the M365 tenant this job belongs to.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    /// Azure AD tenant id (for backward compatibility).
+    pub azure_tenant_id: String,
     pub backup_type: M365BackupType,
     pub status: String,
     pub items_processed: u64,
@@ -81,20 +89,34 @@ impl M365BackupManager {
             id: uuid::Uuid::new_v4().to_string(),
             ..tenant
         };
-        info!("M365 tenant registered: {} ({})", tenant.name, tenant.tenant_id);
+        info!(
+            "M365 tenant registered: {} (azure_tenant_id={}) tenant={:?}",
+            tenant.name, tenant.azure_tenant_id, tenant.tenant_id
+        );
         tenants.push(tenant.clone());
         Ok(tenant)
     }
 
-    /// Start backup for a tenant
+    /// Start backup for a tenant by azure_tenant_id, returning the owning BCK
+    /// tenant in the job record.
     pub async fn start_backup(
         &self,
-        tenant_id: &str,
+        azure_tenant_id: &str,
         backup_type: M365BackupType,
     ) -> Result<M365BackupJob> {
+        let tenants = self.tenants.read().await;
+        let tenant = tenants
+            .iter()
+            .find(|t| t.azure_tenant_id == azure_tenant_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("M365 tenant not found: {}", azure_tenant_id))?;
+        let owner_tenant = tenant.tenant_id.clone();
+        drop(tenants);
+
         let job = M365BackupJob {
             id: uuid::Uuid::new_v4().to_string(),
-            tenant_id: tenant_id.to_string(),
+            tenant_id: owner_tenant,
+            azure_tenant_id: azure_tenant_id.to_string(),
             backup_type: backup_type.clone(),
             status: "running".into(),
             items_processed: 0,
@@ -103,33 +125,27 @@ impl M365BackupManager {
             completed_at: None,
         };
 
-        let tenants = self.tenants.read().await;
-        let tenant = tenants
-            .iter()
-            .find(|t| t.tenant_id == tenant_id)
-            .cloned()
-            .ok_or_else(|| anyhow!("M365 tenant not found: {}", tenant_id))?;
-        drop(tenants);
-
         self.active_jobs.write().await.push(job.clone());
         info!(
-            "M365 backup started: tenant={}, type={:?}",
-            tenant_id, job.backup_type
+            "M365 backup started: tenant={:?}, type={:?}",
+            tenant.tenant_id, job.backup_type
         );
 
         let jobs = self.active_jobs.clone();
         let job_id = job.id.clone();
+        let tenant_info = tenant.clone();
 
+        let bt = backup_type.clone();
         tokio::spawn(async move {
             // NOTE: tenant.encrypted_secret is used as the plaintext client secret for now.
             // Decryption-at-rest (KMS) is handled later.
             let graph = GraphClient::new(
-                tenant.tenant_id.clone(),
-                tenant.client_id.clone(),
-                tenant.encrypted_secret.clone(),
+                tenant_info.azure_tenant_id.clone(),
+                tenant_info.client_id.clone(),
+                tenant_info.encrypted_secret.clone(),
             );
             let backup_dir = std::env::temp_dir().join("bck-m365").join(&job_id);
-            let result = run_backup(&graph, backup_type, &backup_dir).await;
+            let result = run_backup(&graph, bt, &backup_dir).await;
 
             let mut jobs = jobs.write().await;
             if let Some(j) = jobs.iter_mut().find(|j| j.id == job_id) {

@@ -19,6 +19,9 @@ pub struct CloudAccount {
     pub auth_type: String,
     pub region: String,
     pub status: AccountStatus,
+    /// Owning tenant; `None` = global account (super-admin only).
+    #[serde(default)]
+    pub tenant_id: Option<String>,
     /// AWS static access key
     #[serde(default)]
     pub access_key: Option<String>,
@@ -30,7 +33,7 @@ pub struct CloudAccount {
     pub session_token: Option<String>,
     /// Azure AD tenant id
     #[serde(default)]
-    pub tenant_id: Option<String>,
+    pub azure_tenant_id: Option<String>,
     /// Azure AD application (client) id
     #[serde(default)]
     pub client_id: Option<String>,
@@ -74,7 +77,10 @@ impl CloudBackupManager {
             id: uuid::Uuid::new_v4().to_string(),
             ..account
         };
-        info!("Cloud account registered: {} ({:?})", account.name, account.provider);
+        info!(
+            "Cloud account registered: {} ({:?}) tenant={:?}",
+            account.name, account.provider, account.tenant_id
+        );
         accounts.push(account.clone());
         Ok(account)
     }

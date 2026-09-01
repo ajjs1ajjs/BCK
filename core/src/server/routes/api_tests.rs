@@ -124,15 +124,16 @@ async fn cloud_accounts_crud() {
     let state = test_state(&format!("{}\\cloud.db", temp_dir("cloud"))).await;
     let app = cloud::router().with_state(state.clone());
 
-    let resp = oneshot(app.clone(), "POST", "/", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/accounts", Some(
         r#"{"name":"prod-aws","provider":"Aws","auth_type":"access_key","region":"eu-central-1",
             "status":"Disconnected","access_key":"AKIA","secret_key":"secret"}"#,
-    )).await;
+    ), &admin_claims()).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let account: serde_json::Value = read_json(resp).await;
     let id = account["id"].as_str().unwrap().to_string();
+    eprintln!("CREATED account id={}, tenant_id={:?}", id, account["tenant_id"]);
 
-    let resp = oneshot(app.clone(), "GET", "/", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/accounts", None, &admin_claims()).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let accounts: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(accounts.len(), 1);
@@ -142,15 +143,22 @@ async fn cloud_accounts_crud() {
     let raw = accounts[0].to_string();
     assert!(!raw.contains("\"secret\""), "raw secret value must not leak in list");
 
-    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/debug", None, &admin_claims()).await;
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+    eprintln!("GET /debug: status={}, body={}", status, String::from_utf8_lossy(&body));
+    let resp = oneshot_with_claims(app.clone(), "GET", "/accounts/123", None, &admin_claims()).await;
+    eprintln!("GET /accounts/123: status={}", resp.status());
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/accounts/{}", id), None, &admin_claims()).await;
+    eprintln!("GET /accounts/{}: status={}", id, resp.status());
     assert_eq!(resp.status(), StatusCode::OK);
     let single: serde_json::Value = read_json(resp).await;
     assert!(single["secret_key"].is_null(), "get_account must redact secret_key");
 
-    let resp = oneshot(app.clone(), "DELETE", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "DELETE", &format!("/accounts/{}", id), None, &admin_claims()).await;
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    let resp = oneshot(app.clone(), "GET", &format!("/{}", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/accounts/{}", id), None, &admin_claims()).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -158,60 +166,61 @@ async fn cloud_accounts_crud() {
 async fn cloud_restore_workflow() {
     let state = test_state(&format!("{}\\cloud-restore.db", temp_dir("cloud-restore"))).await;
     let app = cloud::router().with_state(state.clone());
+    let claims = admin_claims();
 
     // No account -> restore endpoints reject.
-    let resp = oneshot(app.clone(), "GET", "/missing/restorable", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/missing/restorable", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Register an AWS account without live credentials.
-    let resp = oneshot(app.clone(), "POST", "/", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/accounts", Some(
         r#"{"name":"prod","provider":"Aws","auth_type":"access_key","region":"us-east-1",
             "status":"Connected"}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let account: serde_json::Value = read_json(resp).await;
     let id = account["id"].as_str().unwrap().to_string();
 
     // List restorable kinds.
-    let resp = oneshot(app.clone(), "GET", &format!("/{}/restorable", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/accounts/{}/restorable", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let kinds: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(kinds.len(), 3);
     assert_eq!(kinds[0]["resource_type"], "ec2_ami");
 
     // Submit a restore (no credentials -> Planned).
-    let resp = oneshot(app.clone(), "POST", &format!("/{}/restore", id), Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/accounts/{}/restore", id), Some(
         r#"{"resource_type":"ebs_snapshot","resource_id":"snap-1","target_name":"us-east-1a","params":{}}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::ACCEPTED);
     let restore: serde_json::Value = read_json(resp).await;
     let rid = restore["id"].as_str().unwrap().to_string();
     assert_eq!(restore["status"], "Planned");
 
     // Unsupported resource type is rejected.
-    let resp = oneshot(app.clone(), "POST", &format!("/{}/restore", id), Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/accounts/{}/restore", id), Some(
         r#"{"resource_type":"nope","resource_id":"x","target_name":"y","params":{}}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
     // Account scoped + global lists and get.
-    let resp = oneshot(app.clone(), "GET", &format!("/{}/restores", id), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/accounts/{}/restores", id), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let scoped: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(scoped.len(), 1);
 
-    let resp = oneshot(app.clone(), "GET", "/restores", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/restores", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let all: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(all.len(), 1);
 
-    let resp = oneshot(app.clone(), "GET", &format!("/restores/{}", rid), None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", &format!("/restores/{}", rid), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let detail: serde_json::Value = read_json(resp).await;
     assert_eq!(detail["account_id"], id);
 
     // Missing restore id -> not found.
-    let resp = oneshot(app.clone(), "GET", "/restores/nope", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/restores/nope", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
@@ -219,16 +228,17 @@ async fn cloud_restore_workflow() {
 async fn m365_tenant_and_job() {
     let state = test_state(&format!("{}\\m365.db", temp_dir("m365"))).await;
     let app = m365::router().with_state(state.clone());
+    let claims = admin_claims();
 
-    let resp = oneshot(app.clone(), "POST", "/tenants", Some(
-        r#"{"name":"contoso","tenant_id":"tenant-1","auth_type":"AppOnly",
+    let resp = oneshot_with_claims(app.clone(), "POST", "/tenants", Some(
+        r#"{"name":"contoso","tenant_id":"tenant-1","azure_tenant_id":"tenant-1","auth_type":"AppOnly",
             "client_id":"client-1","encrypted_secret":"secret","status":"Disconnected"}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let tenant: serde_json::Value = read_json(resp).await;
     assert!(tenant["id"].as_str().is_some());
 
-    let resp = oneshot(app.clone(), "GET", "/tenants", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/tenants", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let tenants: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(tenants.len(), 1);
@@ -239,9 +249,9 @@ async fn m365_tenant_and_job() {
     );
 
     // Starting a job for a missing tenant is rejected.
-    let resp = oneshot(app.clone(), "POST", "/jobs", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/jobs", Some(
         r#"{"tenant_id":"nope","backup_type":"Mailbox"}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
