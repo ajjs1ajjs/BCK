@@ -5,7 +5,7 @@
 [![Deployed to](https://img.shields.io/badge/Deployed_to-BCK-blue)](https://github.com/ajjs1ajjs/BCK)
 [![Website](https://img.shields.io/badge/Website-ajjs1ajjs.github.io%2FBCK-green)](https://ajjs1ajjs.github.io/BCK/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/BCK-source/ci.yml?label=CI)](https://github.com/ajjs1ajjs/BCK-source/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/BCK/ci.yml?label=CI)](https://github.com/ajjs1ajjs/BCK/actions/workflows/ci.yml)
 
 > **Це репозиторій з вихідним кодом BCK Enterprise Backup.**
 > Готовий продукт деплоїться в: **https://github.com/ajjs1ajjs/BCK**
@@ -24,7 +24,7 @@
   <img src="https://img.shields.io/badge/tests-188%20passing-green" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
-  <img src="https://img.shields.io/badge/Platform-Ubuntu%20%2F%20Debian-orange" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Ubuntu%20%2F%20Debian%20%2F%20Windows-orange" alt="Platform">
   <img src="https://img.shields.io/badge/PWA-offline-cyan" alt="PWA">
 </p>
 
@@ -80,7 +80,7 @@
 
 ## Quick Start
 
-> **Target platform:** **Ubuntu / Debian** only.
+> **Target platforms:** **Ubuntu / Debian** and **Windows**.
 > Managed via the web console (`http://<host>:9440`).
 
 ```bash
@@ -134,18 +134,28 @@ Install **and update** with a single command — re-running the same command upg
 curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
-The installer:
+**Windows** (PowerShell, run as Administrator — installs binaries, web console, registers the `bckd` Windows service):
+```powershell
+irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
+```
 
-1. Download the latest GitHub release for the platform (or **build from source** when no release exists).
+The installer (both platforms):
+
+1. Download the latest GitHub release for the platform (or **build from source** when no release exists — on Windows this also bootstraps Rust, Git, protoc, Node.js and MSVC Build Tools as needed via `rustup`/`winget`).
 2. Install `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console.
 3. Create a default config — existing config is **preserved** on update.
-4. Register `bckd` as a systemd service with restart-on-failure.
+4. Register `bckd` as a service (systemd on Linux, a Windows service on Windows) with restart-on-failure.
 
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
 ```bash
-# Add a weekly update
+# Ubuntu / Debian — add a weekly update
 0 3 * * 0  curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
+```
+
+```powershell
+# Windows — re-run any time to update in place
+irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
 ```
 
 **Verify installation:**

@@ -361,7 +361,6 @@ else
 fi
 
 # ------------------------------------------------------------- finalize ---------
-VER="$(grep '^version' "$BCK_HOME" 2>/dev/null || echo installed)"
 log "==============================================="
 log " BCK Enterprise Backup installed/updated"
 log "   Home:    $BCK_HOME"
