@@ -10,19 +10,8 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }} / ${{ matrix.arch }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            arch: x86_64
-            target: x86_64-unknown-linux-gnu
-            artifact: bck-linux-x86_64
-          - os: ubuntu-latest
-            arch: aarch64
-            target: aarch64-unknown-linux-gnu
-            artifact: bck-linux-aarch64
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +21,6 @@ jobs:
         with:
           toolchain: 1.98.0
           profile: minimal
-          targets: ${{ matrix.target }}
 
       - name: Install system dependencies
         run: |
@@ -40,6 +28,13 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake pkg-config \
             libssl-dev libzstd-dev protobuf-compiler
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-ui/package-lock.json
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -52,10 +47,9 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build release
-        run: cargo build --release --workspace --bins --target ${{ matrix.target }}
+        run: cargo build --release --workspace --bins
 
       - name: Build web UI
-        if: runner.os == 'Linux'
         run: |
           cd web-ui
           npm ci
@@ -63,21 +57,22 @@ jobs:
 
       - name: Package release
         run: |
-          mkdir -p release/${{ matrix.artifact }}
-          cp target/${{ matrix.target }}/release/bckd release/${{ matrix.artifact }}/
-          cp target/${{ matrix.target }}/release/bck-agent release/${{ matrix.artifact }}/
-          cp target/${{ matrix.target }}/release/bck release/${{ matrix.artifact }}/
-          cp target/${{ matrix.target }}/release/bck-proxy release/${{ matrix.artifact }}/
-          cp -r web-ui/dist release/${{ matrix.artifact }}/web-ui 2>/dev/null || true
+          ARTIFACT=bck-linux-x86_64
+          mkdir -p release/$ARTIFACT
+          cp target/release/bckd release/$ARTIFACT/
+          cp target/release/bck-agent release/$ARTIFACT/
+          cp target/release/bck release/$ARTIFACT/
+          cp target/release/bck-proxy release/$ARTIFACT/
+          cp -r web-ui/dist release/$ARTIFACT/web-ui
           cd release
-          tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
-          sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
+          tar -czf $ARTIFACT.tar.gz $ARTIFACT
+          sha256sum $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: release/${{ matrix.artifact }}.tar.gz*
+          name: bck-linux-x86_64
+          path: release/bck-linux-x86_64.tar.gz*
           retention-days: 90
 
   release:
