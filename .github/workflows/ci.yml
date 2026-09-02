@@ -47,13 +47,13 @@ jobs:
         shell: bash
         run: |
           cargo install cargo-audit --locked || true
-          cargo audit || true
+          cargo audit
 
       - name: cargo deny
         shell: bash
         run: |
           cargo install cargo-deny --locked || true
-          cargo deny check || true
+          cargo deny check
 
       - name: cargo test --workspace
         shell: bash

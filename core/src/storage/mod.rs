@@ -3,6 +3,8 @@ pub mod s3;
 pub mod azure;
 pub mod gcs;
 
+use std::net::ToSocketAddrs;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -133,38 +135,45 @@ pub fn validate_storage_endpoint(endpoint: &str) -> Result<()> {
         other => anyhow::bail!("unsupported storage endpoint scheme: {other}"),
     }
     if let Some(host) = u.host_str() {
+        // Check literal IP first
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            let mut bad = match ip {
-                std::net::IpAddr::V4(v4) => {
-                    v4.is_unspecified()
-                        || v4.is_link_local()
-                        || v4.is_multicast()
-                        || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+            check_ip(ip, endpoint)?;
+        } else if std::env::var("BCK_ALLOW_PRIVATE_ENDPOINTS").as_deref() != Ok("1") {
+            // DNS rebinding check: resolve hostname and inspect each IP
+            let addrs = format!("{}:443", host).to_socket_addrs();
+            if let Ok(addrs) = addrs {
+                for addr in addrs {
+                    check_ip(addr.ip(), endpoint)?;
                 }
-                std::net::IpAddr::V6(v6) => {
-                    v6.is_unspecified() || v6.is_multicast() || v6.is_unicast_link_local()
-                }
-            };
-            // Private/loopback is SSRF surface when endpoint is tenant-controlled.
-            if !bad && std::env::var("BCK_ALLOW_PRIVATE_ENDPOINTS").as_deref() != Ok("1") {
-                bad = match ip {
-                    std::net::IpAddr::V4(v4) => {
-                        v4.is_loopback() || v4.is_private()
-                    }
-                    std::net::IpAddr::V6(v6) => v6.is_loopback(),
-                };
-                if bad {
-                    anyhow::bail!(
-                        "storage endpoint must not point to a private/loopback address (set BCK_ALLOW_PRIVATE_ENDPOINTS=1 to allow): {endpoint}"
-                    );
-                }
-            }
-            if bad {
-                anyhow::bail!(
-                    "storage endpoint must not point to a link-local/metadata address: {endpoint}"
-                );
             }
         }
+    }
+    Ok(())
+}
+
+fn check_ip(ip: std::net::IpAddr, endpoint: &str) -> Result<()> {
+    let mut bad = match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_unspecified()
+                || v4.is_link_local()
+                || v4.is_multicast()
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+        }
+        std::net::IpAddr::V6(v6) => v6.is_unspecified() || v6.is_multicast() || v6.is_unicast_link_local(),
+    };
+    if !bad && std::env::var("BCK_ALLOW_PRIVATE_ENDPOINTS").as_deref() != Ok("1") {
+        bad = match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+            std::net::IpAddr::V6(v6) => v6.is_loopback(),
+        };
+        if bad {
+            anyhow::bail!(
+                "storage endpoint must not point to a private/loopback address (set BCK_ALLOW_PRIVATE_ENDPOINTS=1 to allow): {endpoint}"
+            );
+        }
+    }
+    if bad {
+        anyhow::bail!("storage endpoint must not point to a link-local/metadata address: {endpoint}");
     }
     Ok(())
 }

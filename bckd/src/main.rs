@@ -552,9 +552,22 @@ fn spawn_db_backup_task(config: &bck_core::config::AppConfig) {
             let _ = std::fs::create_dir_all(&backup_dir);
             let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
             let dst = backup_dir.join(format!("bck-{}.db.bak", ts));
-            if let Err(e) = std::fs::copy(src, &dst) {
-                warn!("DB backup failed: {}", e);
-                continue;
+            // Use VACUUM INTO for hot-copy safety (consistent snapshot even with WAL)
+            let backup_result = (|| -> anyhow::Result<()> {
+                let conn = rusqlite::Connection::open(src)?;
+                let dst_str = dst.to_string_lossy().to_string();
+                // Escape single quotes in path
+                let sql = format!("VACUUM INTO '{}'", dst_str.replace('\'', "''"));
+                conn.execute_batch(&sql)?;
+                Ok(())
+            })();
+            if let Err(e) = backup_result {
+                // Fallback to file copy if VACUUM INTO fails (e.g., in-memory DB)
+                warn!("VACUUM INTO backup failed ({}), falling back to copy: {}", e, dst.display());
+                if let Err(e2) = std::fs::copy(src, &dst) {
+                    warn!("DB backup copy also failed: {}", e2);
+                    continue;
+                }
             }
             // Keep last 7 backups, prune older.
             if let Ok(entries) = std::fs::read_dir(&backup_dir) {

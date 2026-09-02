@@ -244,8 +244,14 @@ impl TapeManager {
 
     /// Convenience: derive the media path from a root dir + barcode.
     pub fn media_path(root: &str, barcode: &str) -> String {
+        // Keep panic for internal misuse but validate first; callers should use try_media_path for user input.
         Self::validate_barcode(barcode).expect("invalid barcode for media_path");
         PathBuf::from(root).join(format!("{}.ltfs", barcode)).to_string_lossy().to_string()
+    }
+
+    pub fn try_media_path(root: &str, barcode: &str) -> Result<String> {
+        Self::validate_barcode(barcode)?;
+        Ok(PathBuf::from(root).join(format!("{}.ltfs", barcode)).to_string_lossy().to_string())
     }
 }
 

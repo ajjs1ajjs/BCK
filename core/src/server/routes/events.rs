@@ -31,32 +31,35 @@ async fn list_events(
             tracing::error!("list events: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    // Tenant-scoped callers see only events for their own jobs (or global events with no job_id).
+    // Tenant-scoped callers see only events for their own jobs (no N+1: single batch lookup).
     let filtered = if claims.role == "super_admin" || claims.tenant_id.is_none() {
         events
     } else {
         let tenant = claims.tenant_id.as_deref().unwrap();
-        let mut out = Vec::new();
-        for ev in events {
-            if let Some(job_id) = ev.job_id.as_deref() {
-                // Check if job belongs to tenant — best-effort, skip if lookup fails.
-                let belongs = match &state.db {
-                    crate::db::DbPool::Sqlite(pool) => {
-                        sqlx::query_scalar::<_, Option<String>>("SELECT tenant_id FROM backup_jobs WHERE id = ?1")
-                            .bind(job_id).fetch_optional(pool).await.ok().flatten().flatten()
-                    }
-                    crate::db::DbPool::Postgres(pool) => {
-                        sqlx::query_scalar::<_, Option<String>>("SELECT tenant_id FROM backup_jobs WHERE id = $1")
-                            .bind(job_id).fetch_optional(pool).await.ok().flatten().flatten()
-                    }
-                };
-                if belongs.as_deref() == Some(tenant) {
-                    out.push(ev);
+        let job_ids: Vec<String> = events.iter().filter_map(|e| e.job_id.clone()).collect();
+        let tenant_map: std::collections::HashMap<String, Option<String>> = if job_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            match &state.db {
+                crate::db::DbPool::Sqlite(pool) => {
+                    // Build IN clause dynamically (sqlite has no array param)
+                    let placeholders = job_ids.iter().enumerate().map(|(i, _)| format!("?{}", i+1)).collect::<Vec<_>>().join(",");
+                    let sql = format!("SELECT id, tenant_id FROM backup_jobs WHERE id IN ({})", placeholders);
+                    let mut q = sqlx::query_as::<_, (String, Option<String>)>(&sql);
+                    for id in &job_ids { q = q.bind(id); }
+                    q.fetch_all(pool).await.unwrap_or_default().into_iter().collect()
+                }
+                crate::db::DbPool::Postgres(pool) => {
+                    sqlx::query_as::<_, (String, Option<String>)>("SELECT id, tenant_id FROM backup_jobs WHERE id = ANY($1)")
+                        .bind(&job_ids).fetch_all(pool).await.unwrap_or_default().into_iter().collect()
                 }
             }
-            // Global events (no job_id) are hidden from tenant-scoped callers.
-        }
-        out
+        };
+        events.into_iter().filter(|ev| {
+            if let Some(job_id) = ev.job_id.as_deref() {
+                tenant_map.get(job_id).map(|t| t.as_deref() == Some(tenant)).unwrap_or(false)
+            } else { false }
+        }).collect()
     };
     Ok(Json(filtered))
 }

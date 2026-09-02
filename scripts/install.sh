@@ -192,6 +192,13 @@ if [ "$MODE" = "release" ]; then
         ARCHIVE="bck-${OS_LOWER}-${ARCH_LOWER}.tar.gz"
         URL="https://github.com/${REPO}/releases/download/${TAG}/${ARCHIVE}"
         if download "$URL" "$TMPDIR/$ARCHIVE"; then
+            # Verify SHA256 if .sha256 file is available (supply-chain)
+            if download "$URL.sha256" "$TMPDIR/$ARCHIVE.sha256" 2>/dev/null; then
+                (cd "$TMPDIR" && sha256sum -c "$ARCHIVE.sha256") || fail "SHA256 verification failed for $ARCHIVE"
+                log "SHA256 verified for $ARCHIVE"
+            else
+                warn "No .sha256 file for $ARCHIVE — skipping SHA verify (structural check already passed)"
+            fi
             tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
             SRC_DIR="$TMPDIR"
             log "Release binaries staged."

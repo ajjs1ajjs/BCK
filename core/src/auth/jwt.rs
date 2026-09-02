@@ -4,15 +4,41 @@ use chrono::Utc;
 
 use super::User;
 
-fn revoked_set() -> &'static dashmap::DashSet<String> {
-    static SET: std::sync::OnceLock<dashmap::DashSet<String>> = std::sync::OnceLock::new();
-    SET.get_or_init(dashmap::DashSet::new)
+fn revoked_map() -> &'static dashmap::DashMap<String, i64> {
+    static MAP: std::sync::OnceLock<dashmap::DashMap<String, i64>> = std::sync::OnceLock::new();
+    MAP.get_or_init(dashmap::DashMap::new)
 }
 fn is_revoked(token: &str) -> bool {
-    revoked_set().contains(token)
+    let now = chrono::Utc::now().timestamp();
+    if let Some(entry) = revoked_map().get(token) {
+        if *entry > now {
+            return true;
+        } else {
+            drop(entry);
+            revoked_map().remove(token);
+        }
+    }
+    false
 }
 fn revoke_token(token: &str) {
-    revoked_set().insert(token.to_string());
+    // Parse exp from token without verifying signature (best-effort); fallback to 24h
+    let exp = jsonwebtoken::decode::<Claims>(
+        token,
+        &jsonwebtoken::DecodingKey::from_secret(b""),
+        &{
+            let mut v = jsonwebtoken::Validation::default();
+            v.insecure_disable_signature_validation();
+            v.validate_exp = false;
+            v
+        },
+    )
+    .ok()
+    .map(|d| d.claims.exp as i64)
+    .unwrap_or_else(|| chrono::Utc::now().timestamp() + 24 * 3600);
+    revoked_map().insert(token.to_string(), exp);
+    // Prune expired entries opportunistically (keep map bounded)
+    let now = chrono::Utc::now().timestamp();
+    revoked_map().retain(|_, exp| *exp > now);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

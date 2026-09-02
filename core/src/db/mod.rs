@@ -22,19 +22,22 @@ impl DbPool {
                 .await?;
             Ok(Self::Postgres(pool))
         } else {
+            use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
+            use std::str::FromStr;
+            let opts = SqliteConnectOptions::from_str(url)
+                .map_err(|e| anyhow::anyhow!("invalid sqlite url: {}", e))?
+                .foreign_keys(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .create_if_missing(true)
+                .busy_timeout(Duration::from_secs(5));
+            // Preserve pool settings via connect_with
             let pool = PoolOptions::new()
                 .max_connections(pool_size)
                 .acquire_timeout(Duration::from_secs(10))
-                .connect(url)
+                .connect_with(opts)
                 .await?;
-            // Enforce FK constraints and WAL mode for SQLite (off by default).
-            sqlx::query("PRAGMA foreign_keys=ON")
-                .execute(&pool)
-                .await?;
-            // Best-effort: WAL improves concurrency, ignore error on in-memory DB.
-            let _ = sqlx::query("PRAGMA journal_mode=WAL")
-                .execute(&pool)
-                .await;
+            // Also ensure pragma on first connection (defense in depth).
+            let _ = sqlx::query("PRAGMA foreign_keys=ON").execute(&pool).await;
             Ok(Self::Sqlite(pool))
         }
     }

@@ -1,4 +1,5 @@
 use anyhow::Result;
+use std::io::Read;
 use crate::types::CompressionAlgorithm;
 
 pub trait Compressor: Send + Sync {
@@ -23,7 +24,16 @@ impl Compressor for ZstdCompressor {
     }
 
     fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
-        Ok(zstd::decode_all(std::io::Cursor::new(data))?)
+        const MAX: u64 = 64 * 1024 * 1024;
+        let mut decoder = zstd::stream::Decoder::new(std::io::Cursor::new(data))?;
+        let mut out = Vec::new();
+        // Take MAX+1 to detect overflow without allocating unbounded.
+        let mut limited = (&mut decoder).take(MAX + 1);
+        std::io::copy(&mut limited, &mut out)?;
+        if out.len() as u64 > MAX {
+            anyhow::bail!("decompressed block too large: > {} bytes", MAX);
+        }
+        Ok(out)
     }
 
     fn algorithm(&self) -> &'static str {
@@ -39,7 +49,11 @@ impl Compressor for Lz4Compressor {
     }
 
     fn decompress(&self, data: &[u8]) -> Result<Vec<u8>> {
+        const MAX: usize = 64 * 1024 * 1024;
         let decompressed = lz4::block::decompress(data, None)?;
+        if decompressed.len() > MAX {
+            anyhow::bail!("decompressed block too large: {} > {}", decompressed.len(), MAX);
+        }
         Ok(decompressed)
     }
 
