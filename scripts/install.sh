@@ -342,6 +342,11 @@ User=${BCK_USER}
 ExecStart=${BCK_HOME}/bin/bckd -c ${BCK_CONFIG_DIR}/config.toml
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=${BCK_DATA_DIR} ${BCK_CONFIG_DIR} ${BCK_HOME}
 
 [Install]
 WantedBy=multi-user.target

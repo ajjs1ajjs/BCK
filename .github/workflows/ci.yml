@@ -48,6 +48,12 @@ jobs:
             target
           key: ci-linux-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: cargo audit
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked || true
+          cargo audit || true
+
       - name: cargo test --workspace
         shell: bash
         run: cargo test --workspace --locked

@@ -969,6 +969,12 @@ impl JobManager {
     }
 
     async fn update_repo_used(&self, repo_id: &str, bytes: u64) -> Result<()> {
+        // Check capacity before updating to avoid over-provision.
+        if let Some(repo) = self.load_repository(repo_id).await? {
+            if repo.capacity_bytes > 0 && repo.used_bytes + bytes as i64 > repo.capacity_bytes {
+                anyhow::bail!("repository {} capacity exceeded: {} + {} > {}", repo_id, repo.used_bytes, bytes, repo.capacity_bytes);
+            }
+        }
         self.db_exec(
             "UPDATE repositories SET used_bytes = used_bytes + ?, updated_at = ? WHERE id = ?",
             &[DbVal::Int(bytes as i64), DbVal::Int(now()), repo_id.into()],
@@ -1020,11 +1026,15 @@ impl JobManager {
         }
         index.delete_snapshot(snapshot_id)?;
 
+        // Perform orphan block deletions before DB row removal; if storage fails we still remove DB row
+        // but log the orphan for later reconciliation. Wrap DB delete in transaction where possible.
         if !orphans.is_empty() {
             if let Some(repo) = self.load_repository(repository_id).await? {
                 if let Ok(storage) = self.build_storage(&repo).await {
                     for id in &orphans {
-                        let _ = storage.delete_block(id).await;
+                        if let Err(e) = storage.delete_block(id).await {
+                            tracing::warn!("Failed to delete orphan block {}: {}", id, e);
+                        }
                     }
                 }
             }
