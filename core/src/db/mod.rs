@@ -27,6 +27,14 @@ impl DbPool {
                 .acquire_timeout(Duration::from_secs(10))
                 .connect(url)
                 .await?;
+            // Enforce FK constraints and WAL mode for SQLite (off by default).
+            sqlx::query("PRAGMA foreign_keys=ON")
+                .execute(&pool)
+                .await?;
+            // Best-effort: WAL improves concurrency, ignore error on in-memory DB.
+            let _ = sqlx::query("PRAGMA journal_mode=WAL")
+                .execute(&pool)
+                .await;
             Ok(Self::Sqlite(pool))
         }
     }

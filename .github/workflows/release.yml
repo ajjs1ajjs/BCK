@@ -21,8 +21,15 @@ jobs:
         shell: bash
         run: |
           set -eux
+          PROTOC_SHA256="e8c0b5e0a2e7c0b1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d" # TODO: pin real sha256
           curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
+          test -s /tmp/protoc.zip
+          unzip -t /tmp/protoc.zip
+          if [ "${#PROTOC_SHA256}" -eq 64 ] && [ "$PROTOC_SHA256" != "e8c0b5e0a2e7c0b1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d" ]; then
+            echo "$PROTOC_SHA256  /tmp/protoc.zip" | sha256sum -c -
+          fi
           sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
+          protoc --version
 
       - name: Install build deps
         shell: bash
@@ -84,8 +91,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $url = "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip"
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\protoc.zip"
-          Expand-Archive "$env:RUNNER_TEMP\protoc.zip" -DestinationPath "$env:RUNNER_TEMP\protoc" -Force
+          if ((Get-Item "$env:RUNNER_TEMP\protoc.zip").Length -lt 1024) { throw "protoc.zip too small" }
+          # Structural integrity check; pin SHA256 when bumping protoc version
+          try { Expand-Archive "$env:RUNNER_TEMP\protoc.zip" -DestinationPath "$env:RUNNER_TEMP\protoc" -Force } catch { throw "protoc.zip integrity check failed: $_" }
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\protoc\bin"
+          & "$env:RUNNER_TEMP\protoc\bin\protoc.exe" --version
 
       - name: Cache cargo
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

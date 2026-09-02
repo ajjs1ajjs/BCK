@@ -95,7 +95,8 @@ impl ChangeJournal {
         )? as u64;
 
         if deleted > 0 {
-            db.execute("VACUUM", [])?;
+            // Avoid full VACUUM (blocks writers); use incremental vacuum with WAL and auto_vacuum.
+            let _ = db.execute("PRAGMA incremental_vacuum", []);
             info!("CDP journal pruned: {} entries older than {} days", deleted, retention_days);
         }
 

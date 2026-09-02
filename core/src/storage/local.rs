@@ -37,7 +37,7 @@ impl StorageBackend for LocalStorage {
         // Atomic write: write to a temp file, fsync, then rename. A crash in
         // the middle can no longer leave a truncated block that a later backup
         // would treat as a valid dedup match.
-        let tmp = path.with_extension(format!("tmp.{}.{}", std::process::id(), id.len()));
+        let tmp = path.with_extension(format!("tmp.{}-{}", std::process::id(), uuid::Uuid::new_v4()));
         {
             let mut f = fs::File::create(&tmp).await?;
             f.write_all(data).await?;

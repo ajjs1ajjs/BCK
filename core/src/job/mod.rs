@@ -215,6 +215,7 @@ impl JobManager {
         repository_id: &str,
         schedule: Option<&str>,
         retention_days: Option<i32>,
+        tenant_id: Option<&str>,
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let source_config = serde_json::json!({
@@ -233,8 +234,8 @@ impl JobManager {
                     "INSERT INTO backup_jobs
                      (id, name, description, job_type, backup_type, source_config, repository_id,
                       schedule, retention_config, compression, encryption, bandwidth_limit, enabled,
-                      last_run_at, next_run_at, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, 'vm', 'full', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, ?12, ?12)"
+                      last_run_at, next_run_at, created_at, updated_at, tenant_id)
+                     VALUES (?1, ?2, ?3, 'vm', 'full', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL, NULL, ?12, ?12, ?13)"
                 )
                 .bind(&id)
                 .bind(name)
@@ -248,6 +249,7 @@ impl JobManager {
                 .bind(0i64)
                 .bind(1i64)
                 .bind(t)
+                .bind(tenant_id.map(|s| s.to_string()))
                 .execute(pool)
                 .await?;
             }
@@ -256,8 +258,8 @@ impl JobManager {
                     "INSERT INTO backup_jobs
                      (id, name, description, job_type, backup_type, source_config, repository_id,
                       schedule, retention_config, compression, encryption, bandwidth_limit, enabled,
-                      last_run_at, next_run_at, created_at, updated_at)
-                     VALUES ($1, $2, $3, 'vm', 'full', $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, $12, $12)"
+                      last_run_at, next_run_at, created_at, updated_at, tenant_id)
+                     VALUES ($1, $2, $3, 'vm', 'full', $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, $12, $12, $13)"
                 )
                 .bind(&id)
                 .bind(name)
@@ -271,6 +273,7 @@ impl JobManager {
                 .bind(0i64)
                 .bind(1i64)
                 .bind(t)
+                .bind(tenant_id.map(|s| s.to_string()))
                 .execute(pool)
                 .await?;
             }

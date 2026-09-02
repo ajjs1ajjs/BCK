@@ -109,8 +109,8 @@ impl CdpEngine {
 
         self.active_sessions.write().await.push(session.clone());
 
-        // Filesystem watcher feeds a change channel consumed by the CDP engine.
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ChangeEvent>();
+        // Bounded channel (1024) prevents OOM if watcher produces faster than engine consumes.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ChangeEvent>(1024);
         let watcher = watcher::FileWatcher::new(
             policy.paths.clone(),
             policy.exclude_patterns.clone(),

@@ -125,7 +125,8 @@ impl Scheduler {
             expression.to_string()
         };
         let schedule = cron::Schedule::from_str(&cron_expr).ok()?;
-        let now = chrono::Local::now();
+        // Use UTC so schedule does not depend on host timezone/DST.
+        let now = chrono::Utc::now();
         let next = schedule.after(&now).next()?;
         let secs = (next - now).num_seconds().max(0) as u64;
         Some(Instant::now() + Duration::from_secs(secs))

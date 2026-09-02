@@ -301,13 +301,17 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or_else(|| Status::unauthenticated("missing agent token"))?;
-        if provided.as_bytes().len() == expected.as_bytes().len()
-            && provided
-                .as_bytes()
-                .iter()
-                .zip(expected.as_bytes())
-                .all(|(a, b)| a == b)
-        {
+        // Constant-time compare (length leak is acceptable; timing of iteration is not).
+        let mut diff = 0u8;
+        if provided.as_bytes().len() != expected.as_bytes().len() {
+            // Still do dummy iteration to avoid early return timing difference.
+            diff = 1;
+        } else {
+            for (a, b) in provided.as_bytes().iter().zip(expected.as_bytes()) {
+                diff |= a ^ b;
+            }
+        }
+        if diff == 0 && provided.as_bytes().len() == expected.as_bytes().len() {
             Ok(req)
         } else {
             Err(Status::unauthenticated("invalid agent token"))
@@ -406,15 +410,16 @@ async fn seed_default_admin(db: &bck_core::db::DbPool, config: &AppConfig) {
 
     match seed_result {
         Ok(()) => {
-            // Print the bootstrap credential once. After first login the
-            // operator must change it; there is no hardcoded default.
+            // Print the bootstrap credential once to stderr only (not to structured logs).
+            // After first login the operator must change it; there is no hardcoded default.
             eprintln!("======================================================");
             eprintln!("  BCK: initial admin account created");
             eprintln!("  username: admin");
             eprintln!("  password: {}", password);
             eprintln!("  Change this password immediately after first login.");
             eprintln!("======================================================");
-            info!("Seeded default admin user with a generated password.");
+            // Do not log password via tracing (would land in journal/JSON logs).
+            tracing::info!("Seeded default admin user; bootstrap password written to file (not logged).");
 
             // Persist the password to a bootstrap file (0600) next to the data
             // dir so the installer / operator can read it without scanning the

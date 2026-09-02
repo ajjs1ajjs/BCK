@@ -80,6 +80,7 @@ impl BackupEngine for BackupEngineImpl {
                 &config.destination.as_ref().map(|d| d.repository_id.clone()).unwrap_or_default(),
                 None,
                 retention_days(&config),
+                None, // gRPC agent token is global scope
             ).await.map_err(status_err)?
         } else {
             let source_path = config.source.as_ref()
@@ -988,7 +989,7 @@ async fn upsert_agent(state: &AppState, hb: &PbHeartbeatRequest) -> Result<Strin
 /// types may be queued — the server never dispatches arbitrary command
 /// execution (run_script / update) through the task queue.
 async fn insert_agent_task(state: &AppState, agent_id: &str, task_type: &str, payload: serde_json::Value) -> Result<String, Status> {
-    const ALLOWED_TASK_TYPES: [&str; 4] = ["file_backup", "sql_backup", "discover", "heartbeat_ack"];
+    const ALLOWED_TASK_TYPES: [&str; 5] = ["file_backup", "sql_backup", "discover", "heartbeat_ack", "file_restore"];
     if !ALLOWED_TASK_TYPES.contains(&task_type) {
         return Err(Status::invalid_argument(format!("unsupported task type: {task_type}")));
     }
@@ -1074,25 +1075,13 @@ impl Agent for AgentService {
             "use_journal": cfg.use_journal,
         });
 
-        // Ship the encryption config to the agent so backups are encrypted at
-        // the source instead of being stored as plaintext.
+        // Do not ship raw encryption key in DB (would leak on DB compromise).
+        // Agents obtain the key out-of-band; we only signal which algorithm to use.
         let enc_alg = self.state.config.encryption.algorithm.to_lowercase();
         if enc_alg != "none" {
-            let key_path = self.state.config.encryption.key_path.clone()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| crate::encrypt::default_key_path(&self.state.config));
-            if let Ok(key) = crate::encrypt::load_key(
-                &key_path,
-                self.state.config.encryption.passphrase.as_deref(),
-            ) {
-                use base64::Engine;
-                payload["encryption"] = serde_json::json!(enc_alg);
-                payload["encryption_key"] = serde_json::json!(
-                    base64::engine::general_purpose::STANDARD.encode(&key)
-                );
-            } else {
-                warn!("Failed to load encryption key for agent task; dispatching without encryption");
-            }
+            payload["encryption"] = serde_json::json!(enc_alg);
+            // Key is NOT included: future per-agent wrapping (HPKE) should replace this.
+            // Raw key in payload previously allowed DB dump → full backup decryption.
         }
 
         let _task_id = insert_agent_task(&self.state, &cfg.agent_id, "file_backup", payload).await?;

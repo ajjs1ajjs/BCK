@@ -99,8 +99,22 @@ impl TapeManager {
         Ok(media)
     }
 
+    fn validate_barcode(barcode: &str) -> Result<()> {
+        if barcode.is_empty() || barcode.len() > 32 {
+            anyhow::bail!("invalid barcode length");
+        }
+        if !barcode.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            anyhow::bail!("barcode contains invalid characters: {}", barcode);
+        }
+        if barcode.contains("..") || barcode.contains('/') || barcode.contains('\\') {
+            anyhow::bail!("barcode must not contain path separators");
+        }
+        Ok(())
+    }
+
     /// Format a tape with LTFS and register it as media.
     pub async fn format_media(&self, device_path: &str, barcode: &str, capacity_bytes: u64) -> Result<TapeMedia> {
+        Self::validate_barcode(barcode)?;
         self.ltfs.format(device_path, 4096).await?;
         let media = TapeMedia {
             id: uuid::Uuid::new_v4().to_string(),
@@ -230,6 +244,7 @@ impl TapeManager {
 
     /// Convenience: derive the media path from a root dir + barcode.
     pub fn media_path(root: &str, barcode: &str) -> String {
+        Self::validate_barcode(barcode).expect("invalid barcode for media_path");
         PathBuf::from(root).join(format!("{}.ltfs", barcode)).to_string_lossy().to_string()
     }
 }

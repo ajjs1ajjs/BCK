@@ -85,9 +85,14 @@ ensure_rust() {
     log "Installing Rust toolchain (rustup) ..."
     if command -v curl >/dev/null 2>&1; then
         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$TMPDIR/rustup.sh"
+        test -s "$TMPDIR/rustup.sh"
+        # Verify rustup.sh is a shell script (starts with #!) and not an error page
+        head -n1 "$TMPDIR/rustup.sh" | grep -q "^#!" || fail "rustup.sh download integrity check failed"
         sh "$TMPDIR/rustup.sh" -y --profile minimal --default-toolchain stable
     elif command -v wget >/dev/null 2>&1; then
         wget -q https://sh.rustup.rs -O "$TMPDIR/rustup.sh"
+        test -s "$TMPDIR/rustup.sh"
+        head -n1 "$TMPDIR/rustup.sh" | grep -q "^#!" || fail "rustup.sh download integrity check failed"
         sh "$TMPDIR/rustup.sh" -y --profile minimal --default-toolchain stable
     else
         fail "Need curl or wget to install Rust"
@@ -157,6 +162,13 @@ download() { # url -> local path
         wget -q --timeout=20 --tries=3 "$url" -O "$out"
     else
         fail "Need curl or wget"
+    fi
+    test -s "$out" || fail "download failed or empty: $url"
+    # Structural check: tar.gz must be listable, zip must be testable if applicable
+    if [[ "$out" == *.tar.gz ]]; then
+        tar -tzf "$out" >/dev/null 2>&1 || fail "downloaded archive integrity check failed: $url"
+    elif [[ "$out" == *.zip ]]; then
+        unzip -t "$out" >/dev/null 2>&1 || fail "downloaded zip integrity check failed: $url"
     fi
 }
 
@@ -349,8 +361,11 @@ EOF
         done
         if [ -f "$BOOTSTRAP_FILE" ]; then
             BOOT_PW="$(sed -n 's/^password: //p' "$BOOTSTRAP_FILE" | head -n1)"
-            log "Bootstrap admin: username=admin  password=$BOOT_PW"
-            log "Change this password immediately after first login."
+            # Print to terminal only; avoid writing password to systemd journal via `log` if possible.
+            printf '\033[1;34m[BCK]\033[0m Bootstrap admin: username=admin  password=%s\n' "$BOOT_PW"
+            printf '\033[1;34m[BCK]\033[0m Change this password immediately after first login.\n'
+            # Do not echo password via `log` which may be captured; also restrict file perms
+            chmod 600 "$BOOTSTRAP_FILE" 2>/dev/null || true
         else
             log "No bootstrap admin password found (already initialized?). See: sudo journalctl -u bckd | grep -i password"
         fi

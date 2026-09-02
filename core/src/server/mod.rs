@@ -92,6 +92,7 @@ async fn security_headers(req: axum::extract::Request, next: axum::middleware::N
     headers.insert(axum::http::header::X_CONTENT_TYPE_OPTIONS, axum::http::HeaderValue::from_static("nosniff"));
     headers.insert(axum::http::header::X_FRAME_OPTIONS, axum::http::HeaderValue::from_static("DENY"));
     headers.insert(axum::http::header::REFERRER_POLICY, axum::http::HeaderValue::from_static("same-origin"));
+    headers.insert(axum::http::header::STRICT_TRANSPORT_SECURITY, axum::http::HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"));
     response
 }
 

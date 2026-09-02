@@ -158,6 +158,8 @@ impl RestoreOrchestrator {
             .map(|f| normalize_manifest_path(f).trim_end_matches('/').to_string())
             .filter(|f| !f.is_empty())
             .collect();
+        // silence unused warning if caller passes empty filter - kept for future
+        let _ = wanted.len();
         let processed = stream_restore(
             &manifest,
             storage,
@@ -169,7 +171,7 @@ impl RestoreOrchestrator {
                 wanted.is_empty()
                     || wanted
                         .iter()
-                        .any(|f| path == f || path.starts_with(&format!("{}/", f)))
+                        .any(|f| path == *f || path.starts_with(&format!("{}/", f)))
             },
         ).await?;
 
@@ -269,8 +271,10 @@ async fn stream_restore(
 
 /// Strip a leading `/` or `\` from a manifest-relative path so absolute guest
 /// paths (`/etc/passwd`) are treated as relative to the restore root.
-fn normalize_manifest_path(p: &str) -> &str {
-    p.trim_start_matches(['/', '\\'])
+fn normalize_manifest_path(p: &str) -> String {
+    // Normalize backslashes to forward slashes so Windows paths are handled on Linux too.
+    let s = p.replace('\\', "/");
+    s.trim_start_matches('/').to_string()
 }
 
 /// Join a manifest path onto a restore root, rejecting any path that could
@@ -280,7 +284,7 @@ fn safe_join(base: &std::path::Path, rel: &str) -> Result<std::path::PathBuf> {
     use std::path::Component;
 
     let rel = normalize_manifest_path(rel);
-    let p = std::path::Path::new(rel);
+    let p = std::path::Path::new(&rel);
     if p.as_os_str().is_empty() {
         anyhow::bail!("empty restore path");
     }
@@ -314,7 +318,8 @@ mod tests {
     #[test]
     fn normalize_strips_leading_separators() {
         assert_eq!(normalize_manifest_path("/etc/passwd"), "etc/passwd");
-        assert_eq!(normalize_manifest_path("\\etc\\passwd"), "etc\\passwd");
+        // Backslashes are normalized to forward slashes so Windows paths are portable.
+        assert_eq!(normalize_manifest_path("\\etc\\passwd"), "etc/passwd");
         assert_eq!(normalize_manifest_path("etc/passwd"), "etc/passwd");
     }
 

@@ -276,8 +276,19 @@ async fn instant_recovery(
 
 async fn stop_instant_recovery(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
-) -> StatusCode {
+) -> Result<StatusCode, StatusCode> {
+    // Tenant check: verify the caller owns the snapshot behind the session.
+    if let Some(s) = state.restore_tracker.get(&id).await {
+        if let Ok(snap) = lookup_snapshot(&state.db, &s.snapshot_id).await {
+            if !tenant_allows(&claims, snap.tenant_id.as_deref()) {
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
+    } else {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let session = state.restore_tracker.get(&id).await;
     match session {
         Some(s) if matches!(s.restore_type, RestoreType::InstantNfs | RestoreType::InstantIscsi) => {
@@ -287,10 +298,10 @@ async fn stop_instant_recovery(
                 s.status = RestoreStatus::Cancelled;
                 s.finished_at = Some(chrono::Utc::now().timestamp());
             }).await;
-            StatusCode::OK
+            Ok(StatusCode::OK)
         }
-        Some(_) => StatusCode::BAD_REQUEST,
-        None => StatusCode::NOT_FOUND,
+        Some(_) => Err(StatusCode::BAD_REQUEST),
+        None => Err(StatusCode::NOT_FOUND),
     }
 }
 
@@ -312,9 +323,22 @@ pub struct InstantRecoveryListEntry {
 
 async fn list_instant_recovery(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<InstantRecoveryListEntry>>, StatusCode> {
     let sessions = state.instant_recovery.list_sessions().await;
-    let entries = sessions.into_iter().map(|s| {
+    // Filter sessions by tenant ownership (check underlying snapshot).
+    let mut allowed_ids = std::collections::HashSet::new();
+    for s in &sessions {
+        if let Ok(snap) = lookup_snapshot(&state.db, &s.snapshot_id).await {
+            if tenant_allows(&claims, snap.tenant_id.as_deref()) {
+                allowed_ids.insert(s.id.clone());
+            }
+        } else if claims.tenant_id.is_none() || claims.role == "super_admin" {
+            // If snapshot not found (legacy), allow global admins.
+            allowed_ids.insert(s.id.clone());
+        }
+    }
+    let entries = sessions.into_iter().filter(|s| allowed_ids.contains(&s.id)).map(|s| {
         InstantRecoveryListEntry {
             session_id: s.id,
             snapshot_id: s.snapshot_id,

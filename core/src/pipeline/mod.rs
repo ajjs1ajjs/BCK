@@ -339,13 +339,19 @@ pub fn decode_block(data: &[u8], key: Option<&[u8]>) -> Result<Vec<u8>> {
         data[1..].to_vec()
     };
 
-    match magic {
+    let out = match magic {
         MAGIC_ZSTD | MAGIC_ZSTD_AES | MAGIC_ZSTD_CHACHA => {
-            Ok(crate::compress::ZstdCompressor::new(3).decompress(&payload)?)
+            crate::compress::ZstdCompressor::new(3).decompress(&payload)?
         }
         MAGIC_LZ4 | MAGIC_LZ4_AES | MAGIC_LZ4_CHACHA => {
-            Ok(crate::compress::Lz4Compressor.decompress(&payload)?)
+            crate::compress::Lz4Compressor.decompress(&payload)?
         }
-        _ => Ok(payload),
+        _ => payload,
+    };
+    // Anti-decompression-bomb: single block must not expand beyond 64 MB.
+    const MAX_BLOCK_DECOMPRESSED: usize = 64 * 1024 * 1024;
+    if out.len() > MAX_BLOCK_DECOMPRESSED {
+        anyhow::bail!("decompressed block too large: {} > {}", out.len(), MAX_BLOCK_DECOMPRESSED);
     }
+    Ok(out)
 }

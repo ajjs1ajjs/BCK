@@ -94,6 +94,7 @@ function Ensure-Rust {
     Log "Installing Rust toolchain (rustup)..."
     $rustupInit = Join-Path $env:TEMP "rustup-init.exe"
     Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $rustupInit -TimeoutSec 120
+    if ((Get-Item $rustupInit).Length -lt 1024) { Fail "rustup-init.exe download failed or too small" }
     & $rustupInit -y --profile minimal | Out-Null
     $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
@@ -130,8 +131,9 @@ function Ensure-Protoc {
         Invoke-WebRequest `
             -Uri "https://github.com/protocolbuffers/protobuf/releases/download/v$ProtocVer/protoc-$ProtocVer-win64.zip" `
             -OutFile $zip -TimeoutSec 180
+        if ((Get-Item $zip).Length -lt 1024) { Fail "protoc.zip download failed or too small" }
         New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
-        Expand-Archive $zip -DestinationPath $toolsDir -Force
+        try { Expand-Archive $zip -DestinationPath $toolsDir -Force } catch { Fail "protoc.zip integrity check failed: $_" }
         Remove-Item $zip -Force
     }
     $binDir = Join-Path $toolsDir "bin"

@@ -12,7 +12,7 @@ use super::ChangeEvent;
 #[derive(Clone)]
 pub struct FileWatcher {
     watch_paths: Vec<PathBuf>,
-    event_tx: tokio_mpsc::UnboundedSender<ChangeEvent>,
+    event_tx: tokio_mpsc::Sender<ChangeEvent>,
     exclude_patterns: Vec<String>,
 }
 
@@ -22,7 +22,7 @@ impl FileWatcher {
         paths: Vec<String>,
         exclude: Vec<String>,
         _buffer_size: usize,
-        event_tx: tokio_mpsc::UnboundedSender<ChangeEvent>,
+        event_tx: tokio_mpsc::Sender<ChangeEvent>,
     ) -> Self {
         Self {
             watch_paths: paths.into_iter().map(PathBuf::from).collect(),
@@ -81,14 +81,15 @@ impl FileWatcher {
                 checksum: String::new(),
             };
 
-            let _ = self.event_tx.send(change);
+            let _ = self.event_tx.try_send(change);
         }
         Ok(())
     }
 
-    /// Start watcher in background tokio task; returns the change event stream
-    pub async fn start_watching(&self) -> Result<tokio_mpsc::UnboundedReceiver<ChangeEvent>> {
-        let (tx, rx) = tokio_mpsc::unbounded_channel::<ChangeEvent>();
+    /// Start watcher in background tokio task; returns the change event stream.
+    /// Previous version awaited the blocking task (which only completes when channel closes) — deadlock.
+    pub async fn start_watching(&self) -> Result<tokio_mpsc::Receiver<ChangeEvent>> {
+        let (tx, rx) = tokio_mpsc::channel::<ChangeEvent>(1024);
 
         let watcher = FileWatcher {
             watch_paths: self.watch_paths.clone(),
@@ -98,8 +99,7 @@ impl FileWatcher {
 
         tokio::task::spawn_blocking(move || {
             let _ = watcher.start_blocking();
-        }).await
-            .map_err(|e| anyhow::anyhow!("Watcher task join error: {}", e))?;
+        });
 
         Ok(rx)
     }

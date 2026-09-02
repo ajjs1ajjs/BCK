@@ -361,6 +361,7 @@ async fn list_vms(
 /// records a snapshot in the configured repository.
 async fn start_vm_backup(
     State(state): State<Arc<AppState>>,
+    claims: Option<axum::extract::Extension<crate::auth::jwt::Claims>>,
     Path((id, vm_ref)): Path<(String, String)>,
     Json(req): Json<VmBackupRequest>,
 ) -> Result<(StatusCode, Json<JobView>), StatusCode> {
@@ -368,6 +369,7 @@ async fn start_vm_backup(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
+    let tenant_id = claims.as_ref().and_then(|c| c.0.tenant_id.as_deref());
     let job_id = {
         let jm = state.job_manager.lock().await;
         jm.register_vm_job(
@@ -379,6 +381,7 @@ async fn start_vm_backup(
             &req.repository_id,
             req.schedule.as_deref(),
             req.retention_days,
+            tenant_id,
         ).await.map_err(|e| {
             tracing::error!("register VM backup job: {}", e);
             StatusCode::BAD_REQUEST

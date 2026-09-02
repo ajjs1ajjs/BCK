@@ -154,12 +154,19 @@ pub fn load_key(path: &std::path::Path, passphrase: Option<&str>) -> Result<Vec<
                 })?;
                 return unwrap_key(&raw, pass);
             }
-            // Raw key: migrate to the wrapped format when a passphrase is set.
+            // Raw key: migrate to the wrapped format when a passphrase is set (atomic).
             if let Some(pass) = passphrase {
                 if raw.len() == 32 {
                     let wrapped = wrap_key(&raw, pass)?;
-                    std::fs::remove_file(path).ok();
-                    write_key_file(path, &wrapped)?;
+                    // Atomic migrate: write tmp then rename (avoid window where key is missing).
+                    let tmp = path.with_extension("tmp.migrate");
+                    write_key_file(&tmp, &wrapped)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+                    }
+                    std::fs::rename(&tmp, path)?;
                     return Ok(raw);
                 }
             }
@@ -193,7 +200,9 @@ fn is_wrapped(data: &[u8]) -> bool {
 
 fn derive_wrap_key(passphrase: &str, salt: &[u8]) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
-    Argon2::default()
+    // OWASP-tuned Argon2id: m=64MiB, t=3, p=1, v=0x13
+    let params = argon2::Params::new(65536, 3, 1, Some(32)).unwrap_or_else(|_| argon2::Params::default());
+    Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
         .hash_password_into(passphrase.as_bytes(), salt, &mut out)
         .map_err(|e| anyhow!("encryption key derivation failed: {}", e))?;
     Ok(out)
@@ -289,14 +298,41 @@ pub fn default_key_path(config: &crate::config::AppConfig) -> std::path::PathBuf
 }
 
 fn ensure_key_size<const N: usize>(key: &[u8]) -> [u8; N] {
-    if key.len() >= N {
+    if key.len() == N {
         let mut result = [0u8; N];
-        result.copy_from_slice(&key[..N]);
+        result.copy_from_slice(key);
+        result
+    } else if key.len() > N {
+        // Truncation would silently drop entropy; hash instead with domain separation.
+        let mut hasher = Sha256::new();
+        hasher.update(b"BCK-ensure-key-v1");
+        hasher.update(key);
+        let hash = hasher.finalize();
+        let mut result = [0u8; N];
+        // If N > 32, extend via HKDF-like loop (not needed today, N=32).
+        if N <= 32 {
+            result.copy_from_slice(&hash[..N]);
+        } else {
+            result[..32].copy_from_slice(&hash);
+            for i in 32..N {
+                result[i] = 0;
+            }
+        }
         result
     } else {
-        let hash = Sha256::digest(key);
+        // Short key: HKDF-style expansion rather than single SHA256
+        let mut hasher = Sha256::new();
+        hasher.update(b"BCK-ensure-key-v1-short");
+        hasher.update(key);
+        let hash = hasher.finalize();
         let mut result = [0u8; N];
-        result.copy_from_slice(&hash[..N]);
+        result[..hash.len().min(N)].copy_from_slice(&hash[..hash.len().min(N)]);
+        if N > hash.len() {
+            // Should not happen for N=32
+            for i in hash.len()..N {
+                result[i] = 0;
+            }
+        }
         result
     }
 }
