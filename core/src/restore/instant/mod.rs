@@ -5,7 +5,7 @@ pub mod xdr;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -94,6 +94,11 @@ pub struct InstantRecoveryManager {
     /// Optional hypervisor connector used to register the recovered VM directly
     /// on VMware/Hyper-V (instant recovery for VMs).
     connectors: Arc<RwLock<HashMap<String, Arc<dyn HypervisorConnector>>>>,
+    /// BUG-004 / BUG-005: cancellation tokens for the background tasks
+    /// spawned by this manager. `stop_recovery` cancels them so the
+    /// tokio tasks exit and the file descriptors / storage backend reads
+    /// are released promptly.
+    cancel_tokens: Arc<RwLock<HashMap<String, tokio_util::sync::CancellationToken>>>,
 }
 
 impl InstantRecoveryManager {
@@ -107,6 +112,7 @@ impl InstantRecoveryManager {
             storage: Arc::new(RwLock::new(storage)),
             sessions: Arc::new(RwLock::new(Vec::new())),
             connectors: Arc::new(RwLock::new(HashMap::new())),
+            cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -346,14 +352,30 @@ impl InstantRecoveryManager {
         let storage = self.storage.clone();
         let idx = self.index.clone();
         let sessions = self.sessions.clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        // BUG-004/005: store the token so stop_recovery can cancel the
+        // background task.
+        let cancel_for_store = cancel.clone();
+        let sid_for_store = session_id.clone();
+        let cancel_map = self.cancel_tokens.clone();
+        let sid_for_map = sid_for_store.clone();
         tokio::spawn(async move {
+            // Register the token.
+            cancel_map.write().await.insert(sid_for_map.clone(), cancel_for_store);
             let manifest = match idx.load_manifest(&snap_id) {
                 Ok(Some(m)) => m,
-                _ => return,
+                _ => {
+                    cancel_map.write().await.remove(&sid_for_map);
+                    return;
+                }
             };
             let storage = storage.read().await;
             let mut migrated = 0u64;
             for block in &manifest.blocks {
+                if cancel.is_cancelled() {
+                    info!("StorMigration cancelled for session {}", session_id);
+                    break;
+                }
                 match storage.read_block(&block.block_id.sha256).await {
                     Ok(data) => {
                         migrated += data.len() as u64;
@@ -371,8 +393,11 @@ impl InstantRecoveryManager {
             if let Some(s) = sessions.iter_mut().find(|s| s.id == session_id) {
                 s.bytes_migrated = migrated;
                 s.progress_pct = if total > 0 { (migrated as f64 / total as f64) * 100.0 } else { 100.0 };
-                s.status = InstantRecoveryStatus::Completed;
+                if !cancel.is_cancelled() {
+                    s.status = InstantRecoveryStatus::Completed;
+                }
             }
+            cancel_map.write().await.remove(&session_id);
             info!("StorMigration complete for session {}", session_id);
         });
     }
@@ -380,6 +405,11 @@ impl InstantRecoveryManager {
     /// Stop instant recovery and clean up. If the session registered a VM on a
     /// hypervisor, unregister it first.
     pub async fn stop_recovery(&self, session_id: &str) -> Result<()> {
+        // BUG-004/005: cancel the background migration task so the
+        // file-descriptor held by the storage backend is released promptly.
+        if let Some(tok) = self.cancel_tokens.write().await.remove(session_id) {
+            tok.cancel();
+        }
         {
             let sessions = self.sessions.read().await;
             if let Some(s) = sessions.iter().find(|s| s.id == session_id) {
@@ -424,15 +454,17 @@ fn parse_listen_addr(listen_addr: &str, default_port: u16) -> Result<SocketAddr>
         return Ok(SocketAddr::from(([127, 0, 0, 1], port)));
     }
     if let Ok(addr) = listen_addr.parse::<SocketAddr>() {
-        return Ok(addr);
+        return parse_addr_safety(addr, listen_addr);
     }
     // host:port
     let (host, port) = listen_addr
         .rsplit_once(':')
         .ok_or_else(|| anyhow::anyhow!("Invalid listen address: {}", listen_addr))?;
-    let port: u16 = port.parse().map_err(|_| anyhow::anyhow!("Invalid port in {}", listen_addr))?;
+    let port: u16 = port
+        .parse()
+        .map_err(|_| anyhow::anyhow!("Invalid port in {}", listen_addr))?;
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        Ok(SocketAddr::new(ip, port))
+        parse_addr_safety(SocketAddr::new(ip, port), listen_addr)
     } else {
         // Refuse to wildcard for a hostname — the operator must supply an
         // explicit IP to expose instant recovery to remote hypervisors.
@@ -441,6 +473,36 @@ fn parse_listen_addr(listen_addr: &str, default_port: u16) -> Result<SocketAddr>
             host
         )
     }
+}
+
+fn is_link_local_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_unicast_link_local(),
+    }
+}
+
+/// SEC-006/007: refuse to bind to anything other than loopback / link-local
+/// unless the operator explicitly opts in via `BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1`.
+/// 0.0.0.0 is rejected outright to prevent accidentally exposing backup data
+/// over the network.
+fn parse_addr_safety(addr: SocketAddr, original: &str) -> Result<SocketAddr> {
+    if std::env::var("BCK_ALLOW_PUBLIC_INSTANT_RECOVERY").as_deref() != Ok("1") {
+        if addr.ip().is_unspecified() {
+            anyhow::bail!(
+                "refusing to bind instant recovery to 0.0.0.0 (would expose backup data); \
+                 set BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1 to override, or use a loopback / explicit IP",
+            );
+        }
+        if !addr.ip().is_loopback() && !is_link_local_ip(&addr.ip()) {
+            anyhow::bail!(
+                "refusing to bind instant recovery to non-loopback address {}; \
+                 set BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1 to override",
+                original
+            );
+        }
+    }
+    Ok(addr)
 }
 
 /// Registry of active instant recovery servers, shared via AppState so routes
@@ -510,15 +572,28 @@ impl InstantRecoveryRegistry {
         Ok(session)
     }
 
-    /// Stop a recovery session across all managers.
+    /// Stop a recovery session across all managers. SEC-009: also remove the
+    /// manager from the registry so its NFS/iSCSI server tasks and
+    /// `Arc<InstantRecoveryManager>` do not accumulate across
+    /// start/stop cycles (which previously led to file-descriptor and memory
+    /// exhaustion on long-running deployments).
     pub async fn stop_session(&self, session_id: &str) -> bool {
-        let mgrs = self.inner.read().await;
-        for mgr in mgrs.iter() {
-            if mgr.stop_recovery(session_id).await.is_ok() {
-                return true;
+        let mut mgrs = self.inner.write().await;
+        // First, locate the manager that owns this session.
+        let mut target_idx: Option<usize> = None;
+        for (i, mgr) in mgrs.iter().enumerate() {
+            let sessions = mgr.list_sessions().await;
+            if sessions.iter().any(|s| s.id == session_id) {
+                target_idx = Some(i);
+                break;
             }
         }
-        false
+        let Some(idx) = target_idx else { return false };
+        // Remove the manager from the registry BEFORE stopping so concurrent
+        // list_sessions() calls do not race a future start.
+        let mgr = mgrs.remove(idx);
+        drop(mgrs);
+        mgr.stop_recovery(session_id).await.is_ok()
     }
 
     pub async fn list_sessions(&self) -> Vec<InstantRecoverySession> {
@@ -685,10 +760,12 @@ mod tests {
         assert_eq!(parse_listen_addr("", 2049).unwrap(), SocketAddr::from(([127, 0, 0, 1], 2049)));
         assert_eq!(parse_listen_addr("", 3260).unwrap(), SocketAddr::from(([127, 0, 0, 1], 3260)));
         assert_eq!(parse_listen_addr("2049", 2049).unwrap(), SocketAddr::from(([127, 0, 0, 1], 2049)));
-        // An explicit IP is honored.
-        assert_eq!(parse_listen_addr("0.0.0.0:2049", 2049).unwrap(), SocketAddr::from(([0, 0, 0, 0], 2049)));
+        // SEC-006/007: 0.0.0.0 is refused by default.
+        assert!(parse_listen_addr("0.0.0.0:2049", 2049).is_err());
         // A hostname that cannot resolve to an explicit IP is rejected instead
         // of silently wildcarding to all interfaces.
         assert!(parse_listen_addr("my-nfs-host:2049", 2049).is_err());
+        // A non-loopback IP is also refused by default.
+        assert!(parse_listen_addr("10.0.0.5:2049", 2049).is_err());
     }
 }

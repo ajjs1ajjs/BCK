@@ -348,39 +348,40 @@ async fn cdp_policy_and_protection() {
 async fn dr_sites_plans_and_test() {
     let state = test_state(&format!("{}\\dr.db", temp_dir("dr"))).await;
     let app = dr::router().with_state(state.clone());
+    let claims = admin_claims();
 
-    let resp = oneshot(app.clone(), "POST", "/sites", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/sites", Some(
         r#"{"name":"primary","dr_type":"Vmware","endpoint":"https://vc1.local",
             "credentials_id":"","storage_id":"","is_primary":true,"status":"Online"}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let site: serde_json::Value = read_json(resp).await;
     assert!(site["id"].as_str().is_some());
 
-    let resp = oneshot(app.clone(), "POST", "/plans", Some(
+    let resp = oneshot_with_claims(app.clone(), "POST", "/plans", Some(
         r#"{"name":"plan-a","source_site":"src","target_site":"dst","vms":["vm-1"],
             "replication_policy":{"rpo_seconds":300,"rto_seconds":600,"compression":"zstd",
             "encryption":true,"bandwidth_throttle_mbps":100},"failover_order":["vm-1"],
             "auto_commit":true,"test_mode":false}"#,
-    )).await;
+    ), &claims).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let plan: serde_json::Value = read_json(resp).await;
     let pid = plan["id"].as_str().unwrap().to_string();
 
-    let resp = oneshot(app.clone(), "GET", "/plans", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/plans", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let plans: Vec<serde_json::Value> = read_json(resp).await;
     assert_eq!(plans.len(), 1);
 
-    let resp = oneshot(app.clone(), "GET", "/status", None).await;
+    let resp = oneshot_with_claims(app.clone(), "GET", "/status", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Non-destructive test failover succeeds.
-    let resp = oneshot(app.clone(), "POST", &format!("/plans/{}/test", pid), None).await;
+    let resp = oneshot_with_claims(app.clone(), "POST", &format!("/plans/{}/test", pid), None, &claims).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Failover for a missing plan is rejected.
-    let resp = oneshot(app.clone(), "POST", "/plans/missing/failover", None).await;
+    let resp = oneshot_with_claims(app.clone(), "POST", "/plans/missing/failover", None, &claims).await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -738,9 +739,10 @@ async fn hypervisor_instant_recovery_routes() {
 
     // Register a hypervisor (connection fails, but the record is stored).
     let hv_app = hypervisors::router().with_state(state.clone());
-    let resp = oneshot(hv_app.clone(), "POST", "/", Some(
+    let hv_claims = admin_claims();
+    let resp = oneshot_with_claims(hv_app.clone(), "POST", "/", Some(
         r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#,
-    )).await;
+    ), &hv_claims).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let hv: serde_json::Value = read_json(resp).await;
     let hv_id = hv["id"].as_str().unwrap().to_string();

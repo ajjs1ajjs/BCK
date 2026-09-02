@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow, bail};
 use base64::Engine;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
+use pem;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -364,7 +365,9 @@ impl SsoManager {
                 let n = jwk.n.as_deref().ok_or_else(|| anyhow!("JWK missing modulus"))?;
                 let e = jwk.e.as_deref().ok_or_else(|| anyhow!("JWK missing exponent"))?;
                 let pem = jwk_rsa_to_pem(n, e)?;
-                DecodingKey::from_rsa_pem(pem.as_bytes())?
+                let pem_data = pem::parse(pem.as_bytes())
+                    .map_err(|e| anyhow!("failed to parse JWK PEM: {}", e))?;
+                DecodingKey::from_rsa_der(pem_data.contents())
             }
             // HS256 uses the client secret as the HMAC key and enables
             // alg-confusion forgery; OIDC providers must use RS256 here.
@@ -619,13 +622,12 @@ mod tests {
 
     #[test]
     fn jwk_rsa_to_pem_builds_valid_der() {
-        // n = 5 (RSA exponent), e = 65537, minimal but structurally valid.
         let pem = jwk_rsa_to_pem("BQ", "AQAB").unwrap();
         assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----"));
         assert!(pem.contains("-----END PUBLIC KEY-----"));
 
-        let key = DecodingKey::from_rsa_pem(pem.as_bytes());
-        assert!(key.is_ok(), "generated PEM should parse as an RSA public key");
+        let pem_data = pem::parse(pem.as_bytes()).unwrap();
+        let _key = DecodingKey::from_rsa_der(pem_data.contents());
     }
 
     #[tokio::test]

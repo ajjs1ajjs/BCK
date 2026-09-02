@@ -13,4 +13,8 @@ pub struct AgentModel {
     pub last_seen: Option<i64>,
     pub capabilities: String,
     pub created_at: i64,
+    /// Owning tenant; NULL = global agent (super-admin or single-tenant).
+    /// SEC-005: required for tenant isolation on /agents endpoints.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }

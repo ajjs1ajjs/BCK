@@ -36,7 +36,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
     std::fs::create_dir_all(&cdp_dir).unwrap();
     Arc::new(AppState {
         config,
-        db,
+        db: db.clone(),
         job_manager,
         scheduler,
         jwt: JwtManager::new(b"test-secret"),
@@ -52,7 +52,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
         tape: crate::tape::TapeManager::new(),
         cdp: crate::cdp::CdpEngine::new(&cdp_dir).unwrap(),
         dr: crate::dr::DrOrchestrator::new(),
-        tenants: crate::enterprise::multitenant::TenantManager::new(),
+        tenants: crate::enterprise::multitenant::TenantManager::new(db),
         restore_requests: crate::restore::requests::RestoreRequestManager::new(),
     })
 }

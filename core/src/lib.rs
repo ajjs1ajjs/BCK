@@ -29,6 +29,7 @@ pub mod tape;
 pub mod m365;
 pub mod cloud;
 pub mod enterprise;
+pub mod validation;
 
 pub use pipeline::BackupPipeline;
 pub use storage::StorageBackend;

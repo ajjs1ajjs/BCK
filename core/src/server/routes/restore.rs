@@ -38,6 +38,68 @@ fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
     }
 }
 
+/// SEC-020: validate the user-supplied `target_path` for a file restore to
+/// prevent arbitrary file writes on the daemon host. The path must be a
+/// plain relative path or an absolute path that lives under the configured
+/// restore root (when one is configured). System-critical directories and
+/// Windows drive roots are always rejected.
+fn validate_restore_target(target: &str) -> Result<(), String> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return Err("target_path must not be empty".into());
+    }
+    // Reject NUL bytes and other control characters.
+    if trimmed.chars().any(|c| c.is_control()) {
+        return Err("target_path contains control characters".into());
+    }
+    let p = std::path::Path::new(trimmed);
+    // If a restore root is configured, reject anything outside it.
+    if let Ok(root) = std::env::var("BCK_RESTORE_ROOT") {
+        let root = std::path::Path::new(&root);
+        if !p.exists() && !p.starts_with(root) {
+            return Err(format!(
+                "target_path '{}' is outside the configured restore root",
+                trimmed
+            ));
+        }
+        if p.exists() {
+            // Canonicalize both sides to detect ../ escapes.
+            if let (Ok(canon_target), Ok(canon_root)) = (p.canonicalize(), root.canonicalize()) {
+                if !canon_target.starts_with(&canon_root) {
+                    return Err(format!(
+                        "target_path '{}' is outside the configured restore root",
+                        trimmed
+                    ));
+                }
+            }
+        }
+    }
+    // Reject obviously dangerous Unix system directories.
+    #[cfg(unix)]
+    {
+        const BLOCKED: &[&str] = &[
+            "/", "/bin", "/sbin", "/etc", "/boot", "/proc", "/sys", "/dev",
+            "/var/log", "/usr", "/lib", "/lib64",
+        ];
+        for b in BLOCKED {
+            let bp = std::path::Path::new(b);
+            if trimmed == *b || trimmed.starts_with(&format!("{}/", b)) {
+                if trimmed == *b {
+                    return Err(format!("target_path '{}' is a system directory", trimmed));
+                }
+                // Only block if the canonical target matches (avoid
+                // false positives on similarly-named user directories).
+                if let Ok(canon) = p.canonicalize() {
+                    if canon == bp {
+                        return Err(format!("target_path '{}' is a system directory", trimmed));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Load a snapshot and enforce the caller's tenant on it.
 async fn scoped_snapshot(state: &AppState, claims: &Claims, snapshot_id: &str) -> Result<SnapshotModel, StatusCode> {
     let snapshot = lookup_snapshot(&state.db, snapshot_id).await
@@ -165,6 +227,15 @@ async fn restore_file(
     Extension(claims): Extension<Claims>,
     Json(req): Json<FileRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
+    // SEC-020: validate the target path before any work begins.
+    if let Err(msg) = validate_restore_target(&req.target_path) {
+        tracing::warn!(
+            "restore_file: rejected target_path for sub={} reason={}",
+            claims.sub,
+            msg
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
 
     let session = RestoreSession {
@@ -534,7 +605,10 @@ async fn start_surebackup(
     let storage = build_storage(&repo, encryption_key(&state)).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let job = state.surebackup.start_verification(&req.snapshot_id, &req.vm_name).await
+    let job = state
+        .surebackup
+        .start_verification_for_tenant(&req.snapshot_id, &req.vm_name, claims.tenant_id.clone())
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let jid = job.id.clone();
     let jid_task = jid.clone();
@@ -608,25 +682,51 @@ async fn start_surebackup(
 
 async fn get_surebackup(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<crate::restore::surebackup::SureBackupJob>, StatusCode> {
-    state.surebackup.get_job(&id).await
-        .ok_or(StatusCode::NOT_FOUND)
-        .map(Json)
+    let job = state
+        .surebackup
+        .get_job(&id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    // SEC-019: tenant scope.
+    if !tenant_allows(&claims, job.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(job))
 }
 
 async fn list_surebackup(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<crate::restore::surebackup::SureBackupJob>>, StatusCode> {
-    Ok(Json(state.surebackup.get_status().await))
+    // SEC-019: filter by tenant scope.
+    let all = state.surebackup.get_status().await;
+    let scoped: Vec<_> = all
+        .into_iter()
+        .filter(|j| tenant_allows(&claims, j.tenant_id.as_deref()))
+        .collect();
+    Ok(Json(scoped))
 }
 
 async fn get_session(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
-    let session = state.restore_tracker.get(&id).await
+    let session = state
+        .restore_tracker
+        .get(&id)
+        .await
         .ok_or(StatusCode::NOT_FOUND)?;
+    // SEC-019: verify the caller's tenant owns the snapshot behind this
+    // session to avoid leaking session metadata across tenants.
+    if let Ok(snap) = lookup_snapshot(&state.db, &session.snapshot_id).await {
+        if !tenant_allows(&claims, snap.tenant_id.as_deref()) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    }
     Ok(Json(session_to_response(&session)))
 }
 

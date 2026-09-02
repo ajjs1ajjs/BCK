@@ -1,3 +1,5 @@
+use crate::db::DbPool;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -19,4 +21,36 @@ pub struct RepositoryModel {
     pub updated_at: i64,
     /// NULL = global/system repository.
     pub tenant_id: Option<String>,
+}
+
+impl RepositoryModel {
+    /// Fetch a single repository by id. Used by the hypervisor VM backup
+    /// authorization check (SEC-018): the target repository must belong to
+    /// the caller's tenant.
+    pub async fn fetch_by_id(db: &DbPool, id: &str) -> Result<Option<Self>> {
+        match db {
+            DbPool::Sqlite(pool) => {
+                let row = sqlx::query_as::<_, Self>(
+                    "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
+                            free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
+                     FROM repositories WHERE id = ?1",
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row)
+            }
+            DbPool::Postgres(pool) => {
+                let row = sqlx::query_as::<_, Self>(
+                    "SELECT id, name, repo_type, config_json, capacity_bytes, used_bytes,
+                            free_bytes, encrypted, immutable, status, created_at, updated_at, tenant_id
+                     FROM repositories WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+                Ok(row)
+            }
+        }
+    }
 }

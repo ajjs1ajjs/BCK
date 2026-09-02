@@ -64,7 +64,13 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                host: "0.0.0.0".into(),
+                // SEC-025: default to loopback so a fresh install does not
+                // expose the API on every interface. Operators who need
+                // network access must explicitly set host = "0.0.0.0" in
+                // config.toml (the install script emits this value
+                // intentionally because the service is meant to be reached
+                // by the web console and CLI).
+                host: "127.0.0.1".into(),
                 port: 9440,
                 grpc_port: 9441,
                 web_ui_dir: Some("./web-ui/dist".into()),

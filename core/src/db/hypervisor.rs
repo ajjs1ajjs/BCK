@@ -9,7 +9,7 @@ pub async fn fetch_hypervisors(db: &DbPool) -> Result<Vec<HypervisorModel>> {
         DbPool::Sqlite(pool) => {
             let rows = sqlx::query_as::<_, HypervisorModel>(
                 "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
+                        status, version, created_at, updated_at, tenant_id
                  FROM hypervisors ORDER BY created_at DESC"
             )
             .fetch_all(pool)
@@ -19,7 +19,7 @@ pub async fn fetch_hypervisors(db: &DbPool) -> Result<Vec<HypervisorModel>> {
         DbPool::Postgres(pool) => {
             let rows = sqlx::query_as::<_, HypervisorModel>(
                 "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
+                        status, version, created_at, updated_at, tenant_id
                  FROM hypervisors ORDER BY created_at DESC"
             )
             .fetch_all(pool)
@@ -34,7 +34,7 @@ pub async fn fetch_hypervisor(db: &DbPool, id: &str) -> Result<Option<Hypervisor
         DbPool::Sqlite(pool) => {
             let row = sqlx::query_as::<_, HypervisorModel>(
                 "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
+                        status, version, created_at, updated_at, tenant_id
                  FROM hypervisors WHERE id = ?1"
             )
             .bind(id)
@@ -45,7 +45,7 @@ pub async fn fetch_hypervisor(db: &DbPool, id: &str) -> Result<Option<Hypervisor
         DbPool::Postgres(pool) => {
             let row = sqlx::query_as::<_, HypervisorModel>(
                 "SELECT id, name, hv_type, host, port, credentials_json, ssl_thumbprint,
-                        status, version, created_at, updated_at
+                        status, version, created_at, updated_at, tenant_id
                  FROM hypervisors WHERE id = $1"
             )
             .bind(id)

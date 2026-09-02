@@ -14,6 +14,10 @@ pub struct SureBackupJob {
     pub test_results: Vec<TestResult>,
     pub started_at: i64,
     pub completed_at: Option<i64>,
+    /// Owning tenant; used by the read paths to enforce tenant isolation
+    /// (SEC-019). NULL = global (super_admin-owned).
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -63,11 +67,34 @@ impl SureBackupEngine {
             test_results: Vec::new(),
             started_at: chrono::Utc::now().timestamp(),
             completed_at: None,
+            tenant_id: None,
         };
         info!(
             "SureBackup job created: id={}, snapshot={}, vm={}",
             job.id, snapshot_id, vm_name
         );
+        self.jobs.write().await.insert(job.id.clone(), job.clone());
+        Ok(job)
+    }
+
+    /// Register a verification job stamped with the caller's tenant so the
+    /// read paths can enforce isolation (SEC-019).
+    pub async fn start_verification_for_tenant(
+        &self,
+        snapshot_id: &str,
+        vm_name: &str,
+        tenant_id: Option<String>,
+    ) -> Result<SureBackupJob> {
+        let job = SureBackupJob {
+            id: uuid::Uuid::new_v4().to_string(),
+            snapshot_id: snapshot_id.to_string(),
+            vm_name: vm_name.to_string(),
+            status: SureBackupStatus::Pending,
+            test_results: Vec::new(),
+            started_at: chrono::Utc::now().timestamp(),
+            completed_at: None,
+            tenant_id,
+        };
         self.jobs.write().await.insert(job.id.clone(), job.clone());
         Ok(job)
     }

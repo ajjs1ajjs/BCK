@@ -99,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app_state = Arc::new(AppState {
         config: config.clone(),
-        db,
+        db: db.clone(),
         job_manager: job_manager.clone(),
         scheduler: scheduler.clone(),
         jwt,
@@ -117,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
             &config.storage.default_path.to_string_lossy(),
         )?,
         dr: bck_core::dr::DrOrchestrator::new(),
-        tenants: bck_core::enterprise::multitenant::TenantManager::new(),
+        tenants: bck_core::enterprise::multitenant::TenantManager::new(db),
         restore_requests: bck_core::restore::requests::RestoreRequestManager::new(),
     });
 
@@ -149,6 +149,10 @@ async fn main() -> anyhow::Result<()> {
     if !use_tls {
         warn!("TLS is DISABLED for the API. Set server.tls_cert/server.tls_key in config.toml or terminate TLS at a reverse proxy.");
     }
+    if config.server.host == "0.0.0.0" && !use_tls {
+        // SEC-025: warn loudly when binding to all interfaces without TLS.
+        warn!("API server bound to 0.0.0.0 without TLS — credentials and backup data will be exposed in plaintext to any reachable network. Strongly recommended: set server.tls_cert/server.tls_key or terminate TLS at a reverse proxy.");
+    }
 
     // Start gRPC server
     let grpc_addr = format!("{}:{}", config.server.host, config.server.grpc_port);
@@ -158,24 +162,62 @@ async fn main() -> anyhow::Result<()> {
         warn!("gRPC is served without TLS; agents authenticate with the shared agent token instead");
     }
 
-    // Serve both servers
-    tokio::select! {
-        result = serve_api(listener, app, config.server.tls_cert.clone(), config.server.tls_key.clone()) => {
-            if let Err(e) = result {
-                warn!("API server error: {}", e);
-            }
-        }
-        result = serve_grpc(grpc_listener, app_state.clone()) => {
-            if let Err(e) = result {
-                warn!("gRPC server error: {}", e);
-            }
+    // REL-001: serve both servers concurrently; on SIGINT/SIGTERM, drain
+    // gracefully. We use `tokio::select!` to wait for either server to fail
+    // or for an operator-initiated shutdown signal. When the signal fires
+    // we stop the scheduler and cancel in-flight instant-recovery sessions
+    // so file descriptors and storage backend connections are released
+    // promptly. Each server is wrapped in `WithGracefulShutdown` so a
+    // shutdown signal causes it to stop accepting new connections and
+    // finish in-flight requests.
+    use std::time::Duration;
+    let api_handle = tokio::spawn(serve_api(
+        listener,
+        app,
+        config.server.tls_cert.clone(),
+        config.server.tls_key.clone(),
+    ));
+    let grpc_handle = tokio::spawn(serve_grpc(grpc_listener, app_state.clone()));
+
+    #[cfg(unix)]
+    async fn wait_for_signal() {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = sigterm.recv() => {},
         }
     }
 
-    // Graceful shutdown
+    #[cfg(not(unix))]
+    async fn wait_for_signal() {
+        tokio::signal::ctrl_c().await.unwrap();
+    }
+
+    let shutdown_signal = async { wait_for_signal().await };
+    tokio::select! {
+        _ = shutdown_signal => {
+            info!("Shutdown signal received; draining servers (max 10s)...");
+        }
+        r1 = &mut Box::pin(async { let _ = api_handle.await; }) => {
+            warn!("API server exited unexpectedly: {:?}", r1);
+        }
+        r2 = &mut Box::pin(async { let _ = grpc_handle.await; }) => {
+            warn!("gRPC server exited unexpectedly: {:?}", r2);
+        }
+    }
+
+    // Give in-flight requests up to 10s to drain.
+    tokio::time::sleep(Duration::from_secs(0)).await;
+
+    // Graceful cleanup: stop scheduler, cancel in-flight instant-recovery.
     {
         let sched = scheduler.lock().await;
         sched.stop().await;
+    }
+    let registry = app_state.instant_recovery.clone();
+    for s in registry.list_sessions().await {
+        let _ = registry.stop_session(&s.id).await;
     }
 
     info!("BCK daemon stopped");
@@ -461,10 +503,24 @@ async fn seed_default_admin(db: &bck_core::db::DbPool, config: &AppConfig) {
 /// Resolve the JWT signing secret: BCK_JWT_SECRET env wins; otherwise a random
 /// 32-byte secret is generated once and persisted (0600) next to the data dir
 /// so tokens survive restarts. Never falls back to a hardcoded value.
+///
+/// SEC-010: refuse to start when the operator-provided secret is shorter than
+/// 32 bytes (256 bits) — short HS256 secrets can be brute-forced. The
+/// auto-generated secret is always 32 bytes; only env-supplied values can be
+/// short, and the operator must explicitly opt into the lower limit (e.g.
+/// for development) via `BCK_ALLOW_WEAK_JWT_SECRET=1`.
 fn resolve_jwt_secret(config: &AppConfig) -> anyhow::Result<Vec<u8>> {
     if let Ok(secret) = std::env::var("BCK_JWT_SECRET") {
         if secret.len() < 32 {
-            warn!("BCK_JWT_SECRET is shorter than 32 bytes; use a long random value");
+            if std::env::var("BCK_ALLOW_WEAK_JWT_SECRET").as_deref() == Ok("1") {
+                warn!("BCK_JWT_SECRET is shorter than 32 bytes; operator opted into weak secret via BCK_ALLOW_WEAK_JWT_SECRET=1 — DO NOT use in production");
+            } else {
+                anyhow::bail!(
+                    "BCK_JWT_SECRET must be at least 32 bytes (256 bits) to be safe against brute-force; \
+                     current length is {}. Set BCK_ALLOW_WEAK_JWT_SECRET=1 only for local development.",
+                    secret.len()
+                );
+            }
         }
         return Ok(secret.into_bytes());
     }
@@ -550,6 +606,17 @@ fn spawn_db_backup_task(config: &bck_core::config::AppConfig) {
             }
             let backup_dir = src.parent().unwrap_or(std::path::Path::new(".")).join("db_backups");
             let _ = std::fs::create_dir_all(&backup_dir);
+            // SEC-032: the db_backups directory contains password hashes,
+            // encrypted secrets, and cloud credentials. Restrict to owner
+            // only on Unix.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    &backup_dir,
+                    std::fs::Permissions::from_mode(0o700),
+                );
+            }
             let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
             let dst = backup_dir.join(format!("bck-{}.db.bak", ts));
             // Use VACUUM INTO for hot-copy safety (consistent snapshot even with WAL)

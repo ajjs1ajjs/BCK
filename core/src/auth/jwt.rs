@@ -21,16 +21,10 @@ fn is_revoked(token: &str) -> bool {
     false
 }
 fn revoke_token(token: &str) {
-    // Parse exp from token without verifying signature (best-effort); fallback to 24h
     let exp = jsonwebtoken::decode::<Claims>(
         token,
         &jsonwebtoken::DecodingKey::from_secret(b""),
-        &{
-            let mut v = jsonwebtoken::Validation::default();
-            v.insecure_disable_signature_validation();
-            v.validate_exp = false;
-            v
-        },
+        &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
     )
     .ok()
     .map(|d| d.claims.exp as i64)

@@ -54,9 +54,11 @@ azure_storage = "0.20"
 reqwest = { version = "0.12", features = ["stream", "json"] }
 
 # Auth
-jsonwebtoken = "9"
+# jsonwebtoken pinned >=10.3.0: v9.3.1 is affected by CVE-2026-25537 (type
+# confusion / authorization bypass via malformed claims).
+jsonwebtoken = { version = ">=10.3.0", default-features = false, features = ["rust_crypto"] }
 argon2 = "0.5"
-ldap3 = { version = "0.11", default-features = false, features = ["sync", "tls-rustls"] }
+ldap3 = { version = "0.11", default-features = false, features = ["sync", "ring"] }
 
 # Config
 toml = "0.8"
@@ -85,6 +87,7 @@ dashmap = "6"
 rusqlite = { version = "0.32", features = ["bundled"] }
 async-trait = { workspace = true }
 base64 = "0.22"
+pem = "3"
 quick-xml = "0.36"
 
 [build-dependencies]

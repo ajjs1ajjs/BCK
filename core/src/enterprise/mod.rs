@@ -23,7 +23,7 @@ impl EnterpriseManager {
         Ok(Self {
             sso: sso::SsoManager::new(),
             reports: reports::ReportEngine::new(),
-            tenant: multitenant::TenantManager::new(),
+            tenant: multitenant::TenantManager::new(state.db.clone()),
             audit: audit::AuditLogger::new(),
             _state: state,
         })

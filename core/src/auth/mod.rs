@@ -1,4 +1,5 @@
 pub mod jwt;
+pub mod policy;
 
 use argon2::{
     Argon2,

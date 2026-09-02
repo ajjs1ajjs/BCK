@@ -7,26 +7,10 @@ use serde::Serialize;
 use std::sync::Arc;
 
 use crate::auth::jwt::Claims;
+use crate::auth::policy::{scoped_tenant, tenant_allows};
 use crate::cloud::restore::{CloudRestore, RestoreRequest};
 use crate::cloud::CloudAccount;
 use crate::server::AppState;
-
-/// The tenant a caller may operate on: super-admins (and global users with no
-/// tenant) see everything; everyone else is confined to their own tenant.
-fn scoped_tenant(claims: &Claims) -> Option<String> {
-    if claims.role == "super_admin" {
-        None
-    } else {
-        claims.tenant_id.clone()
-    }
-}
-
-fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
-    match scoped_tenant(claims) {
-        None => true,
-        Some(mine) => owner == Some(mine.as_str()),
-    }
-}
 
 /// Load a cloud account the caller is allowed to see, or 404 (never 403: a
 /// cross-tenant id must not be distinguishable from a non-existent one).
@@ -35,7 +19,10 @@ async fn load_scoped_account(
     claims: &Claims,
     id: &str,
 ) -> Option<CloudAccount> {
-    state.cloud.get_account(id).await
+    state
+        .cloud
+        .get_account(id)
+        .await
         .filter(|a| tenant_allows(claims, a.tenant_id.as_deref()))
 }
 
@@ -131,10 +118,6 @@ async fn list_accounts(
     Extension(claims): Extension<Claims>,
 ) -> Json<Vec<CloudAccount>> {
     let accounts = state.cloud.list_accounts().await;
-    eprintln!("list_accounts: found {} accounts", accounts.len());
-    for a in &accounts {
-        eprintln!("  account id={}, tenant_id={:?}", a.id, a.tenant_id);
-    }
     Json(
         accounts
             .into_iter()
@@ -149,14 +132,42 @@ async fn register_account(
     Extension(claims): Extension<Claims>,
     Json(mut account): Json<CloudAccount>,
 ) -> Result<(StatusCode, Json<CloudAccount>), StatusCode> {
-    tracing::debug!("register_account: claims.sub={}", claims.sub);
     // Stamp the caller's tenant; a client-supplied tenant_id is ignored.
     account.tenant_id = scoped_tenant(&claims);
-    let account = state.cloud.register_account(account).await
-        .map_err(|e| {
-            tracing::error!("register cloud account: {}", e);
-            StatusCode::BAD_REQUEST
-        })?;
+
+    // SEC-008: encrypt at-rest credential fields using the application key so
+    // a memory dump, panic-message, or future persistence path does not
+    // expose plaintext cloud credentials. Decryption happens in the
+    // connector layer that needs the value.
+    let key = match crate::encrypt::app_key(&state.config) {
+        Ok(k) => Some(k),
+        Err(e) => {
+            tracing::error!("cloud credential encryption key: {}", e);
+            None
+        }
+    };
+    if let Some(k) = key.as_ref() {
+        if let Some(ak) = account.access_key.take() {
+            account.access_key = crate::encrypt::encrypt_secret(k, &ak).ok();
+        }
+        if let Some(sk) = account.secret_key.take() {
+            account.secret_key = crate::encrypt::encrypt_secret(k, &sk).ok();
+        }
+        if let Some(st) = account.session_token.take() {
+            account.session_token = crate::encrypt::encrypt_secret(k, &st).ok();
+        }
+        if let Some(cs) = account.client_secret.take() {
+            account.client_secret = crate::encrypt::encrypt_secret(k, &cs).ok();
+        }
+    } else {
+        // Refuse to register an account if we cannot protect its credentials.
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    let account = state.cloud.register_account(account).await.map_err(|e| {
+        tracing::error!("register cloud account: {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
     Ok((StatusCode::CREATED, Json(redact_account(&account))))
 }
 
@@ -165,12 +176,6 @@ async fn get_account(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<CloudAccount>, StatusCode> {
-    eprintln!("get_account: id={}, claims.role={}", id, claims.role);
-    let all = state.cloud.list_accounts().await;
-    eprintln!("get_account: found {} accounts", all.len());
-    for a in &all {
-        eprintln!("  account id={}, tenant_id={:?}", a.id, a.tenant_id);
-    }
     load_scoped_account(&state, &claims, &id).await
         .map(|a| Json(redact_account(&a)))
         .ok_or(StatusCode::NOT_FOUND)
@@ -195,8 +200,12 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 /// Never serialize cloud credentials to API responses. The struct is the
 /// persistence entity, so secrets are stripped before it leaves the server.
+/// SEC-008: in addition, credentials stored at rest are now encrypted with
+/// the application key; this redactor makes sure even the encrypted form
+/// never leaves the management API.
 fn redact_account(a: &CloudAccount) -> CloudAccount {
     let mut c = a.clone();
+    c.access_key = None;
     c.secret_key = None;
     c.session_token = None;
     c.client_secret = None;

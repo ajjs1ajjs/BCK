@@ -156,7 +156,9 @@ async fn gcp_oauth_exchange(client: &reqwest::Client) -> Result<(String, i64, St
         exp: now + 3600,
     };
     let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-    let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key.as_bytes())?;
+    let pem_data = pem::parse(private_key.as_bytes())
+        .map_err(|e| anyhow!("failed to parse RSA private key PEM: {}", e))?;
+    let key = jsonwebtoken::EncodingKey::from_rsa_der(pem_data.contents());
     let jwt = jsonwebtoken::encode(&header, &claims, &key)?;
 
     let form = [

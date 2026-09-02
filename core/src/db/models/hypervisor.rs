@@ -14,4 +14,8 @@ pub struct HypervisorModel {
     pub version: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Owning tenant; NULL = global/system resource.
+    /// SEC-004: required for tenant isolation on /hypervisors endpoints.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
 }

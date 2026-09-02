@@ -1,12 +1,14 @@
 use anyhow::{Result, anyhow};
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     Json,
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::auth::jwt::Claims;
+use crate::auth::policy::{can_manage_hypervisors, is_global_admin, tenant_allows};
 use crate::db::models::hypervisor::HypervisorModel;
 use crate::db::models::vm::VmModel;
 use crate::db::DbPool;
@@ -24,6 +26,7 @@ pub struct HypervisorResponse {
     pub status: String,
     pub version: Option<String>,
     pub created_at: i64,
+    pub tenant_id: Option<String>,
 }
 
 impl From<HypervisorModel> for HypervisorResponse {
@@ -37,6 +40,7 @@ impl From<HypervisorModel> for HypervisorResponse {
             status: h.status,
             version: h.version,
             created_at: h.created_at,
+            tenant_id: h.tenant_id,
         }
     }
 }
@@ -50,6 +54,10 @@ pub struct AddHypervisorRequest {
     pub username: String,
     pub password: String,
     pub ignore_ssl: Option<bool>,
+    /// Owning tenant; super_admin may set this explicitly, otherwise it is
+    /// stamped from the caller's claims. Tenant-scoped admins may not
+    /// override it.
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -108,10 +116,16 @@ pub struct VmBackupRequest {
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .route("/", axum::routing::get(list_hypervisors).post(add_hypervisor))
-        .route("/:id", axum::routing::get(get_hypervisor).delete(delete_hypervisor))
+        .route(
+            "/:id",
+            axum::routing::get(get_hypervisor).delete(delete_hypervisor),
+        )
         .route("/:id/test", axum::routing::post(test_hypervisor))
         .route("/:id/vms", axum::routing::get(list_vms))
-        .route("/:id/vms/:vm_ref/backup", axum::routing::post(start_vm_backup))
+        .route(
+            "/:id/vms/:vm_ref/backup",
+            axum::routing::post(start_vm_backup),
+        )
 }
 
 fn connector_from_request(req: &AddHypervisorRequest) -> Result<Box<dyn HypervisorConnector>> {
@@ -128,7 +142,10 @@ fn connector_from_request(req: &AddHypervisorRequest) -> Result<Box<dyn Hypervis
     }
 }
 
-pub(crate) fn connector_from_model(m: &HypervisorModel, key: Option<&[u8]>) -> Result<Box<dyn HypervisorConnector>> {
+pub(crate) fn connector_from_model(
+    m: &HypervisorModel,
+    key: Option<&[u8]>,
+) -> Result<Box<dyn HypervisorConnector>> {
     crate::db::hypervisor::connector_from_model(m, key)
 }
 
@@ -138,24 +155,35 @@ fn app_key(state: &AppState) -> Option<Vec<u8>> {
 
 async fn list_hypervisors(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<HypervisorResponse>>, StatusCode> {
-    let list = fetch_hypervisors(&state.db).await
+    let list = fetch_hypervisors(&state.db)
+        .await
         .map_err(|e| {
             tracing::error!("list hypervisors: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    Ok(Json(list.into_iter().map(HypervisorResponse::from).collect()))
+    // Tenant scope: tenant-scoped users only see their own hypervisors.
+    let filtered: Vec<HypervisorResponse> = list
+        .into_iter()
+        .map(HypervisorResponse::from)
+        .filter(|h| tenant_allows(&claims, h.tenant_id.as_deref()))
+        .collect();
+    Ok(Json(filtered))
 }
 
 async fn add_hypervisor(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<AddHypervisorRequest>,
 ) -> Result<(StatusCode, Json<HypervisorResponse>), StatusCode> {
-    let connector = connector_from_request(&req)
-        .map_err(|e| {
-            tracing::error!("add hypervisor (unsupported type): {}", e);
-            StatusCode::BAD_REQUEST
-        })?;
+    if !can_manage_hypervisors(&claims) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let connector = connector_from_request(&req).map_err(|e| {
+        tracing::error!("add hypervisor (unsupported type): {}", e);
+        StatusCode::BAD_REQUEST
+    })?;
 
     let status = match connector.test_connection().await {
         Ok(_) => "connected",
@@ -186,12 +214,20 @@ async fn add_hypervisor(
         "ignore_ssl": req.ignore_ssl.unwrap_or(false),
     });
 
+    // Tenant assignment: only super_admin can set an explicit tenant_id;
+    // tenant-scoped admins and operators are stamped with their own tenant.
+    let tenant_id = if is_global_admin(&claims) {
+        req.tenant_id.clone()
+    } else {
+        claims.tenant_id.clone()
+    };
+
     match &state.db {
         DbPool::Sqlite(pool) => {
             sqlx::query(
                 "INSERT INTO hypervisors
-                 (id, name, hv_type, host, port, credentials_json, status, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)"
+                 (id, name, hv_type, host, port, credentials_json, status, tenant_id, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)"
             )
             .bind(&id)
             .bind(&req.name)
@@ -200,6 +236,7 @@ async fn add_hypervisor(
             .bind(req.port as i32)
             .bind(credentials.to_string())
             .bind(status)
+            .bind(&tenant_id)
             .bind(t)
             .execute(pool)
             .await
@@ -211,8 +248,8 @@ async fn add_hypervisor(
         DbPool::Postgres(pool) => {
             sqlx::query(
                 "INSERT INTO hypervisors
-                 (id, name, hv_type, host, port, credentials_json, status, created_at, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)"
+                 (id, name, hv_type, host, port, credentials_json, status, tenant_id, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)"
             )
             .bind(&id)
             .bind(&req.name)
@@ -221,6 +258,7 @@ async fn add_hypervisor(
             .bind(req.port as i32)
             .bind(credentials.to_string())
             .bind(status)
+            .bind(&tenant_id)
             .bind(t)
             .execute(pool)
             .await
@@ -238,9 +276,12 @@ async fn add_hypervisor(
         &format!("Hypervisor {} added ({}@{})", req.name, req.hv_type, req.host),
         None,
         None,
-    ).await.ok();
+    )
+    .await
+    .ok();
 
-    let model = fetch_hypervisor(&state.db, &id).await
+    let model = fetch_hypervisor(&state.db, &id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok((StatusCode::CREATED, Json(model.into())))
@@ -248,18 +289,35 @@ async fn add_hypervisor(
 
 async fn get_hypervisor(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<HypervisorResponse>, StatusCode> {
-    let model = fetch_hypervisor(&state.db, &id).await
+    let model = fetch_hypervisor(&state.db, &id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if !tenant_allows(&claims, model.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
     Ok(Json(model.into()))
 }
 
 async fn delete_hypervisor(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
+    if !can_manage_hypervisors(&claims) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    // Tenant check before destructive op.
+    if let Ok(Some(model)) = fetch_hypervisor(&state.db, &id).await {
+        if !tenant_allows(&claims, model.tenant_id.as_deref()) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    } else {
+        return Err(StatusCode::NOT_FOUND);
+    }
     let affected = match &state.db {
         DbPool::Sqlite(pool) => {
             sqlx::query("DELETE FROM hypervisors WHERE id = ?1")
@@ -288,17 +346,24 @@ async fn delete_hypervisor(
         &format!("Hypervisor {} deleted", id),
         None,
         None,
-    ).await.ok();
+    )
+    .await
+    .ok();
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn test_hypervisor(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<TestResult>, StatusCode> {
-    let model = fetch_hypervisor(&state.db, &id).await
+    let model = fetch_hypervisor(&state.db, &id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if !tenant_allows(&claims, model.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     let connector = connector_from_model(&model, app_key(&state).as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -308,33 +373,43 @@ async fn test_hypervisor(
         Err(e) => (false, "error", e.to_string()),
     };
 
-    update_hypervisor_status(&state.db, &id, status).await
+    update_hypervisor_status(&state.db, &id, status)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(TestResult { ok, status: status.to_string(), message }))
+    Ok(Json(TestResult {
+        ok,
+        status: status.to_string(),
+        message,
+    }))
 }
 
 /// Discover VMs on the hypervisor, persist them, and return the list.
 async fn list_vms(
     State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<VmResponse>>, StatusCode> {
-    let model = fetch_hypervisor(&state.db, &id).await
+    let model = fetch_hypervisor(&state.db, &id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if !tenant_allows(&claims, model.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
     let connector = connector_from_model(&model, app_key(&state).as_deref())
         .map_err(|_| StatusCode::BAD_REQUEST)?;
 
-    let vms = connector.list_vms().await
-        .map_err(|e| {
-            tracing::error!("discover VMs on {}: {}", model.host, e);
-            StatusCode::BAD_GATEWAY
-        })?;
+    let vms = connector.list_vms().await.map_err(|e| {
+        tracing::error!("discover VMs on {}: {}", model.host, e);
+        StatusCode::BAD_GATEWAY
+    })?;
 
     let mut responses = Vec::new();
     for vm in &vms {
-        upsert_vm(&state.db, &id, vm).await
+        upsert_vm(&state.db, &id, vm)
+            .await
             .map_err(|e| {
                 tracing::error!("persist VM {}: {}", vm.name, e);
                 StatusCode::INTERNAL_SERVER_ERROR
@@ -351,25 +426,42 @@ async fn list_vms(
         &format!("Discovered {} VM(s) on {}", responses.len(), model.name),
         None,
         None,
-    ).await.ok();
+    )
+    .await
+    .ok();
 
     Ok(Json(responses))
 }
 
 /// Create and start a full VM backup job for the given VM on the hypervisor.
-/// The job runs the real backup pipeline against the VM's virtual disks and
-/// records a snapshot in the configured repository.
+/// Tenant scope is enforced on both the hypervisor and the target repository.
 async fn start_vm_backup(
     State(state): State<Arc<AppState>>,
-    claims: Option<axum::extract::Extension<crate::auth::jwt::Claims>>,
+    Extension(claims): Extension<Claims>,
     Path((id, vm_ref)): Path<(String, String)>,
     Json(req): Json<VmBackupRequest>,
 ) -> Result<(StatusCode, Json<JobView>), StatusCode> {
-    let _model = fetch_hypervisor(&state.db, &id).await
+    if !can_manage_hypervisors(&claims) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let hv = fetch_hypervisor(&state.db, &id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
+    if !tenant_allows(&claims, hv.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
 
-    let tenant_id = claims.as_ref().and_then(|c| c.0.tenant_id.as_deref());
+    // Repository ownership check: prevent cross-tenant writes.
+    let repo = crate::db::models::repository::RepositoryModel::fetch_by_id(&state.db, &req.repository_id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !tenant_allows(&claims, repo.tenant_id.as_deref()) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let tenant_id = claims.tenant_id.as_deref();
     let job_id = {
         let jm = state.job_manager.lock().await;
         jm.register_vm_job(
@@ -382,7 +474,9 @@ async fn start_vm_backup(
             req.schedule.as_deref(),
             req.retention_days,
             tenant_id,
-        ).await.map_err(|e| {
+        )
+        .await
+        .map_err(|e| {
             tracing::error!("register VM backup job: {}", e);
             StatusCode::BAD_REQUEST
         })?
@@ -397,7 +491,9 @@ async fn start_vm_backup(
     }
 
     let jm = state.job_manager.lock().await;
-    let job = jm.get_job(&job_id).await
+    let job = jm
+        .get_job(&job_id)
+        .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     drop(jm);
@@ -406,16 +502,25 @@ async fn start_vm_backup(
         &state.db,
         "vm_backup_started",
         "hypervisors",
-        &format!("VM backup job {} started for VM {} on hypervisor {}", job_id, vm_ref, id),
+        &format!(
+            "VM backup job {} started for VM {} on hypervisor {}",
+            job_id, vm_ref, id
+        ),
         Some(&job_id),
         None,
-    ).await.ok();
+    )
+    .await
+    .ok();
 
     Ok((StatusCode::ACCEPTED, Json(job)))
 }
 
 fn vm_to_response(vm: &VmInfo, hypervisor_id: &str) -> VmResponse {
-    let disk_gb = vm.disks.iter().map(|d| d.capacity_bytes.max(0) as u64 / (1024 * 1024 * 1024)).sum::<u64>() as i64;
+    let disk_gb = vm
+        .disks
+        .iter()
+        .map(|d| d.capacity_bytes.max(0) as u64 / (1024 * 1024 * 1024))
+        .sum::<u64>() as i64;
     VmResponse {
         id: format!("{}-{}", hypervisor_id, vm.mo_ref),
         name: vm.name.clone(),
@@ -437,7 +542,11 @@ fn vm_to_response(vm: &VmInfo, hypervisor_id: &str) -> VmResponse {
 
 async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> {
     let t = chrono::Utc::now().timestamp();
-    let disk_gb = vm.disks.iter().map(|d| d.capacity_bytes.max(0) as u64 / (1024 * 1024 * 1024)).sum::<u64>() as i64;
+    let disk_gb = vm
+        .disks
+        .iter()
+        .map(|d| d.capacity_bytes.max(0) as u64 / (1024 * 1024 * 1024))
+        .sum::<u64>() as i64;
     let power_state = match vm.power_state {
         PowerState::PoweredOn => Some("running".to_string()),
         PowerState::Suspended => Some("suspended".to_string()),
@@ -466,7 +575,7 @@ async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> 
             DbPool::Sqlite(pool) => {
                 sqlx::query(
                     "UPDATE vms SET name = ?1, power_state = ?2, os = ?3, cpu_count = ?4,
-                            ram_mb = ?5, disk_gb = ?6, updated_at = ?7 WHERE id = ?8"
+                            ram_mb = ?5, disk_gb = ?6, updated_at = ?7 WHERE id = ?8",
                 )
                 .bind(&vm.name)
                 .bind(&power_state)
@@ -482,7 +591,7 @@ async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> 
             DbPool::Postgres(pool) => {
                 sqlx::query(
                     "UPDATE vms SET name = $1, power_state = $2, os = $3, cpu_count = $4,
-                            ram_mb = $5, disk_gb = $6, updated_at = $7 WHERE id = $8"
+                            ram_mb = $5, disk_gb = $6, updated_at = $7 WHERE id = $8",
                 )
                 .bind(&vm.name)
                 .bind(&power_state)
@@ -504,7 +613,7 @@ async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> 
                         "INSERT INTO vms
                          (id, name, hypervisor_id, mo_ref, power_state, os, cpu_count, ram_mb,
                           disk_gb, protection_status, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'unprotected', ?10, ?10)"
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'unprotected', ?10, ?10)",
                     )
                     .bind(&id)
                     .bind(&vm.name)
@@ -524,7 +633,7 @@ async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> 
                         "INSERT INTO vms
                          (id, name, hypervisor_id, mo_ref, power_state, os, cpu_count, ram_mb,
                           disk_gb, protection_status, created_at, updated_at)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unprotected', $10, $10)"
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unprotected', $10, $10)",
                     )
                     .bind(&id)
                     .bind(&vm.name)
@@ -581,11 +690,31 @@ async fn update_hypervisor_status(db: &DbPool, id: &str, status: &str) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::jwt::Claims;
+    use crate::db::models::hypervisor::HypervisorModel;
+    use crate::server::routes::testutil::{read_json, test_state};
     use axum::body::Body;
     use axum::http::{Request, StatusCode as HttpStatus};
     use tower::ServiceExt;
 
-    use crate::server::routes::testutil::{read_json, test_state};
+    fn admin_claims() -> Claims {
+        Claims {
+            sub: "test-admin".into(),
+            username: "admin".into(),
+            role: "admin".into(),
+            exp: usize::MAX,
+            iat: 0,
+            tenant_id: None,
+        }
+    }
+
+    fn with_claims<B: axum::body::HttpBody + Send + 'static>(
+        mut req: Request<B>,
+        claims: &Claims,
+    ) -> Request<B> {
+        req.extensions_mut().insert(claims.clone());
+        req
+    }
 
     #[tokio::test]
     async fn hypervisor_crud_roundtrip() {
@@ -595,25 +724,36 @@ mod tests {
         let state = test_state(db_path.to_str().unwrap()).await;
 
         let app = router().with_state(state.clone());
+        let claims = admin_claims();
 
         // Unsupported hypervisor type is rejected before connecting.
-        let add = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"name":"lab","hv_type":"nonsense","host":"h","port":5985,"username":"u","password":"p"}"#))
-            .unwrap();
+        let add = with_claims(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"lab","hv_type":"nonsense","host":"h","port":5985,"username":"u","password":"p"}"#,
+                ))
+                .unwrap(),
+            &claims,
+        );
         let resp = app.clone().oneshot(add).await.unwrap();
         assert_eq!(resp.status(), HttpStatus::BAD_REQUEST);
 
         // Hyper-V hypervisor — connection test fails (no such host), but the
         // record is still stored with status "error".
-        let add = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#))
-            .unwrap();
+        let add = with_claims(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#,
+                ))
+                .unwrap(),
+            &claims,
+        );
         let resp = app.clone().oneshot(add).await.unwrap();
         assert_eq!(resp.status(), HttpStatus::CREATED);
         let created: HypervisorResponse = read_json(resp).await;
@@ -621,30 +761,66 @@ mod tests {
         assert_eq!(created.hv_type, "hyperv");
 
         // List returns the record.
-        let resp = app.clone().oneshot(
-            Request::builder().method("GET").uri("/").body(Body::empty()).unwrap(),
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(with_claims(
+                Request::builder()
+                    .method("GET")
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+                &claims,
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), HttpStatus::OK);
         let list: Vec<HypervisorResponse> = read_json(resp).await;
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, created.id);
 
         // Get single.
-        let resp = app.clone().oneshot(
-            Request::builder().method("GET").uri(format!("/{}", created.id)).body(Body::empty()).unwrap(),
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(with_claims(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/{}", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+                &claims,
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), HttpStatus::OK);
 
         // Delete.
-        let resp = app.clone().oneshot(
-            Request::builder().method("DELETE").uri(format!("/{}", created.id)).body(Body::empty()).unwrap(),
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(with_claims(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!("/{}", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+                &claims,
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), HttpStatus::NO_CONTENT);
 
         // Get after delete -> 404.
-        let resp = app.clone().oneshot(
-            Request::builder().method("GET").uri(format!("/{}", created.id)).body(Body::empty()).unwrap(),
-        ).await.unwrap();
+        let resp = app
+            .clone()
+            .oneshot(with_claims(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/{}", created.id))
+                    .body(Body::empty())
+                    .unwrap(),
+                &claims,
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), HttpStatus::NOT_FOUND);
 
         std::fs::remove_dir_all(&dir).ok();
@@ -657,14 +833,19 @@ mod tests {
         let db_path = dir.join("test.db");
         let state = test_state(db_path.to_str().unwrap()).await;
         let app = router().with_state(state.clone());
+        let claims = admin_claims();
 
-        let resp = app.oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/missing/test")
-                .body(Body::empty())
-                .unwrap(),
-        ).await.unwrap();
+        let resp = app
+            .oneshot(with_claims(
+                Request::builder()
+                    .method("POST")
+                    .uri("/missing/test")
+                    .body(Body::empty())
+                    .unwrap(),
+                &claims,
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), HttpStatus::NOT_FOUND);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -676,15 +857,22 @@ mod tests {
         let db_path = dir.join("test.db");
         let state = test_state(db_path.to_str().unwrap()).await;
 
+        let app = router().with_state(state.clone());
+        let claims = admin_claims();
+
         // Create a hypervisor record (connection fails — no such host — but the
         // row is stored with status "error", which is enough to start a job).
-        let app = router().with_state(state.clone());
-        let add = Request::builder()
-            .method("POST")
-            .uri("/")
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#))
-            .unwrap();
+        let add = with_claims(
+            Request::builder()
+                .method("POST")
+                .uri("/")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"lab","hv_type":"hyperv","host":"hv.local","port":5985,"username":"u","password":"p"}"#,
+                ))
+                .unwrap(),
+            &claims,
+        );
         let resp = app.clone().oneshot(add).await.unwrap();
         assert_eq!(resp.status(), HttpStatus::CREATED);
         let hv: HypervisorResponse = read_json(resp).await;
@@ -694,7 +882,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO repositories (id, name, repo_type, config_json, capacity_bytes, used_bytes,
              free_bytes, encrypted, immutable, status, created_at, updated_at)
-             VALUES ('repo-1', 'main', 'local', ?, 0, 0, 0, 0, 0, 'ready', ?, ?)"
+             VALUES ('repo-1', 'main', 'local', ?, 0, 0, 0, 0, 0, 'ready', ?, ?)",
         )
         .bind(serde_json::json!({"path": dir.join("store")}).to_string())
         .bind(t)
@@ -703,15 +891,21 @@ mod tests {
             crate::db::DbPool::Sqlite(p) => p.clone(),
             _ => unreachable!(),
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         // Start a VM backup job -> 202 Accepted with the job view.
-        let backup = Request::builder()
-            .method("POST")
-            .uri(format!("/{}/vms/vm-42/backup", hv.id))
-            .header("content-type", "application/json")
-            .body(Body::from(r#"{"repository_id":"repo-1","vm_name":"test-vm","name":"nightly-vm"}"#))
-            .unwrap();
+        let backup = with_claims(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/{}/vms/vm-42/backup", hv.id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"repository_id":"repo-1","vm_name":"test-vm","name":"nightly-vm"}"#,
+                ))
+                .unwrap(),
+            &claims,
+        );
         let resp = app.clone().oneshot(backup).await.unwrap();
         assert_eq!(resp.status(), HttpStatus::ACCEPTED);
         let job: serde_json::Value = read_json(resp).await;
@@ -727,16 +921,54 @@ mod tests {
         assert!(jobs.iter().any(|j| j.id == job_id && j.job_type == "vm"));
 
         // Backup on a missing hypervisor -> 404.
-        let resp = app.oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/missing/vms/vm-42/backup")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"repository_id":"repo-1"}"#))
-                .unwrap(),
-        ).await.unwrap();
+        let resp = app
+            .oneshot(with_claims(
+                Request::builder()
+                    .method("POST")
+                    .uri("/missing/vms/vm-42/backup")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"repository_id":"repo-1"}"#))
+                    .unwrap(),
+                &claims,
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), HttpStatus::NOT_FOUND);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Tenant isolation: a user whose claims.tenant_id is "t1" must not see
+    // a hypervisor owned by tenant "t2". SEC-004 regression test.
+    #[test]
+    fn tenant_filter_isolates_hypervisors() {
+        use crate::auth::policy::tenant_allows as ta;
+        let c_t1 = Claims {
+            sub: "u".into(),
+            username: "u".into(),
+            role: "operator".into(),
+            exp: 0,
+            iat: 0,
+            tenant_id: Some("t1".into()),
+        };
+        let c_super = Claims {
+            sub: "u".into(),
+            username: "u".into(),
+            role: "super_admin".into(),
+            exp: 0,
+            iat: 0,
+            tenant_id: None,
+        };
+        assert!(ta(&c_t1, Some("t1")));
+        assert!(!ta(&c_t1, Some("t2")));
+        assert!(!ta(&c_t1, None));
+        assert!(ta(&c_super, Some("t1")));
+        assert!(ta(&c_super, None));
+    }
+
+    // Compile-time check that HypervisorModel fields are referenced.
+    #[allow(dead_code)]
+    fn _check_hv_model(_h: HypervisorModel) {
+        let _ = _h.tenant_id;
     }
 }
