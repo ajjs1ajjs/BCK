@@ -58,14 +58,15 @@ jobs:
       - name: Package release
         run: |
           ARTIFACT=bck-linux-x86_64
-          mkdir -p release/$ARTIFACT
-          cp target/release/bckd release/$ARTIFACT/
-          cp target/release/bck-agent release/$ARTIFACT/
-          cp target/release/bck release/$ARTIFACT/
-          cp target/release/bck-proxy release/$ARTIFACT/
-          cp -r web-ui/dist release/$ARTIFACT/web-ui
+          mkdir -p release/bin
+          cp target/release/bckd release/bin/
+          cp target/release/bck-agent release/bin/
+          cp target/release/bck release/bin/
+          cp target/release/bck-proxy release/bin/
+          mkdir -p release/web-ui
+          cp -r web-ui/dist release/web-ui/
           cd release
-          tar -czf $ARTIFACT.tar.gz $ARTIFACT
+          tar -czf $ARTIFACT.tar.gz bin web-ui
           sha256sum $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
 
       - name: Upload artifact
