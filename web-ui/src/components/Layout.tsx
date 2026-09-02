@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Box, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText,
-  AppBar, Toolbar, Typography, IconButton, Avatar, Menu, MenuItem, Divider, Badge, Tooltip,
+  AppBar, Toolbar, Typography, IconButton, Avatar, Menu, MenuItem, Divider, Badge, Tooltip, Switch,
 } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import BackupIcon from '@mui/icons-material/Backup'
@@ -20,7 +20,10 @@ import PublicIcon from '@mui/icons-material/Public'
 import GroupsIcon from '@mui/icons-material/Groups'
 import HailIcon from '@mui/icons-material/Hail'
 import DnsIcon from '@mui/icons-material/Dns'
+import Brightness4Icon from '@mui/icons-material/Brightness4'
+import Brightness7Icon from '@mui/icons-material/Brightness7'
 import { getUser, clearAuth } from '../api/client'
+import { useThemeMode } from '../theme'
 
 const drawerWidth = 248
 
@@ -52,6 +55,8 @@ export default function Layout() {
     clearAuth()
     navigate('/login', { replace: true })
   }
+
+  const { mode, toggleMode } = useThemeMode()
 
   const content = (
     <>
@@ -128,6 +133,14 @@ export default function Layout() {
                 <BackupIcon fontSize="small" />
               </Avatar>
             </Badge>
+          </Tooltip>
+          <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            <IconButton
+              onClick={toggleMode}
+              sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mr: 1, color: mode === 'dark' ? '#90CAF9' : '#1E88E5' }}
+            >
+              {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+            </IconButton>
           </Tooltip>
           <Box
             onClick={(e) => setUserMenu(e.currentTarget)}

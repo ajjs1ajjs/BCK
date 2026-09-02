@@ -1,12 +1,8 @@
 import axios from 'axios'
+import { API_ROUTES } from './routes'
 
 const TOKEN_KEY = 'bck_token'
 const USER_KEY = 'bck_user'
-
-export const api = axios.create({
-  baseURL: '/api/v1',
-  timeout: 30000,
-})
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem(TOKEN_KEY)
@@ -461,16 +457,16 @@ export interface CloudRestorableKind {
 }
 
 export const cloudApi = {
-  list: () => api.get<CloudAccount[]>('/cloud/accounts'),
-  get: (id: string) => api.get<CloudAccount>(`/cloud/accounts/${id}`),
-  register: (payload: CloudAccount) => api.post<CloudAccount>('/cloud/accounts', payload),
-  remove: (id: string) => api.delete(`/cloud/accounts/${id}`),
-  restorable: (id: string) => api.get<CloudRestorableKind[]>(`/cloud/accounts/${id}/restorable`),
+  list: () => api.get<CloudAccount[]>(API_ROUTES.cloud.list()),
+  get: (id: string) => api.get<CloudAccount>(API_ROUTES.cloud.get(id)),
+  register: (payload: CloudAccount) => api.post<CloudAccount>(API_ROUTES.cloud.register(), payload),
+  remove: (id: string) => api.delete(API_ROUTES.cloud.remove(id)),
+  restorable: (id: string) => api.get<CloudRestorableKind[]>(API_ROUTES.cloud.restorable(id)),
   restore: (id: string, payload: { resource_type: string; resource_id: string; target_name: string; params: Record<string, string> }) =>
-    api.post<CloudRestore>(`/cloud/accounts/${id}/restore`, payload),
-  accountRestores: (id: string) => api.get<CloudRestore[]>(`/cloud/accounts/${id}/restores`),
-  allRestores: () => api.get<CloudRestore[]>('/cloud/restores'),
-  restoreById: (rid: string) => api.get<CloudRestore>(`/cloud/restores/${rid}`),
+    api.post<CloudRestore>(API_ROUTES.cloud.restore(id), payload),
+  accountRestores: (id: string) => api.get<CloudRestore[]>(API_ROUTES.cloud.accountRestores(id)),
+  allRestores: () => api.get<CloudRestore[]>(API_ROUTES.cloud.allRestores()),
+  restoreById: (rid: string) => api.get<CloudRestore>(API_ROUTES.cloud.restoreById(rid)),
 }
 
 export const m365Api = {

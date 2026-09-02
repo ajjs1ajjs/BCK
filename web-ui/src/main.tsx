@@ -2,21 +2,29 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ThemeProvider, CssBaseline } from '@mui/material'
+import { CssBaseline } from '@mui/material'
+import { ThemeModeProvider, useThemeMode, getLightTheme, getDarkTheme } from './theme'
 import App from './App'
-import theme from './theme'
 
 const queryClient = new QueryClient()
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider theme={theme}>
+const ThemedApp = () => {
+  const { mode } = useThemeMode()
+  const theme = mode === 'dark' ? getDarkTheme() : getLightTheme()
+  return (
+    <QueryClientProvider client={new QueryClient()}>
+      <ThemeModeProvider>
         <CssBaseline />
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </ThemeProvider>
+      </ThemeModeProvider>
     </QueryClientProvider>
+  )
+}
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ThemedApp />
   </React.StrictMode>,
 )
