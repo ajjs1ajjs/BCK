@@ -4,6 +4,17 @@ use chrono::Utc;
 
 use super::User;
 
+fn revoked_set() -> &'static dashmap::DashSet<String> {
+    static SET: std::sync::OnceLock<dashmap::DashSet<String>> = std::sync::OnceLock::new();
+    SET.get_or_init(dashmap::DashSet::new)
+}
+fn is_revoked(token: &str) -> bool {
+    revoked_set().contains(token)
+}
+fn revoke_token(token: &str) {
+    revoked_set().insert(token.to_string());
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
@@ -45,12 +56,19 @@ impl JwtManager {
     }
 
     pub fn validate(&self, token: &str) -> Result<Claims, anyhow::Error> {
+        if is_revoked(token) {
+            anyhow::bail!("token revoked");
+        }
         let token_data = decode::<Claims>(
             token,
             &DecodingKey::from_secret(&self.secret),
             &Validation::default(),
         )?;
         Ok(token_data.claims)
+    }
+
+    pub fn revoke(&self, token: &str) {
+        revoke_token(token);
     }
 
     pub fn generate_api_token(&self, name: &str) -> Result<String, anyhow::Error> {

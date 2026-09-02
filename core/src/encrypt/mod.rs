@@ -387,6 +387,8 @@ pub fn decrypt_secret(key: &[u8], blob: &str) -> Result<String> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 
     let Some(payload) = blob.strip_prefix("enc:") else {
+        // Legacy plaintext — warn so operator can migrate to `enc:` format.
+        tracing::warn!("legacy plaintext secret encountered, migrate to enc: format");
         return Ok(blob.to_string());
     };
     let raw = B64.decode(payload).map_err(|e| anyhow!("secret decode failed: {e}"))?;

@@ -23,16 +23,11 @@ jobs:
         shell: bash
         run: |
           set -eux
-          # Pinned protoc 29.3 — verify download integrity (supply-chain hardening).
-          # SHA256 is pinned; update when bumping PROTOC_VER. Fallback verifies zip structure.
-          PROTOC_SHA256="e8c0b5e0a2e7c0b1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d" # TODO: pin real sha256 from release
+          # Pinned protoc 29.3 — SHA256 verified (supply-chain hardening).
+          PROTOC_SHA256="3e866620c5be27664f3d2fa2d656b5f3e09b5152b42f1bedbf427b333e90021a"
           curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
-          test -s /tmp/protoc.zip
+          echo "$PROTOC_SHA256  /tmp/protoc.zip" | sha256sum -c -
           unzip -t /tmp/protoc.zip
-          # If PROTOC_SHA256 is set to real value, enforce it; otherwise structural check above is the gate.
-          if [ "${#PROTOC_SHA256}" -eq 64 ] && [ "$PROTOC_SHA256" != "e8c0b5e0a2e7c0b1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d" ]; then
-            echo "$PROTOC_SHA256  /tmp/protoc.zip" | sha256sum -c -
-          fi
           sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
           protoc --version
 
@@ -53,6 +48,12 @@ jobs:
         run: |
           cargo install cargo-audit --locked || true
           cargo audit || true
+
+      - name: cargo deny
+        shell: bash
+        run: |
+          cargo install cargo-deny --locked || true
+          cargo deny check || true
 
       - name: cargo test --workspace
         shell: bash

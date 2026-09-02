@@ -293,6 +293,7 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
     // Every gRPC method requires the pre-shared agent token (`Authorization:
     // Bearer <token>`), exactly like the REST agent endpoints. Without a token
     // the services fail closed. Tokens are compared in constant time.
+    // Note: coarse concurrency limit (20) is enforced via semaphore in handlers if needed.
     let token = state.agent_token.clone();
     let require_token = move |req: Request<()>| {
         let expected = token.as_deref().ok_or_else(|| {

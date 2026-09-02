@@ -30,7 +30,9 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 
 /// JWT-protected router (`/me` requires a validated token).
 pub fn protected_router() -> axum::Router<Arc<AppState>> {
-    axum::Router::new().route("/me", axum::routing::get(me))
+    axum::Router::new()
+        .route("/me", axum::routing::get(me))
+        .route("/logout", axum::routing::post(logout))
 }
 
 // --- login rate limiting (in-memory, per-username) ---
@@ -113,6 +115,16 @@ async fn login(
     update_last_login(&state.db, &user_model.id).await;
 
     Ok(Json(LoginResponse { token, user }))
+}
+
+async fn logout(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> StatusCode {
+    if let Some(v) = headers.get(axum::http::header::AUTHORIZATION).and_then(|h| h.to_str().ok()).and_then(|s| s.strip_prefix("Bearer ")) {
+        state.jwt.revoke(v);
+    }
+    StatusCode::OK
 }
 
 async fn me(
