@@ -125,6 +125,10 @@ Default web console: `http://localhost:9440`.
 > and the admin portal. Cross-origin requests are denied unless the origin is
 > explicitly allowed via `server.allowed_origins`.
 
+> **Private storage endpoints:** custom S3 endpoints that resolve to `127.0.0.1`/`10.x`/`192.168.x` are blocked by default (SSRF hardening). For on-prem S3 set `BCK_ALLOW_PRIVATE_ENDPOINTS=1`.
+
+> **Health:** `GET /api/v1/healthz` — liveness/readiness probe (checks DB, no auth).
+
 ## One-line Install & Update
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.

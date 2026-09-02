@@ -23,6 +23,7 @@ pub mod testutil;
 #[cfg(test)]
 mod api_tests;
 
+use axum::response::IntoResponse;
 use axum::Router;
 use std::sync::Arc;
 
@@ -74,8 +75,27 @@ pub fn protected_api_routes(state: Arc<AppState>) -> Router {
 
 pub fn api_routes(state: Arc<AppState>) -> Router {
     let protected = protected_api_routes(state.clone());
-    let public = public_api_routes(state);
+    let public = public_api_routes(state.clone());
+    // Liveness/readiness probe (no auth): checks DB connectivity.
+    let health = Router::new()
+        .route("/healthz", axum::routing::get(healthz))
+        .with_state(state);
     Router::new()
         .merge(protected)
         .merge(public)
+        .merge(health)
+}
+
+async fn healthz(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> axum::response::Response {
+    let db_ok = match &state.db {
+        crate::db::DbPool::Sqlite(pool) => sqlx::query("SELECT 1").fetch_one(pool).await.is_ok(),
+        crate::db::DbPool::Postgres(pool) => sqlx::query("SELECT 1").fetch_one(pool).await.is_ok(),
+    };
+    if db_ok {
+        (axum::http::StatusCode::OK, axum::Json(serde_json::json!({"status":"ok"}))).into_response()
+    } else {
+        (axum::http::StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"status":"degraded","db":"unreachable"}))).into_response()
+    }
 }
