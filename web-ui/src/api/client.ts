@@ -461,14 +461,14 @@ export interface CloudRestorableKind {
 }
 
 export const cloudApi = {
-  list: () => api.get<CloudAccount[]>('/cloud'),
-  get: (id: string) => api.get<CloudAccount>(`/cloud/${id}`),
-  register: (payload: CloudAccount) => api.post<CloudAccount>('/cloud', payload),
-  remove: (id: string) => api.delete(`/cloud/${id}`),
-  restorable: (id: string) => api.get<CloudRestorableKind[]>(`/cloud/${id}/restorable`),
+  list: () => api.get<CloudAccount[]>('/cloud/accounts'),
+  get: (id: string) => api.get<CloudAccount>(`/cloud/accounts/${id}`),
+  register: (payload: CloudAccount) => api.post<CloudAccount>('/cloud/accounts', payload),
+  remove: (id: string) => api.delete(`/cloud/accounts/${id}`),
+  restorable: (id: string) => api.get<CloudRestorableKind[]>(`/cloud/accounts/${id}/restorable`),
   restore: (id: string, payload: { resource_type: string; resource_id: string; target_name: string; params: Record<string, string> }) =>
-    api.post<CloudRestore>(`/cloud/${id}/restore`, payload),
-  accountRestores: (id: string) => api.get<CloudRestore[]>(`/cloud/${id}/restores`),
+    api.post<CloudRestore>(`/cloud/accounts/${id}/restore`, payload),
+  accountRestores: (id: string) => api.get<CloudRestore[]>(`/cloud/accounts/${id}/restores`),
   allRestores: () => api.get<CloudRestore[]>('/cloud/restores'),
   restoreById: (rid: string) => api.get<CloudRestore>(`/cloud/restores/${rid}`),
 }
