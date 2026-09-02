@@ -79,6 +79,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router {
     // Liveness/readiness probe (no auth): checks DB connectivity.
     let health = Router::new()
         .route("/healthz", axum::routing::get(healthz))
+        .route("/metrics", axum::routing::get(metrics))
         .with_state(state);
     Router::new()
         .merge(protected)
@@ -98,4 +99,26 @@ async fn healthz(
     } else {
         (axum::http::StatusCode::SERVICE_UNAVAILABLE, axum::Json(serde_json::json!({"status":"degraded","db":"unreachable"}))).into_response()
     }
+}
+
+async fn metrics(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> axum::response::Response {
+    // Simple Prometheus-style metrics (no auth, scraped by monitoring).
+    let jobs = {
+        let jm = state.job_manager.lock().await;
+        jm.list_jobs().await.unwrap_or_default()
+    };
+    let running = jobs.iter().filter(|j| j.status == "running").count();
+    let body = format!(
+        "# HELP bck_jobs_total Total jobs\n# TYPE bck_jobs_total gauge\nbck_jobs_total {}\n# HELP bck_jobs_running Running jobs\n# TYPE bck_jobs_running gauge\nbck_jobs_running {}\n",
+        jobs.len(),
+        running
+    );
+    (
+        axum::http::StatusCode::OK,
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        body,
+    )
+        .into_response()
 }

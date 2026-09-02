@@ -81,6 +81,9 @@ async fn main() -> anyhow::Result<()> {
         seed_default_admin(&db, &config).await;
     }
 
+    // Daily backup of the SQLite DB file (if using SQLite) — best-effort, no block on failure.
+    spawn_db_backup_task(&config);
+
     // Initialize components
     let jwt_secret = resolve_jwt_secret(&config)?;
     let jwt = JwtManager::new(&jwt_secret);
@@ -525,4 +528,45 @@ fn resolve_agent_token(config: &AppConfig) -> anyhow::Result<Option<String>> {
         path.display()
     );
     Ok(Some(token))
+}
+
+fn spawn_db_backup_task(config: &bck_core::config::AppConfig) {
+    // Only for SQLite file URLs like `sqlite://./data/bck.db?mode=rwc`
+    let url = config.database.url.clone();
+    let path = url.trim_start_matches("sqlite://").split('?').next().unwrap_or("").to_string();
+    if path.is_empty() || path == ":memory:" {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
+        // First tick completes immediately — skip it, wait 24h.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let src = std::path::Path::new(&path);
+            if !src.exists() {
+                continue;
+            }
+            let backup_dir = src.parent().unwrap_or(std::path::Path::new(".")).join("db_backups");
+            let _ = std::fs::create_dir_all(&backup_dir);
+            let ts = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+            let dst = backup_dir.join(format!("bck-{}.db.bak", ts));
+            if let Err(e) = std::fs::copy(src, &dst) {
+                warn!("DB backup failed: {}", e);
+                continue;
+            }
+            // Keep last 7 backups, prune older.
+            if let Ok(entries) = std::fs::read_dir(&backup_dir) {
+                let mut files: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                files.sort_by_key(|e| e.file_name());
+                while files.len() > 7 {
+                    if let Some(old) = files.first() {
+                        let _ = std::fs::remove_file(old.path());
+                    }
+                    files.remove(0);
+                }
+            }
+            info!("DB backup created: {}", dst.display());
+        }
+    });
 }
