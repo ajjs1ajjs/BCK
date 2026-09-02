@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.6] - 2026-09-02
+
+### Безпека (remaining audit)
+
+- **JWT**: in-memory denylist + `POST /auth/logout`, реальний SHA256 для protoc (3e8666...), tenant-фільтр для `list_events`, warn для legacy `enc:`.
+
+## [0.8.5] - 2026-09-02
+
+### Додано
+
+- **Backup**: щоденний бекап `bck.db` в `db_backups/` (ротація 7), **Metrics**: `GET /metrics` Prometheus.
+
 ## [0.8.3] - 2026-09-02
 
 ### Безпека (audit hardening)

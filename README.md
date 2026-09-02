@@ -129,6 +129,12 @@ Default web console: `http://localhost:9440`.
 
 > **Health:** `GET /api/v1/healthz` — liveness/readiness probe (checks DB, no auth).
 
+> **Metrics:** `GET /api/v1/metrics` — Prometheus `bck_jobs_total`/`bck_jobs_running`.
+
+> **Logout:** `POST /api/v1/auth/logout` — revokes JWT (in-memory denylist).
+
+> **Backup:** SQLite DB щоденно копіюється в `db_backups/` (ротація 7).
+
 ## One-line Install & Update
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.
