@@ -1,165 +1,98 @@
-name: release
+name: Release
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build-linux:
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.os }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            artifact: bck-linux-x86_64
+          - os: ubuntu-latest
+            arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            artifact: bck-linux-aarch64
+
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          profile: minimal
+          targets: ${{ matrix.target }}
 
-      - name: Install protoc
-        shell: bash
+      - name: Install system dependencies
         run: |
-          set -eux
-          PROTOC_SHA256="3e866620c5be27664f3d2fa2d656b5f3e09b5152b42f1bedbf427b333e90021a"
-          curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
-          echo "$PROTOC_SHA256  /tmp/protoc.zip" | sha256sum -c -
-          unzip -t /tmp/protoc.zip
-          sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
-          protoc --version
-
-      - name: Install build deps
-        shell: bash
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libssl-dev libzstd-dev protobuf-compiler
 
       - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
             target
-          key: linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Setup Node (for web UI)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 22
-
-      - name: Build binaries
-        shell: bash
-        run: cargo build --release --workspace --bins
+      - name: Build release
+        run: cargo build --release --workspace --bins --target ${{ matrix.target }}
 
       - name: Build web UI
-        shell: bash
+        if: runner.os == 'Linux'
         run: |
-          (cd web-ui && npm ci --silent && npm run build)
-
-      - name: Assemble archive
-        shell: bash
-        run: |
-          mkdir -p staging/bin staging/web-ui
-          cp target/release/bckd target/release/bck-agent target/release/bck target/release/bck-proxy staging/bin/
-          cp -r web-ui/dist staging/web-ui/
-          tar -czf bck-linux-x86_64.tar.gz -C staging .
-          sha256sum bck-linux-x86_64.tar.gz > bck-linux-x86_64.tar.gz.sha256
-          echo "ARCH=bck-linux-x86_64.tar.gz" >> $GITHUB_ENV
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: bck-linux
-          path: |
-            bck-*.tar.gz
-            bck-*.tar.gz.sha256
-
-  build-windows:
-    permissions:
-      contents: read
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
-
-      - name: Install protoc
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\protoc.zip"
-          if ((Get-Item "$env:RUNNER_TEMP\protoc.zip").Length -lt 1024) { throw "protoc.zip too small" }
-          # Structural integrity check; pin SHA256 when bumping protoc version
-          try { Expand-Archive "$env:RUNNER_TEMP\protoc.zip" -DestinationPath "$env:RUNNER_TEMP\protoc" -Force } catch { throw "protoc.zip integrity check failed: $_" }
-          Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\protoc\bin"
-          & "$env:RUNNER_TEMP\protoc\bin\protoc.exe" --version
-
-      - name: Cache cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ~/.cargo/registry
-            target
-          key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Setup Node (for web UI)
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 22
-
-      - name: Build binaries
-        run: cargo build --release --workspace --bins
-
-      - name: Build web UI
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Push-Location web-ui
-          npm ci --silent
+          cd web-ui
+          npm ci
           npm run build
-          Pop-Location
 
-      - name: Assemble archive
-        shell: pwsh
+      - name: Package release
         run: |
-          $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Path staging/bin, staging/web-ui -Force | Out-Null
-          Copy-Item target/release/bckd.exe, target/release/bck-agent.exe, target/release/bck.exe, target/release/bck-proxy.exe staging/bin/
-          Copy-Item web-ui/dist staging/web-ui/dist -Recurse
-          Compress-Archive -Path staging/* -DestinationPath bck-windows-x86_64.zip
-          (Get-FileHash bck-windows-x86_64.zip -Algorithm SHA256).Hash.ToLower() + "  bck-windows-x86_64.zip" | Out-File -Encoding ascii bck-windows-x86_64.zip.sha256
+          mkdir -p release/${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/bckd release/${{ matrix.artifact }}/
+          cp target/${{ matrix.target }}/release/bck-agent release/${{ matrix.artifact }}/
+          cp target/${{ matrix.target }}/release/bck release/${{ matrix.artifact }}/
+          cp target/${{ matrix.target }}/release/bck-proxy release/${{ matrix.artifact }}/
+          cp -r web-ui/dist release/${{ matrix.artifact }}/web-ui 2>/dev/null || true
+          cd release
+          tar -czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+          sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.tar.gz.sha256
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: bck-windows
-          path: |
-            bck-*.zip
-            bck-*.zip.sha256
+          name: ${{ matrix.artifact }}
+          path: release/${{ matrix.artifact }}.tar.gz*
+          retention-days: 90
 
-  publish:
-    needs: [build-linux, build-windows]
+  release:
+    name: Create GitHub Release
+    needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: bck-*
+          merge-multiple: true
 
-      - name: Publish release to public distribution repository
-        env:
-          GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
-          PUBLIC_REPO: ajjs1ajjs/BCK
-          TAG: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$GH_TOKEN" || { echo "PUBLIC_RELEASE_TOKEN is not configured" >&2; exit 1; }
-          mapfile -t FILES < <(find artifacts -type f \( -name 'bck-*.tar.gz' -o -name 'bck-*.zip' -o -name 'bck-*.sha256' \) -print)
-          test "${#FILES[@]}" -gt 0 || { echo "No release files were produced" >&2; exit 1; }
-          gh release create "$TAG" "${FILES[@]}" \
-            --repo "$PUBLIC_REPO" \
-            --title "BCK $TAG" \
-            --generate-notes
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
