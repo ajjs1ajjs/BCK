@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.3] - 2026-09-02
+
+### Безпека (audit hardening)
+
+- **C1**: прибрано витік `encryption_key` з `agent_tasks.payload` (gRPC).
+- **C2**: `PRAGMA foreign_keys=ON + WAL` для SQLite.
+- **C3**: `tenant_id` для VM jobs, **C4** tenant-check для instant recovery, **C5** allowlist `file_restore`.
+- **H2-H12**: decompress ліміт 64M, SSRF блок private/loopback (`BCK_ALLOW_PRIVATE_ENDPOINTS=1`), Argon2id 64M/3, атомарна міграція ключа, HSTS, CDP bounded 1024, constant-time токен.
+- **Systemd**: `NoNewPrivileges/ProtectSystem/PrivateTmp`, **CI**: `cargo audit` + `healthz` probe.
+
 ## [0.8.0] - 2026-09-01
 
 ### Додано
