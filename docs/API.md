@@ -106,6 +106,10 @@ POST   /api/v1/portal/admin/restore-requests/:id/complete
 GET    /api/v1/events
 GET    /api/v1/agents
 POST   /api/v1/agents/:id/tasks
+
+GET    /api/v1/healthz
+GET    /api/v1/metrics
+POST   /api/v1/auth/logout
 ```
 
 ## gRPC (port 9441)
