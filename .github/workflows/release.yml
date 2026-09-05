@@ -22,7 +22,7 @@ jobs:
             artifact: bck-linux-x86_64.tar.gz
             artifact_name: bck-linux-x86_64
           - os: Windows x86_64
-            runner: windows-2022
+            runner: windows-latest
             arch: x86_64
             artifact: bck-windows-x86_64.zip
             artifact_name: bck-windows-x86_64
@@ -120,6 +120,16 @@ jobs:
             cd release
             powershell -Command "Compress-Archive -Path 'bin/*','web-ui/*' -DestinationPath '$ARTIFACT.zip' -Force"
             powershell -Command "Get-ChildItem '$ARTIFACT.zip' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + '  ' + $_.Name } | Out-File -Encoding ASCII '$ARTIFACT.zip.sha256'"
+          elif [ "${{ matrix.os }}" = "macOS arm64" ] || [ "${{ matrix.os }}" = "macOS x86_64" ]; then
+            cp target/release/bckd release/bin/
+            cp target/release/bck-agent release/bin/
+            cp target/release/bck release/bin/
+            cp target/release/bck-proxy release/bin/
+            mkdir -p release/web-ui
+            cp -r web-ui/dist release/web-ui/
+            cd release
+            tar -czf $ARTIFACT.tar.gz bin web-ui
+            shasum -a 256 $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
           else
             cp target/release/bckd release/bin/
             cp target/release/bck-agent release/bin/
