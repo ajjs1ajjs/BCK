@@ -112,41 +112,44 @@ jobs:
           npm run build
 
       - name: Package release
+        if: matrix.os != 'Windows x86_64'
         shell: bash
         run: |
           ARTIFACT="${{ matrix.artifact_name }}"
           mkdir -p release/bin
-          if [ "${{ matrix.os }}" = "Windows x86_64" ]; then
-            cp target/release/bckd.exe release/bin/
-            cp target/release/bck-agent.exe release/bin/
-            cp target/release/bck.exe release/bin/
-            cp target/release/bck-proxy.exe release/bin/
-            mkdir -p release/web-ui
-            cp -r web-ui/dist release/web-ui/
-            cd release
-            powershell -Command "Compress-Archive -Path 'bin/*','web-ui/*' -DestinationPath \"$ARTIFACT.zip\" -Force"
-            powershell -Command "Get-ChildItem \"$ARTIFACT.zip\" | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + '  ' + $_.Name } | Out-File -Encoding ASCII \"$ARTIFACT.zip.sha256\""
-          elif [ "${{ matrix.os }}" = "macOS x86_64" ]; then
-            cp target/release/bckd release/bin/
-            cp target/release/bck-agent release/bin/
-            cp target/release/bck release/bin/
-            cp target/release/bck-proxy release/bin/
-            mkdir -p release/web-ui
-            cp -r web-ui/dist release/web-ui/
-            cd release
+          cp target/release/bckd release/bin/
+          cp target/release/bck-agent release/bin/
+          cp target/release/bck release/bin/
+          cp target/release/bck-proxy release/bin/
+          mkdir -p release/web-ui
+          cp -r web-ui/dist release/web-ui/
+          cd release
+          if [ "${{ matrix.os }}" = "macOS x86_64" ]; then
             tar -czf $ARTIFACT.tar.gz bin web-ui
             shasum -a 256 $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
           else
-            cp target/release/bckd release/bin/
-            cp target/release/bck-agent release/bin/
-            cp target/release/bck release/bin/
-            cp target/release/bck-proxy release/bin/
-            mkdir -p release/web-ui
-            cp -r web-ui/dist release/web-ui/
-            cd release
             tar -czf $ARTIFACT.tar.gz bin web-ui
             sha256sum $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
           fi
+
+      - name: Package release (Windows)
+        if: matrix.os == 'Windows x86_64'
+        shell: pwsh
+        run: |
+          $artifact = "${{ matrix.artifact_name }}"
+          New-Item -ItemType Directory -Path release/bin -Force | Out-Null
+          New-Item -ItemType Directory -Path release/web-ui -Force | Out-Null
+          Copy-Item target/release/bckd.exe release/bin/
+          Copy-Item target/release/bck-agent.exe release/bin/
+          Copy-Item target/release/bck.exe release/bin/
+          Copy-Item target/release/bck-proxy.exe release/bin/
+          Copy-Item -Recurse web-ui/dist release/web-ui/
+          Set-Location release
+          Compress-Archive -Path bin/*,web-ui/* -DestinationPath "$artifact.zip" -Force
+          Get-ChildItem "$artifact.zip" | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$hash  $($_.Name)" | Out-File -Encoding ASCII "$artifact.zip.sha256"
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
