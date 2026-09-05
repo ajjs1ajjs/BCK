@@ -124,8 +124,8 @@ jobs:
             mkdir -p release/web-ui
             cp -r web-ui/dist release/web-ui/
             cd release
-            powershell -Command "Compress-Archive -Path 'bin/*','web-ui/*' -DestinationPath '$ARTIFACT.zip' -Force"
-            powershell -Command "Get-ChildItem '$ARTIFACT.zip' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + '  ' + $_.Name } | Out-File -Encoding ASCII '$ARTIFACT.zip.sha256'"
+            powershell -Command "Compress-Archive -Path 'bin/*','web-ui/*' -DestinationPath \"$ARTIFACT.zip\" -Force"
+            powershell -Command "Get-ChildItem \"$ARTIFACT.zip\" | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + '  ' + $_.Name } | Out-File -Encoding ASCII \"$ARTIFACT.zip.sha256\""
           elif [ "${{ matrix.os }}" = "macOS x86_64" ]; then
             cp target/release/bckd release/bin/
             cp target/release/bck-agent release/bin/
