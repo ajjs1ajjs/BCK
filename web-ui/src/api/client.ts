@@ -5,7 +5,7 @@ const TOKEN_KEY = 'bck_token'
 const USER_KEY = 'bck_user'
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: '/api/v1',
   headers: { 'Content-Type': 'application/json' },
 })
 
