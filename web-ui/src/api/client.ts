@@ -4,6 +4,11 @@ import { API_ROUTES } from './routes'
 const TOKEN_KEY = 'bck_token'
 const USER_KEY = 'bck_user'
 
+const api = axios.create({
+  baseURL: '/api',
+  headers: { 'Content-Type': 'application/json' },
+})
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem(TOKEN_KEY)
   if (token) {
