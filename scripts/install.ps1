@@ -45,6 +45,44 @@ function Log  { param($m) Write-Host "[BCK] $m" -ForegroundColor Cyan }
 function Warn { param($m) Write-Host "[BCK] $m" -ForegroundColor Yellow }
 function Fail { param($m) Write-Host "[BCK] $m" -ForegroundColor Red; exit 1 }
 
+function Check-WindowsVersion {
+    $osVersion = [System.Environment]::OSVersion.Version
+    $build = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuild
+    $buildRevision = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").CurrentBuildRevision
+
+    $supportedBuilds = @{
+        "Windows 10 2022" = @(19044, 19045, 20049, 20348, 21313, 21382, 22000, 22336, 22621, 22631, 23466, 23530, 25398)
+        "Windows 11 2022" = @(22000, 22621, 22631, 23466, 23530, 25398)
+        "Windows Server 2022" = @(20348)
+        "Windows Server 2025" = @(25398)
+    }
+
+    $isSupported = $false
+    $displayName = ""
+
+    if ($osVersion.Major -eq "10" -and $osVersion.Build -ge 19044) {
+        if ($osVersion.Build -le 19045) { $displayName = "Windows 10 2022 (21H1/21H2)"; $isSupported = $true }
+        elseif ($osVersion.Build -in @(20049, 21313, 21382, 22000)) { $displayName = "Windows 10/11 2022+ (Dev/Beta)"; $isSupported = $true }
+        elseif ($osVersion.Build -in @(22336, 22621, 22631, 23466, 23530, 25398)) { $displayName = "Windows 11 2022+"; $isSupported = $true }
+    }
+    elseif ($osVersion.Major -eq "10" -and $osVersion.Build -ge 20348 -and $osVersion.Build -le 20348) {
+        $displayName = "Windows Server 2022"; $isSupported = $true
+    }
+    elseif ($osVersion.Major -ge "11" -and $osVersion.Build -ge 25398) {
+        $displayName = "Windows Server 2025 / Windows 11 2024+"; $isSupported = $true
+    }
+
+    if (-not $isSupported) {
+        Fail "Unsupported Windows version: $osVersion ($displayName). Supported: Windows 10 21H1/21H2, Windows 11 22H2+, Windows Server 2022/2025."
+    }
+    Log "Detected $displayName (Build $build) — supported."
+}
+
+# Check Windows version early
+if ($Env:OS -eq "Windows_NT") {
+    Check-WindowsVersion
+}
+
 # ------------------------------------------------------------- elevation -----
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
