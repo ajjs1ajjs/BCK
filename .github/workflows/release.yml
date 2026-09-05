@@ -43,17 +43,22 @@ jobs:
 
       - name: Install protoc (Windows)
         if: matrix.os == 'Windows x86_64'
+        shell: pwsh
         run: |
-          choco install -y protoc --no-progress || winget install -e --id Google.Protobuf --accept-source-agreements --accept-package-agreements || echo "protoc install failed, trying alternative"
-          # Fallback: download protoc binary directly
-          if ! command -v protoc >/dev/null 2>&1; then
-            echo "Downloading protoc binary..."
-            mkdir -p /c/tools/protoc
-            curl -L -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-win64.zip
-            unzip -o /tmp/protoc.zip -d /c/tools/protoc
-            echo "C:\tools\protoc\bin" >> $GITHUB_PATH
-          fi
-          protoc --version
+          # Download and extract protoc binary to a stable location
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '25.1'
+          $protocDir = 'C:\protoc'
+          Write-Host "Downloading protoc v$protocVersion..."
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
+          $zipPath = "$env:TEMP\protoc.zip"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+          Write-Host "Extracting protoc..."
+          Expand-Archive -Path $zipPath -DestinationPath $protocDir -Force
+          Write-Host "Protoc installed at $protocDir"
+          & "$protocDir\bin\protoc.exe" --version
+          # Add to PATH for subsequent steps
+          Write-Host "$protocDir\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install Rust dependencies (macOS)
         if: matrix.os == 'macOS x86_64' || matrix.os == 'macOS arm64'
