@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/tests-188%20passing-green" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
-  <img src="https://img.shields.io/badge/Platform-Ubuntu%20%2F%20Debian%20%2F%20Windows-orange" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Ubuntu%20%2F%20Debian%20%2F%20Windows%20%2F%20macOS-orange" alt="Platform">
   <img src="https://img.shields.io/badge/PWA-offline-cyan" alt="PWA">
 </p>
 
