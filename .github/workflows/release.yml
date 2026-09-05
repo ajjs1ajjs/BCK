@@ -26,6 +26,16 @@ jobs:
             arch: x86_64
             artifact: bck-windows-x86_64.zip
             artifact_name: bck-windows-x86_64
+          - os: macOS arm64
+            runner: macos-14
+            arch: aarch64
+            artifact: bck-macos-aarch64.tar.gz
+            artifact_name: bck-macos-arm64
+          - os: macOS x86_64
+            runner: macos-14
+            arch: x86_64
+            artifact: bck-macos-x86_64.tar.gz
+            artifact_name: bck-macos-x86_64
 
     steps:
       - uses: actions/checkout@v4
