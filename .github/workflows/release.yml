@@ -78,6 +78,7 @@ jobs:
           cache-dependency-path: web-ui/package-lock.json
 
       - name: Cache cargo
+        if: matrix.os != 'Windows x86_64'
         uses: actions/cache@v4
         with:
           path: |
@@ -92,7 +93,11 @@ jobs:
         env:
           CARGO_BUILD_JOBS: 2
         run: |
-          cargo build --release --workspace --bins
+          cargo --version
+          rustc --version
+          cargo build --release --workspace --bins 2>&1 | tail -50
+          echo "=== Build complete ==="
+          ls -la target/release/ 2>&1 | head -20 || dir target\release\
 
       - name: Build web UI
         run: |
