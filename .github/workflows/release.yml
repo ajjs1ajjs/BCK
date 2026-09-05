@@ -41,6 +41,20 @@ jobs:
             build-essential cmake pkg-config \
             libssl-dev libzstd-dev protobuf-compiler
 
+      - name: Install protoc (Windows)
+        if: matrix.os == 'Windows x86_64'
+        run: |
+          choco install -y protoc --no-progress || winget install -e --id Google.Protobuf --accept-source-agreements --accept-package-agreements || echo "protoc install failed, trying alternative"
+          # Fallback: download protoc binary directly
+          if ! command -v protoc >/dev/null 2>&1; then
+            echo "Downloading protoc binary..."
+            mkdir -p /c/tools/protoc
+            curl -L -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-win64.zip
+            unzip -o /tmp/protoc.zip -d /c/tools/protoc
+            echo "C:\tools\protoc\bin" >> $GITHUB_PATH
+          fi
+          protoc --version
+
       - name: Install Rust dependencies (macOS)
         if: matrix.os == 'macOS x86_64' || matrix.os == 'macOS arm64'
         run: |
