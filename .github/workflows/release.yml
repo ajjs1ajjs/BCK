@@ -22,7 +22,7 @@ jobs:
             artifact: bck-linux-x86_64.tar.gz
             artifact_name: bck-linux-x86_64
           - os: Windows x86_64
-            runner: windows-latest
+            runner: windows-2022
             arch: x86_64
             artifact: bck-windows-x86_64.zip
             artifact_name: bck-windows-x86_64
@@ -84,6 +84,8 @@ jobs:
 
       - name: Build release
         shell: bash
+        env:
+          CARGO_BUILD_JOBS: 2
         run: |
           cargo build --release --workspace --bins
 
