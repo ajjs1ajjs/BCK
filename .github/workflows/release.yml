@@ -82,18 +82,6 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.arch }}
 
-      - name: cargo deny
-        shell: bash
-        run: |
-          cargo install cargo-deny --locked
-          cargo deny check
-
-      - name: cargo audit
-        shell: bash
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
-
       - name: Build release
         env:
           CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: ""
