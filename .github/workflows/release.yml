@@ -26,6 +26,11 @@ jobs:
             arch: x86_64
             artifact: bck-windows-x86_64.zip
             artifact_name: bck-windows-x86_64
+          - os: macOS arm64
+            runner: macos-14
+            arch: aarch64
+            artifact: bck-macos-aarch64.tar.gz
+            artifact_name: bck-macos-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +69,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.arch }}
 
       - name: Build release
-        run: cargo build --release --workspace --bins
+        run: |
+          if [ "${{ matrix.os }}" = "macOS arm64" ]; then
+            rustup target add aarch64-apple-darwin
+            cargo build --release --workspace --bins --target aarch64-apple-darwin
+          else
+            cargo build --release --workspace --bins
+          fi
 
       - name: Build web UI
         run: |
@@ -87,6 +98,16 @@ jobs:
             cd release
             powershell -Command "Compress-Archive -Path 'bin/*','web-ui/*' -DestinationPath '$ARTIFACT.zip' -Force"
             powershell -Command "Get-ChildItem '$ARTIFACT.zip' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + '  ' + $_.Name } | Out-File -Encoding ASCII '$ARTIFACT.zip.sha256'"
+          elif [ "${{ matrix.os }}" = "macOS arm64" ]; then
+            cp target/aarch64-apple-darwin/release/bckd release/bin/
+            cp target/aarch64-apple-darwin/release/bck-agent release/bin/
+            cp target/aarch64-apple-darwin/release/bck release/bin/
+            cp target/aarch64-apple-darwin/release/bck-proxy release/bin/
+            mkdir -p release/web-ui
+            cp -r web-ui/dist release/web-ui/
+            cd release
+            tar -czf $ARTIFACT.tar.gz bin web-ui
+            shasum -a 256 $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
           else
             cp target/release/bckd release/bin/
             cp target/release/bck-agent release/bin/
