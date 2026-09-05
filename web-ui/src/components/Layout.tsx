@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import {
   Box, Drawer, List, ListItem, ListItemButton, ListItemIcon, ListItemText,
-  AppBar, Toolbar, Typography, IconButton, Avatar, Menu, MenuItem, Divider, Badge, Tooltip, Switch,
+  AppBar, Toolbar, Typography, IconButton, Avatar, Menu, MenuItem, Divider, Badge, Tooltip,
+  useTheme,
 } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import BackupIcon from '@mui/icons-material/Backup'
@@ -45,6 +46,7 @@ const navItems = [
 ]
 
 export default function Layout() {
+  const theme = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -57,6 +59,7 @@ export default function Layout() {
   }
 
   const { mode, toggleMode } = useThemeMode()
+  const isDark = mode === 'dark'
 
   const content = (
     <>
@@ -95,9 +98,9 @@ export default function Layout() {
       </List>
       <Box sx={{ flexGrow: 1 }} />
       <Box sx={{ p: 2 }}>
-        <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: '#F7F9FC', border: '1px solid #E2E8F0' }}>
+        <Box sx={{ p: 1.5, borderRadius: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: '#43A047' }} />
+            <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'success.main' }} />
             <Typography variant="caption" sx={{ fontWeight: 600 }}>System Operational</Typography>
           </Box>
           <Typography variant="caption" color="text.secondary">
@@ -113,7 +116,7 @@ export default function Layout() {
       <AppBar
         position="fixed"
         elevation={0}
-        sx={{ zIndex: (t) => t.zIndex.drawer + 1, bgcolor: '#FFFFFF', color: '#1A2332', borderBottom: '1px solid #E2E8F0' }}
+        sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}
       >
         <Toolbar sx={{ gap: 1 }}>
           <IconButton
@@ -128,25 +131,25 @@ export default function Layout() {
           </Typography>
           <Box sx={{ flexGrow: 1 }} />
           <Tooltip title="Backup service is running">
-            <Badge color="success" variant="dot" overlap="circular" sx={{ '& .MuiBadge-dot': { boxShadow: '0 0 0 2px #fff' } }}>
-              <Avatar sx={{ width: 34, height: 34, bgcolor: '#E8EEF5', color: '#1E88E5' }}>
+            <Badge color="success" variant="dot" overlap="circular" sx={{ '& .MuiBadge-dot': { boxShadow: `0 0 0 2px ${theme.palette.background.paper}` } }}>
+              <Avatar sx={{ width: 34, height: 34, bgcolor: 'primary.main', color: '#fff' }}>
                 <BackupIcon fontSize="small" />
               </Avatar>
             </Badge>
           </Tooltip>
-          <Tooltip title={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+          <Tooltip title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
             <IconButton
               onClick={toggleMode}
-              sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mr: 1, color: mode === 'dark' ? '#90CAF9' : '#1E88E5' }}
+              sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mr: 1, color: 'primary.main' }}
             >
-              {mode === 'dark' ? <Brightness7Icon /> : <Brightness4Icon />}
+              {isDark ? <Brightness7Icon /> : <Brightness4Icon />}
             </IconButton>
           </Tooltip>
           <Box
             onClick={(e) => setUserMenu(e.currentTarget)}
-            sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', px: 1, py: 0.5, borderRadius: 2, '&:hover': { bgcolor: '#F1F5F9' } }}
+            sx={{ display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', px: 1, py: 0.5, borderRadius: 2, '&:hover': { bgcolor: 'action.hover' } }}
           >
-            <Avatar sx={{ width: 30, height: 30, bgcolor: '#1E88E5', fontSize: 14 }}>
+            <Avatar sx={{ width: 30, height: 30, bgcolor: 'primary.main', color: '#fff', fontSize: 14 }}>
               {(user?.username || 'A').slice(0, 1).toUpperCase()}
             </Avatar>
             <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
@@ -178,7 +181,7 @@ export default function Layout() {
         </Drawer>
       </Box>
 
-      <Box component="main" sx={{ flexGrow: 1, width: { md: `calc(100% - ${drawerWidth}px)` }, p: 3, bgcolor: '#F0F3F7' }}>
+      <Box component="main" sx={{ flexGrow: 1, width: { md: `calc(100% - ${drawerWidth}px)` }, p: 3, bgcolor: 'background.default' }}>
         <Toolbar />
         <Outlet />
       </Box>
