@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BCK - Backup & Disaster Recovery</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #e0e0e0; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+        header { text-align: center; margin-bottom: 60px; }
+        h1 { font-size: 3.5em; color: #00d4ff; margin-bottom: 20px; text-shadow: 0 0 30px rgba(0,212,255,0.3); }
+        .badge { display: inline-block; padding: 8px 20px; background: rgba(0,212,255,0.2); border: 1px solid #00d4ff; border-radius: 50px; margin: 10px 5px; font-size: 0.9em; }
+        .description { font-size: 1.3em; color: #a0a0a0; max-width: 800px; margin: 30px auto; line-height: 1.8; }
+        .install-cmd { background: #0d1117; padding: 20px 30px; border-radius: 10px; font-family: 'Consolas', monospace; margin: 30px auto; max-width: 700px; border: 1px solid #30363d; }
+        .install-cmd code { color: #58a6ff; font-size: 1.1em; }
+        .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; margin: 50px 0; }
+        .feature { background: rgba(255,255,255,0.05); padding: 30px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.1); }
+        .feature h3 { color: #00d4ff; margin-bottom: 15px; font-size: 1.3em; }
+        .feature p { color: #a0a0a0; line-height: 1.7; }
+        .screenshots { display: flex; flex-direction: column; gap: 40px; margin: 50px 0; }
+        .screenshot { background: rgba(255,255,255,0.03); border-radius: 15px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); }
+        .screenshot img { width: 100%; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+        .screenshot h3 { color: #fff; margin: 20px 0 10px; font-size: 1.2em; }
+        .os-support { display: flex; justify-content: center; gap: 40px; margin: 40px 0; flex-wrap: wrap; }
+        .os { text-align: center; }
+        .os-icon { font-size: 3em; margin-bottom: 10px; }
+        .os-name { color: #fff; font-weight: bold; }
+        .download-btn { display: inline-block; padding: 15px 40px; background: linear-gradient(135deg, #00d4ff, #0099cc); color: #000; font-weight: bold; border-radius: 50px; text-decoration: none; font-size: 1.1em; margin: 20px 10px; transition: transform 0.2s, box-shadow 0.2s; }
+        .download-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,212,255,0.3); }
+        footer { text-align: center; padding: 40px; color: #666; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 60px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ BCK</h1>
+            <p class="description">Enterprise Backup & Disaster Recovery для сучасної інфраструктури. Захистіть свої дані з повним контролем над кожним кроком.</p>
+            <div>
+                <span class="badge">🪟 Windows 2022/2025</span>
+                <span class="badge">🐧 Ubuntu 24/25/26</span>
+                <span class="badge">🍎 macOS</span>
+                <span class="badge">🔐 AES-256-GCM</span>
+            </div>
+        </header>
+
+        <div class="install-cmd">
+            <code>curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash</code>
+        </div>
+        <div class="install-cmd">
+            <code>irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex</code>
+        </div>
+
+        <h2 style="color:#fff;text-align:center;margin:50px 0 30px;">Можливості</h2>
+        <div class="features">
+            <div class="feature">
+                <h3>🚀 Швидке відновлення</h3>
+                <p>Миттєве відновлення даних з будь-якої точки в часі. Інкрементальні бекапи економлять місце та час.</p>
+            </div>
+            <div class="feature">
+                <h3>🔒 Шифрування AES-256-GCM</h3>
+                <p>Всі дані шифруються на боці клієнта перед передачею. Приватні ключі ніколи не покидають ваш сервер.</p>
+            </div>
+            <div class="feature">
+                <h3>☁️ Гібридне зберігання</h3>
+                <p>Підтримка локальних дисків, NAS, SAN та хмарних сховищ в одному рішенні.</p>
+            </div>
+            <div class="feature">
+                <h3>📊 Веб-консоль</h3>
+                <p> Сучасний веб-інтерфейс для керування бекапами, моніторингу та відновлення.</p>
+            </div>
+            <div class="feature">
+                <h3>🔄 Автоматизація</h3>
+                <p>Гнучке планування бекапів з підтримкою інкрементальних та диференційних копій.</p>
+            </div>
+            <div class="feature">
+                <h3>📱 REST API + gRPC</h3>
+                <p>Повний API для інтеграції з вашими інструментами та автоматизації.</p>
+            </div>
+        </div>
+
+        <h2 style="color:#fff;text-align:center;margin:50px 0 30px;">Скріншоти</h2>
+        <div class="screenshots">
+            <div class="screenshot">
+                <img src="E:\Code\BCK\docs\screenshots\dashboard.png" alt="Dashboard">
+                <h3>📊 Dashboard</h3>
+            </div>
+            <div class="screenshot">
+                <img src="E:\Code\BCK\docs\screenshots\jobs.png" alt="Jobs">
+                <h3>⚙️ Jobs</h3>
+            </div>
+            <div class="screenshot">
+                <img src="E:\Code\BCK\docs\screenshots\repositories.png" alt="Repositories">
+                <h3>📦 Repositories</h3>
+            </div>
+            <div class="screenshot">
+                <img src="E:\Code\BCK\docs\screenshots\snapshots.png" alt="Snapshots">
+                <h3>📸 Snapshots</h3>
+            </div>
+            <div class="screenshot">
+                <img src="E:\Code\BCK\docs\screenshots\login.png" alt="Login">
+                <h3>🔑 Login</h3>
+            </div>
+        </div>
+
+        <h2 style="color:#fff;text-align:center;margin:50px 0 30px;">Підтримувані ОС</h2>
+        <div class="os-support">
+            <div class="os">
+                <div class="os-icon">🪟</div>
+                <div class="os-name">Windows</div>
+                <div>Server 2022/2025</div>
+            </div>
+            <div class="os">
+                <div class="os-icon">🐧</div>
+                <div class="os-name">Ubuntu</div>
+                <div>24/25/26 LTS</div>
+            </div>
+            <div class="os">
+                <div class="os-icon">🍎</div>
+                <div class="os-name">macOS</div>
+                <div>Intel + Apple Silicon</div>
+            </div>
+        </div>
+
+        <div style="text-align:center;margin:50px 0;">
+            <a href="https://github.com/ajjs1ajjs/BCK" class="download-btn">📂 GitHub</a>
+            <a href="https://github.com/ajjs1ajjs/BCK/releases" class="download-btn">⬇️ Releases</a>
+        </div>
+    </div>
+    <footer>
+        <p>BCK - Enterprise Backup & Disaster Recovery | MIT License</p>
+    </footer>
+</body>
+</html>
