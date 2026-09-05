@@ -92,7 +92,13 @@ jobs:
         shell: bash
         env:
           CARGO_BUILD_JOBS: 2
+          PROTOC: "${{ matrix.os == 'Windows x86_64' && 'C:/protoc/bin/protoc.exe' || 'protoc' }}"
+          PROTOC_DIR: "${{ matrix.os == 'Windows x86_64' && 'C:/protoc' || '' }}"
         run: |
+          echo "PROTOC=$PROTOC"
+          echo "PROTOC_DIR=$PROTOC_DIR"
+          "$PROTOC" --version 2>/dev/null || echo "protoc not found in PATH, checking common locations..."
+          which protoc || where.exe protoc || echo "protoc location unknown"
           cargo --version
           rustc --version
           cargo build --release --workspace --bins 2>&1 | tail -50
