@@ -1,0 +1,13 @@
+[package]
+name = "bck-proxy"
+version.workspace = true
+edition.workspace = true
+description = "BCK Enterprise Backup Proxy"
+
+[dependencies]
+bck-core = { path = "../core" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3" }
+clap = { workspace = true }
+anyhow = { workspace = true }

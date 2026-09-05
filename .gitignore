@@ -1,0 +1,14 @@
+/target
+**/*.rs.bk
+node_modules
+web-ui/dist
+.env
+data/
+backup-store/
+restored/
+*.swp
+*.swo
+.idea/
+.vscode/
+*.db
+*.db-journal

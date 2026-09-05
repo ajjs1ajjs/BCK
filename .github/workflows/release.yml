@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Linux x86_64
+            runner: ubuntu-latest
+            arch: x86_64
+            artifact: bck-linux-x86_64.tar.gz
+            artifact_name: bck-linux-x86_64
+          - os: Linux arm64
+            runner: ubuntu-latest
+            arch: aarch64
+            artifact: bck-linux-aarch64.tar.gz
+            artifact_name: bck-linux-arm64
+          - os: Windows x86_64
+            runner: windows-latest
+            arch: x86_64
+            artifact: bck-windows-x86_64.zip
+            artifact_name: bck-windows-x86_64
+          - os: macOS x86_64
+            runner: macos-latest
+            arch: x86_64
+            artifact: bck-macos-x86_64.tar.gz
+            artifact_name: bck-macos-x86_64
+          - os: macOS arm64
+            runner: macos-latest
+            arch: aarch64
+            artifact: bck-macos-aarch64.tar.gz
+            artifact_name: bck-macos-arm64
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
+        with:
+          toolchain: 1.98.0
+          profile: minimal
+          targets: ${{ matrix.arch }}
+
+      - name: Install system dependencies (Linux)
+        if: matrix.os == 'Linux x86_64' || matrix.os == 'Linux arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake pkg-config \
+            libssl-dev libzstd-dev protobuf-compiler
+
+      - name: Install Rust dependencies (macOS)
+        if: matrix.os == 'macOS x86_64' || matrix.os == 'macOS arm64'
+        run: |
+          brew install protobuf cmake openssl@3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-ui/package-lock.json
+
+      - name: Cache cargo
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.arch }}
+
+      - name: cargo deny
+        shell: bash
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check
+
+      - name: cargo audit
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: Build release
+        env:
+          CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER: ""
+          CFLAGS_aarch64_apple_darwin: "-mmacosx-version-min=11.0"
+          LDFLAGS_aarch64_apple_darwin: "-mmacosx-version-min=11.0"
+        run: |
+          if [ "${{ matrix.os }}" = "macOS arm64" ]; then
+            rustup target add aarch64-apple-darwin
+            cargo build --release --workspace --bins --target aarch64-apple-darwin
+          else
+            cargo build --release --workspace --bins
+          fi
+
+      - name: Build web UI
+        run: |
+          cd web-ui
+          npm ci
+          npm run build
+
+      - name: Package release
+        shell: bash
+        run: |
+          ARTIFACT="${{ matrix.artifact_name }}"
+          mkdir -p release/bin
+          if [ "${{ matrix.os }}" = "Windows x86_64" ]; then
+            cp target/release/bckd.exe release/bin/
+            cp target/release/bck-agent.exe release/bin/
+            cp target/release/bck.exe release/bin/
+            cp target/release/bck-proxy.exe release/bin/
+            mkdir -p release/web-ui
+            cp -r web-ui/dist release/web-ui/
+            cd release
+            powershell -Command "Compress-Archive -Path 'bin/*','web-ui/*' -DestinationPath '$ARTIFACT.zip' -Force"
+            powershell -Command "Get-ChildItem '$ARTIFACT.zip' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash + '  ' + $_.Name } | Out-File -Encoding ASCII '$ARTIFACT.zip.sha256'"
+          elif [ "${{ matrix.os }}" = "macOS x86_64" ] || [ "${{ matrix.os }}" = "macOS arm64" ]; then
+            if [ "${{ matrix.os }}" = "macOS arm64" ]; then
+              cp target/aarch64-apple-darwin/release/bckd release/bin/
+              cp target/aarch64-apple-darwin/release/bck-agent release/bin/
+              cp target/aarch64-apple-darwin/release/bck release/bin/
+              cp target/aarch64-apple-darwin/release/bck-proxy release/bin/
+            else
+              cp target/release/bckd release/bin/
+              cp target/release/bck-agent release/bin/
+              cp target/release/bck release/bin/
+              cp target/release/bck-proxy release/bin/
+            fi
+            mkdir -p release/web-ui
+            cp -r web-ui/dist release/web-ui/
+            cd release
+            tar -czf $ARTIFACT.tar.gz bin web-ui
+            shasum -a 256 $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
+          else
+            cp target/release/bckd release/bin/
+            cp target/release/bck-agent release/bin/
+            cp target/release/bck release/bin/
+            cp target/release/bck-proxy release/bin/
+            mkdir -p release/web-ui
+            cp -r web-ui/dist release/web-ui/
+            cd release
+            tar -czf $ARTIFACT.tar.gz bin web-ui
+            sha256sum $ARTIFACT.tar.gz > $ARTIFACT.tar.gz.sha256
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@4cec87d30f9789408b5b657daa1a4acd5b4f97749b5d8ed7373b399a59c1b5c6 # v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release/${{ matrix.artifact }}*
+          retention-days: 90
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+        with:
+          path: artifacts
+          pattern: bck-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@3cee8d6b2b1ad4db2ce3f3995bce8c4f6b6f5b86 # v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

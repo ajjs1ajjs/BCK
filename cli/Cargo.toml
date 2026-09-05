@@ -1,0 +1,15 @@
+[package]
+name = "bck"
+version.workspace = true
+edition.workspace = true
+description = "BCK Enterprise Backup CLI"
+
+[dependencies]
+bck-core = { path = "../core" }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+reqwest = { version = "0.12", features = ["json"] }

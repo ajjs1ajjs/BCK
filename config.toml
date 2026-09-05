@@ -1,0 +1,33 @@
+[server]
+host = "0.0.0.0"
+port = 9440
+grpc_port = 9441
+web_ui_dir = "./web-ui/dist"
+# Cross-origin allowlist for the API (empty = same-origin only).
+# allowed_origins = ["https://backups.example.com"]
+# TLS (optional; otherwise terminate TLS at a reverse proxy):
+# tls_cert = "/etc/bck/tls/fullchain.pem"
+# tls_key = "/etc/bck/tls/privkey.pem"
+
+[database]
+url = "sqlite://./data/bck.db?mode=rwc"
+pool_size = 10
+migrate = true
+
+[storage]
+default_path = "./data/backups"
+temp_path = "./data/tmp"
+
+[encryption]
+# Leave empty to auto-generate the key under data/keys/encryption.key.
+key_path = ""
+algorithm = "aes-256-gcm"
+# Optional passphrase that wraps the encryption key at rest (Argon2id).
+# Without it the key file is stored raw. Protect backup data + key + passphrase
+# separately for defense in depth. Uncomment to enable:
+# passphrase = ""
+
+[logging]
+level = "info"
+json = false
+file = ""

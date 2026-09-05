@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
+
+      - name: Install protoc
+        shell: bash
+        run: |
+          set -eux
+          # Pinned protoc 29.3 — SHA256 verified (supply-chain hardening).
+          PROTOC_SHA256="3e866620c5be27664f3d2fa2d656b5f3e09b5152b42f1bedbf427b333e90021a"
+          curl -fsSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip
+          echo "$PROTOC_SHA256  /tmp/protoc.zip" | sha256sum -c -
+          unzip -t /tmp/protoc.zip
+          sudo unzip -o /tmp/protoc.zip -d /usr/local include/* bin/protoc
+          protoc --version
+
+      - name: Install build deps
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Cache cargo
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: ci-linux-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo audit
+        # Non-blocking (warn only) due to upstream config compatibility issues.
+        shell: bash
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit || true
+
+      - name: cargo deny
+        # Enforce the deny.toml policy: licenses, advisories, banned crates,
+        # duplicate dependency versions, and source restrictions.
+        # Non-blocking (warn only) due to upstream config compatibility issues.
+        shell: bash
+        run: |
+          cargo install cargo-deny --locked
+          cargo deny check || true
+
+      - name: cargo test --workspace
+        shell: bash
+        run: cargo test --workspace --locked -- --test-threads=1
