@@ -69,6 +69,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.arch }}
 
       - name: Build release
+        shell: bash
         run: |
           if [ "${{ matrix.os }}" = "macOS arm64" ]; then
             rustup target add aarch64-apple-darwin
