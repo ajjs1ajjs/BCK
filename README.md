@@ -12,6 +12,8 @@
 
 **BCK Enterprise** — enterprise-grade backup and disaster recovery system (Veeam / Nakivo alternative), built entirely in Rust. Core engine, storage, REST + gRPC APIs, Web UI, CLI, agent and proxy; VMware/Hyper-V backup + instant recovery, SOBR, Tape, M365, Cloud, CDP, DR, SSO, audit, reports and multi-tenancy — all phases complete and covered by **188 passing tests**.
 
+[**🌐 Live Site**](https://ajjs1ajjs.github.io/BCK/) · [Releases](https://github.com/ajjs1ajjs/BCK/releases) · [Actions](https://github.com/ajjs1ajjs/BCK/actions)
+
 <p align="center">
   <img src="https://img.shields.io/badge/language-Rust-orange?logo=rust&logoColor=white" alt="Rust">
   <img src="https://img.shields.io/badge/status-all%20phases%20complete-blue" alt="Status">
