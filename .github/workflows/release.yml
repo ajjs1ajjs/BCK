@@ -43,10 +43,10 @@ jobs:
             artifact_name: bck-macos-arm64
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.98.0
           profile: minimal
@@ -66,14 +66,14 @@ jobs:
           brew install protobuf cmake openssl@3
 
       - name: Setup Node.js
-        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: web-ui/package-lock.json
 
       - name: Cache cargo
-        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/bin
@@ -146,7 +146,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@4cec87d30f9789408b5b657daa1a4acd5b4f97749b5d8ed7373b399a59c1b5c6 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: release/${{ matrix.artifact }}*
@@ -157,14 +157,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: bck-*
           merge-multiple: true
 
       - name: Create Release
-        uses: softprops/action-gh-release@3cee8d6b2b1ad4db2ce3f3995bce8c4f6b6f5b86 # v2
+        uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
           generate_release_notes: true
