@@ -1,135 +1,201 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BCK - Backup & Disaster Recovery</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', system-ui, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #e0e0e0; min-height: 100vh; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
-        header { text-align: center; margin-bottom: 60px; }
-        h1 { font-size: 3.5em; color: #00d4ff; margin-bottom: 20px; text-shadow: 0 0 30px rgba(0,212,255,0.3); }
-        .badge { display: inline-block; padding: 8px 20px; background: rgba(0,212,255,0.2); border: 1px solid #00d4ff; border-radius: 50px; margin: 10px 5px; font-size: 0.9em; }
-        .description { font-size: 1.3em; color: #a0a0a0; max-width: 800px; margin: 30px auto; line-height: 1.8; }
-        .install-cmd { background: #0d1117; padding: 20px 30px; border-radius: 10px; font-family: 'Consolas', monospace; margin: 30px auto; max-width: 700px; border: 1px solid #30363d; }
-        .install-cmd code { color: #58a6ff; font-size: 1.1em; }
-        .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px; margin: 50px 0; }
-        .feature { background: rgba(255,255,255,0.05); padding: 30px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.1); }
-        .feature h3 { color: #00d4ff; margin-bottom: 15px; font-size: 1.3em; }
-        .feature p { color: #a0a0a0; line-height: 1.7; }
-        .screenshots { display: flex; flex-direction: column; gap: 40px; margin: 50px 0; }
-        .screenshot { background: rgba(255,255,255,0.03); border-radius: 15px; padding: 20px; border: 1px solid rgba(255,255,255,0.1); }
-        .screenshot img { width: 100%; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
-        .screenshot h3 { color: #fff; margin: 20px 0 10px; font-size: 1.2em; }
-        .os-support { display: flex; justify-content: center; gap: 40px; margin: 40px 0; flex-wrap: wrap; }
-        .os { text-align: center; }
-        .os-icon { font-size: 3em; margin-bottom: 10px; }
-        .os-name { color: #fff; font-weight: bold; }
-        .download-btn { display: inline-block; padding: 15px 40px; background: linear-gradient(135deg, #00d4ff, #0099cc); color: #000; font-weight: bold; border-radius: 50px; text-decoration: none; font-size: 1.1em; margin: 20px 10px; transition: transform 0.2s, box-shadow 0.2s; }
-        .download-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,212,255,0.3); }
-        footer { text-align: center; padding: 40px; color: #666; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 60px; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BCK — Backup & Disaster Recovery</title>
+<meta name="description" content="Enterprise Backup & Disaster Recovery на Rust: дедуп, AES-256-GCM, VMware/Hyper-V, S3, SOBR, M365, CDP.">
+<meta property="og:title" content="BCK — Backup & Disaster Recovery">
+<meta property="og:description" content="Enterprise Backup & Disaster Recovery на Rust: дедуп, AES-256-GCM, VMware/Hyper-V, S3, SOBR, M365, CDP.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+<style>
+:root{--accent:#00d4ff;--accent2:#0099cc;--bg:#070b16;--bg2:#0d1428;--card:rgba(255,255,255,.045);--border:rgba(255,255,255,.1);--text:#eef1f7;--muted:#9aa4b8;--radius:18px}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:'Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;line-height:1.6}
+.aurora{position:fixed;inset:0;z-index:-2;overflow:hidden;background:radial-gradient(1200px 600px at 80% -10%,color-mix(in srgb,var(--accent) 18%,transparent),transparent 60%),radial-gradient(900px 500px at 10% 10%,color-mix(in srgb,var(--accent2) 16%,transparent),transparent 60%),linear-gradient(180deg,#070b16,#0a1022 60%,#070b16)}
+.blob{position:fixed;border-radius:50%;filter:blur(110px);opacity:.35;z-index:-1;animation:drift 18s ease-in-out infinite alternate}
+.b1{width:520px;height:520px;left:-140px;top:-120px;background:var(--accent)}
+.b2{width:460px;height:460px;right:-120px;top:20%;background:var(--accent2);animation-delay:-6s}
+.b3{width:600px;height:300px;left:20%;bottom:-140px;background:var(--accent);opacity:.18;animation-delay:-12s}
+@keyframes drift{from{transform:translate(0,0) scale(1)}to{transform:translate(60px,40px) scale(1.12)}}
+.grid-overlay{position:fixed;inset:0;z-index:-1;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:44px 44px;mask-image:radial-gradient(ellipse 80% 60% at 50% 0%,#000 60%,transparent 100%)}
+nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(16px);background:rgba(7,11,22,.72);border-bottom:1px solid var(--border)}
+.nav-inner{max-width:1220px;margin:0 auto;padding:14px 22px;display:flex;align-items:center;gap:18px}
+.logo{font-weight:800;font-size:1.25rem;letter-spacing:.2px;text-decoration:none;color:#fff;display:flex;align-items:center;gap:10px}
+.logo-mark{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;font-size:1.4rem;background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 8px 28px color-mix(in srgb,var(--accent) 45%,transparent)}
+.nav-links{display:flex;gap:4px;margin-left:auto}
+.nav-links a{color:var(--muted);text-decoration:none;padding:9px 14px;border-radius:10px;font-size:.95rem;transition:.2s}
+.nav-links a:hover{color:#fff;background:rgba(255,255,255,.07)}
+.btn{display:inline-flex;align-items:center;gap:9px;padding:13px 28px;border-radius:999px;text-decoration:none;font-weight:700;font-size:1rem;border:1px solid transparent;cursor:pointer;transition:.22s}
+.btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#06121a;box-shadow:0 10px 32px color-mix(in srgb,var(--accent) 40%,transparent)}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 16px 44px color-mix(in srgb,var(--accent) 55%,transparent)}
+.btn-ghost{border-color:var(--border);color:#fff;background:rgba(255,255,255,.05)}
+.btn-ghost:hover{background:rgba(255,255,255,.11);transform:translateY(-2px)}
+.btn-sm{padding:9px 18px;font-size:.9rem}
+.container{max-width:1220px;margin:0 auto;padding:0 22px}
+.hero{text-align:center;padding:84px 22px 30px;position:relative}
+.live{display:inline-flex;align-items:center;gap:8px;padding:7px 16px;border-radius:999px;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.4);color:#4ade80;font-size:.85rem;font-weight:600;margin-bottom:22px}
+.live .dot{width:8px;height:8px;border-radius:50%;background:#22c55e;animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}50%{box-shadow:0 0 0 7px rgba(34,197,94,0)}}
+.hero h1{font-size:clamp(2.6rem,6vw,4.6rem);line-height:1.05;font-weight:900;letter-spacing:-1px}
+.hero h1 .grad{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 26px color-mix(in srgb,var(--accent) 35%,transparent))}
+.tagline{font-size:clamp(1.05rem,2vw,1.35rem);color:var(--muted);max-width:820px;margin:22px auto 0}
+.badges{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:26px 0 6px}
+.badge{padding:8px 17px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid var(--border);font-size:.88rem;color:#d6dbe6}
+.shields{margin:18px 0 6px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.shields img{height:24px;border-radius:6px}
+.cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin:30px 0 10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;max-width:900px;margin:36px auto 0}
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 12px;backdrop-filter:blur(10px)}
+.stat b{font-size:1.7rem;display:block;background:linear-gradient(135deg,#fff,var(--accent));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat span{color:var(--muted);font-size:.88rem}
+section{padding:56px 0 8px}
+.sec-head{text-align:center;margin-bottom:30px}
+.sec-head h2{font-size:clamp(1.6rem,3.4vw,2.4rem);font-weight:800;letter-spacing:-.5px}
+.sec-head h2 .u{background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.sec-head p{color:var(--muted);max-width:700px;margin:10px auto 0}
+.features{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:18px}
+.feature{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:28px 24px;position:relative;overflow:hidden;transition:.25s;backdrop-filter:blur(10px)}
+.feature::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:.25s}
+.feature:hover{transform:translateY(-5px);border-color:color-mix(in srgb,var(--accent) 55%,transparent);box-shadow:0 18px 50px rgba(0,0,0,.4)}
+.feature:hover::before{opacity:1}
+.feature .ic{font-size:2rem;margin-bottom:12px}
+.feature h3{margin-bottom:8px;font-size:1.12rem}
+.feature p{color:var(--muted);font-size:.96rem}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:8px}
+.step{background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--radius);padding:24px;text-align:center}
+.step .n{width:44px;height:44px;margin:0 auto 12px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#06121a}
+.step p{color:var(--muted);font-size:.93rem}
+.step code{display:block;margin-top:10px;font-size:.78rem;color:var(--accent);word-break:break-all}
+.install{background:#0b1120;border:1px solid var(--border);border-radius:20px;overflow:hidden;max-width:860px;margin:0 auto;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+.tabs{display:flex;background:rgba(255,255,255,.04);border-bottom:1px solid var(--border)}
+.tabs button{flex:1;padding:15px;background:none;border:none;color:var(--muted);font-weight:700;font-size:.95rem;cursor:pointer;transition:.2s;font-family:inherit}
+.tabs button.active{color:#fff;background:rgba(255,255,255,.06);box-shadow:inset 0 -3px 0 var(--accent)}
+.term{padding:22px;display:flex;gap:12px;align-items:center;background:#070c18}
+.term code{flex:1;font-family:Consolas,Menlo,monospace;color:#7dd3fc;font-size:.86rem;word-break:break-all;text-align:left}
+.copy{background:rgba(255,255,255,.08);border:1px solid var(--border);color:#fff;border-radius:10px;padding:9px 16px;cursor:pointer;font-weight:700;transition:.2s;white-space:nowrap;font-family:inherit}
+.copy:hover{background:var(--accent);color:#06121a;border-color:transparent}
+.hint{text-align:center;color:var(--muted);font-size:.85rem;margin-top:12px}
+.gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px}
+.shot{background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:var(--radius);padding:14px;cursor:zoom-in;transition:.25s}
+.shot:hover{transform:translateY(-4px) scale(1.01);border-color:color-mix(in srgb,var(--accent) 50%,transparent);box-shadow:0 18px 55px rgba(0,0,0,.5)}
+.shot .imgwrap{border-radius:12px;overflow:hidden;background:#0a0f1f;min-height:180px;display:grid;place-items:center;position:relative}
+.shot img{width:100%;display:block;transition:.3s}
+.shot:hover img{transform:scale(1.02)}
+.shot h3{margin:14px 4px 2px;font-size:1rem}
+.shot p{color:var(--muted);font-size:.85rem;margin:0 4px 4px}
+.os-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.os-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:26px 18px;text-align:center;transition:.25s}
+.os-card:hover{transform:translateY(-4px);border-color:var(--accent)}
+.os-card .oi{font-size:2.6rem}
+.os-card b{display:block;margin:8px 0 2px}
+.os-card span{color:var(--muted);font-size:.88rem}
+.dl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-top:10px}
+.dl-card{background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--radius);padding:26px 20px;text-align:center}
+.dl-card h3{margin-bottom:6px}
+.dl-card .v{color:var(--muted);font-size:.85rem;margin-bottom:16px}
+.cta-big{margin:56px 0 10px;text-align:center;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 16%,transparent),color-mix(in srgb,var(--accent2) 14%,transparent));border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);border-radius:24px;padding:54px 26px;position:relative;overflow:hidden}
+.cta-big h2{font-size:clamp(1.6rem,3.5vw,2.5rem);font-weight:900;margin-bottom:12px}
+.cta-big p{color:var(--muted);margin-bottom:26px}
+footer{border-top:1px solid var(--border);margin-top:60px;padding:34px 22px;text-align:center;color:#6b7488;font-size:.9rem}
+footer a{color:var(--accent);text-decoration:none}
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s ease}
+.reveal.vis{opacity:1;transform:none}
+#lightbox{position:fixed;inset:0;background:rgba(3,6,14,.9);display:none;place-items:center;z-index:100;padding:24px;backdrop-filter:blur(8px)}
+#lightbox.open{display:grid}
+#lightbox img{max-width:min(1100px,94vw);max-height:86vh;border-radius:14px;border:1px solid var(--border);box-shadow:0 30px 90px rgba(0,0,0,.7)}
+#lightbox .cap{color:#fff;text-align:center;margin-top:12px}
+#toTop{position:fixed;right:22px;bottom:22px;width:48px;height:48px;border-radius:50%;border:1px solid var(--border);background:rgba(255,255,255,.08);color:#fff;font-size:1.3rem;cursor:pointer;display:none;backdrop-filter:blur(10px);z-index:60}
+#toTop.show{display:block}
+#toTop:hover{background:var(--accent);color:#06121a}
+.burger{display:none;margin-left:auto;background:none;border:1px solid var(--border);color:#fff;border-radius:10px;padding:8px 12px;font-size:1.1rem;cursor:pointer}
+@media(max-width:860px){.nav-links{display:none;position:absolute;top:100%;left:0;right:0;flex-direction:column;background:rgba(7,11,22,.97);padding:12px 18px;border-bottom:1px solid var(--border)}.nav-links.open{display:flex}.burger{display:block}.term{flex-direction:column;align-items:stretch}.copy{width:100%}}
+</style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🛡️ BCK</h1>
-            <p class="description">Enterprise Backup & Disaster Recovery для сучасної інфраструктури. Захистіть свої дані з повним контролем над кожним кроком.</p>
-            <div>
-                <span class="badge">🪟 Windows 2022/2025</span>
-                <span class="badge">🐧 Ubuntu 24/25/26</span>
-                <span class="badge">🍎 macOS</span>
-                <span class="badge">🔐 AES-256-GCM</span>
-            </div>
-        </header>
+<div class="aurora"></div>
+<div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+<div class="grid-overlay"></div>
 
-        <div class="install-cmd">
-            <code>curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash</code>
-        </div>
-        <div class="install-cmd">
-            <code>irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex</code>
-        </div>
+<nav><div class="nav-inner">
+<a class="logo" href="#"><span class="logo-mark">🛡️</span> BCK Enterprise</a>
+<button class="burger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="menu">☰</button>
+<div class="nav-links">
+<a href="#features">Можливості</a>
+<a href="#install">Встановлення</a>
+<a href="#screenshots">Скріншоти</a>
+<a href="#download">Завантаження</a>
+<a href="https://github.com/ajjs1ajjs/BCK" target="_blank" rel="noopener">⭐ GitHub</a>
+</div>
+</div></nav>
 
-        <h2 style="color:#fff;text-align:center;margin:50px 0 30px;">Можливості</h2>
-        <div class="features">
-            <div class="feature">
-                <h3>🚀 Швидке відновлення</h3>
-                <p>Миттєве відновлення даних з будь-якої точки в часі. Інкрементальні бекапи економлять місце та час.</p>
-            </div>
-            <div class="feature">
-                <h3>🔒 Шифрування AES-256-GCM</h3>
-                <p>Всі дані шифруються на боці клієнта перед передачею. Приватні ключі ніколи не покидають ваш сервер.</p>
-            </div>
-            <div class="feature">
-                <h3>☁️ Гібридне зберігання</h3>
-                <p>Підтримка локальних дисків, NAS, SAN та хмарних сховищ в одному рішенні.</p>
-            </div>
-            <div class="feature">
-                <h3>📊 Веб-консоль</h3>
-                <p> Сучасний веб-інтерфейс для керування бекапами, моніторингу та відновлення.</p>
-            </div>
-            <div class="feature">
-                <h3>🔄 Автоматизація</h3>
-                <p>Гнучке планування бекапів з підтримкою інкрементальних та диференційних копій.</p>
-            </div>
-            <div class="feature">
-                <h3>📱 REST API + gRPC</h3>
-                <p>Повний API для інтеграції з вашими інструментами та автоматизації.</p>
-            </div>
-        </div>
+<header class="hero container">
+<div class="live"><span class="dot"></span> PRODUCTION READY &nbsp;•&nbsp; MIT LICENSE &nbsp;•&nbsp; v1.0.0</div>
+<h1>🛡️ BCK <span class='grad'>Enterprise</span></h1>
+<p class="tagline">Enterprise Backup & Disaster Recovery для сучасної інфраструктури. Альтернатива Veeam — повністю на Rust, з миттєвим відновленням VM та наскрізним шифруванням.</p>
+<div class="badges"><span class='badge'>🪟 Windows</span><span class='badge'>🐧 Ubuntu/Debian</span><span class='badge'>🍎 macOS</span><span class='badge'>🦀 Rust</span><span class='badge'>🔐 AES-256-GCM</span></div>
+<div class="shields"><img src='https://img.shields.io/github/v/release/ajjs1ajjs/BCK?label=release' alt='release' loading='lazy'><img src='https://img.shields.io/github/downloads/ajjs1ajjs/BCK/total?label=downloads' alt='downloads' loading='lazy'><img src='https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/BCK/ci.yml?label=CI' alt='CI' loading='lazy'><img src='https://img.shields.io/badge/license-MIT-green' alt='MIT' loading='lazy'></div>
+<div class="cta">
+<a class="btn btn-primary" href="#install">🚀 Швидкий старт</a>
+<a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/BCK" target="_blank" rel="noopener">📂 GitHub</a>
+<a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/BCK/releases" target="_blank" rel="noopener">⬇️ Releases</a>
+</div>
+<div class="stats"><div class='stat reveal'><b data-count='188' data-suffix=''>0</b><span>тестів проходить</span></div><div class='stat reveal'><b data-count='5' data-suffix=''>0</b><span>типів сховищ</span></div><div class='stat reveal'><b data-count='2' data-suffix=''>0</b><span>API: REST + gRPC</span></div><div class='stat reveal'><b data-count='100' data-suffix='%'>0</b><span>шифрування</span></div></div>
+</header>
 
-        <h2 style="color:#fff;text-align:center;margin:50px 0 30px;">Скріншоти</h2>
-        <div class="screenshots">
-            <div class="screenshot">
-                <img src="https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/dashboard.png" alt="Dashboard">
-                <h3>📊 Dashboard</h3>
-            </div>
-            <div class="screenshot">
-                <img src="https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/jobs.png" alt="Jobs">
-                <h3>⚙️ Jobs</h3>
-            </div>
-            <div class="screenshot">
-                <img src="https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/repositories.png" alt="Repositories">
-                <h3>📦 Repositories</h3>
-            </div>
-            <div class="screenshot">
-                <img src="https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/snapshots.png" alt="Snapshots">
-                <h3>📸 Snapshots</h3>
-            </div>
-            <div class="screenshot">
-                <img src="https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/login.png" alt="Login">
-                <h3>🔑 Login</h3>
-            </div>
-        </div>
+<main class="container">
+<section id="features"><div class="sec-head reveal"><h2>Потужні <span class="u">можливості</span></h2><p>Движок, сховища, віртуалізація, хмара та комплаєнс — повний цикл захисту даних.</p></div>
+<div class="features"><div class='feature reveal'><div class='ic'>🚀</div><h3>Instant Recovery</h3><p>VM стартує прямо з бекапу через NFS/iSCSI. RTO — хвилини, а не години.</p></div><div class='feature reveal'><div class='ic'>🔒</div><h3>Шифрування з коробки</h3><p>AES-256-GCM / ChaCha20-Poly1305 на клієнті. Дедyп SHA-256, стиснення LZ4/Zstd.</p></div><div class='feature reveal'><div class='ic'>☁️</div><h3>Будь-яке сховище</h3><p>Local FS, S3, Azure Blob, GCS, Tape LTFS + SOBR-рівні та lifecycle.</p></div><div class='feature reveal'><div class='ic'>🖥️</div><h3>VMware / Hyper-V</h3><p>CBT/RCT-трекінг змін, снапшоти, backup jobs через REST, SureBackup-перевірка.</p></div><div class='feature reveal'><div class='ic'>🏢</div><h3>Enterprise</h3><p>M365, CDP, DR-failover, SSO (OIDC+LDAP), audit-log, SLA-звіти, мультитенантність.</p></div><div class='feature reveal'><div class='ic'>📊</div><h3>Веб-консоль + CLI</h3><p>React Web UI, CLI, агент та proxy. REST :9440, gRPC :9441, PWA офлайн.</p></div></div></section>
 
-        <h2 style="color:#fff;text-align:center;margin:50px 0 30px;">Підтримувані ОС</h2>
-        <div class="os-support">
-            <div class="os">
-                <div class="os-icon">🪟</div>
-                <div class="os-name">Windows</div>
-                <div>Server 2022/2025</div>
-            </div>
-            <div class="os">
-                <div class="os-icon">🐧</div>
-                <div class="os-name">Ubuntu</div>
-                <div>24/25/26 LTS</div>
-            </div>
-            <div class="os">
-                <div class="os-icon">🍎</div>
-                <div class="os-name">macOS</div>
-                <div>Intel + Apple Silicon</div>
-            </div>
-        </div>
+<section id="install"><div class="sec-head reveal"><h2>Встановлення за <span class="u">30 секунд</span></h2><p>Одна команда — і все працює. Оберіть свою ОС:</p></div>
+<div class="install reveal">
+<div class="tabs"><button class='active' onclick="tab(this,'linux')">🐧 Linux</button><button onclick="tab(this,'win')">🪟 Windows</button><button onclick="tab(this,'mac')">🍎 macOS</button></div>
+<div class="term"><code id="cmd">curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash</code><button class="copy" onclick="copyCmd()">📋 Копіювати</button></div>
+</div>
+<p class="hint">💡 На Linux/macOS потрібен sudo • На Windows — PowerShell від імені адміністратора</p>
+<div class="steps" style="margin-top:26px"><div class='step reveal'><div class='n'>1</div><b>Встановіть bckd</b><p>Демон з REST + gRPC та планувальником</p></div><div class='step reveal'><div class='n'>2</div><b>Відкрийте консоль</b><p>http://host:9440 — створіть репозиторій</p></div><div class='step reveal'><div class='n'>3</div><b>Запустіть перший job</b><p>Інкрементальний бекап + розклад</p></div></div>
+</section>
 
-        <div style="text-align:center;margin:50px 0;">
-            <a href="https://github.com/ajjs1ajjs/BCK" class="download-btn">📂 GitHub</a>
-            <a href="https://github.com/ajjs1ajjs/BCK/releases" class="download-btn">⬇️ Releases</a>
-        </div>
-    </div>
-    <footer>
-        <p>BCK - Enterprise Backup & Disaster Recovery | MIT License</p>
-    </footer>
+<section id="screenshots"><div class="sec-head reveal"><h2>Живий <span class="u">інтерфейс</span></h2><p>Реальні скріншоти продукту — натисніть щоб збільшити</p></div>
+<div class="gallery"><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/dashboard.png' alt='Dashboard'></div><h3>📊 Dashboard</h3><p>Огляд jobs, сховищ та останніх запусків</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/jobs.png' alt='Jobs'></div><h3>⚙️ Jobs</h3><p>Бекап-завдання та їх статуси</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/repositories.png' alt='Repositories'></div><h3>📦 Repositories</h3><p>Репозиторії та SOBR-рівні</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/snapshots.png' alt='Snapshots'></div><h3>📸 Snapshots</h3><p>Снапшоти та точки відновлення</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/login.png' alt='Login'></div><h3>🔑 Login</h3><p>JWT + SSO вхід</p></div></div></section>
+
+<section id="platforms"><div class="sec-head reveal"><h2>Працює <span class="u">скрізь</span></h2><p>Нативні збірки під кожну платформу</p></div>
+<div class="os-grid"><div class='os-card reveal'><div class='oi'>🪟</div><b>Windows</b><span>Server 2022 / 2025</span></div><div class='os-card reveal'><div class='oi'>🐧</div><b>Ubuntu</b><span>24 / 25 / 26 LTS</span></div><div class='os-card reveal'><div class='oi'>🍎</div><b>macOS</b><span>Intel + Apple Silicon</span></div></div></section>
+
+<section id="download"><div class="sec-head reveal"><h2>Завантажити <span class="u">BCK Enterprise</span></h2><p>Останній реліз з бінарниками під всі ОС</p></div><div style="text-align:center"><a class="btn btn-primary" href="https://github.com/ajjs1ajjs/BCK/releases/latest">⬇️ Завантажити останній реліз</a> <a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/BCK/releases">📋 Всі релізи</a></div></section>
+
+<div class="cta-big reveal">
+<h2>Захистіть дані до інциденту</h2>
+<p>Інкрементальні бекапи, шифрування та миттєве відновлення — все під вашим контролем.</p>
+<a class="btn btn-primary" href="https://github.com/ajjs1ajjs/BCK" target="_blank" rel="noopener">📂 Відкрити GitHub</a>
+<a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/BCK/releases" target="_blank" rel="noopener">⬇️ Завантажити реліз</a>
+</div>
+</main>
+
+<footer>
+<p><b style="color:#fff">BCK Enterprise</b> — Enterprise Backup & Disaster Recovery | MIT License | Зроблено з ❤️ для DevOps-спільноти</p>
+<p style="margin-top:8px"><a href="https://github.com/ajjs1ajjs/BCK">GitHub</a> • <a href="https://github.com/ajjs1ajjs/BCK/releases">Releases</a> • <a href="https://github.com/ajjs1ajjs/BCK/actions">CI</a> • <span id="year"></span></p>
+</footer>
+
+<div id="lightbox" onclick="this.classList.remove('open')"><div><img id="lbImg" src="" alt=""><div class="cap" id="lbCap"></div></div></div>
+<button id="toTop" onclick="scrollTo({top:0,behavior:'smooth'})" aria-label="top">↑</button>
+<script>
+const CMDS={linux:'curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash',win:'irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex',mac:'curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash'};
+function tab(el,os){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('cmd').textContent=CMDS[os];}
+function copyCmd(){const t=document.getElementById('cmd').textContent;navigator.clipboard.writeText(t).then(()=>{const b=document.querySelector('.copy');const o=b.textContent;b.textContent='✅ Скопійовано!';setTimeout(()=>b.textContent=o,1800);});}
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}}),{threshold:.12});
+document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+document.querySelectorAll('.shot').forEach(s=>s.addEventListener('click',()=>{const i=s.querySelector('img');document.getElementById('lbImg').src=i.src;document.getElementById('lbCap').textContent=s.querySelector('h3').textContent;document.getElementById('lightbox').classList.add('open');}));
+document.addEventListener('keydown',e=>{if(e.key==='Escape')document.getElementById('lightbox').classList.remove('open');});
+addEventListener('scroll',()=>document.getElementById('toTop').classList.toggle('show',scrollY>700));
+document.getElementById('year').textContent=new Date().getFullYear();
+// counters
+const cio=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;const b=e.target;const end=parseFloat(b.dataset.count);const suf=b.dataset.suffix||'';const t0=performance.now();const step=t=>{const p=Math.min(1,(t-t0)/1200);b.textContent=(end%1? (end*p).toFixed(1):Math.round(end*p))+suf;if(p<1)requestAnimationFrame(step)};requestAnimationFrame(step);cio.unobserve(b);}),{threshold:.5});
+document.querySelectorAll('[data-count]').forEach(el=>cio.observe(el));
+// img fallback
+document.querySelectorAll('.shot img').forEach(img=>{img.loading='lazy';img.onerror=()=>{img.style.display='none';img.parentElement.innerHTML='<div style=\"padding:60px 20px;text-align:center;color:#5b6577;font-size:3rem\">🖼️</div>';};});
+</script>
 </body>
 </html>
