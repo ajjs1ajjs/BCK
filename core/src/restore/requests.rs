@@ -63,6 +63,11 @@ impl RestoreRequestManager {
         if snapshot_id.is_empty() || target_path.is_empty() {
             return Err(anyhow!("snapshot_id and target_path are required"));
         }
+        // SEC-001: gate at submit time so obviously-outside roots never enter
+        // the queue. Re-checked at approve time (root may change in between).
+        if let Err(e) = super::gate_restore_target(target_path) {
+            return Err(anyhow!("target_path rejected: {e}"));
+        }
         let request = RestoreRequest {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
@@ -107,6 +112,16 @@ impl RestoreRequestManager {
 
     /// Approve a pending request.
     pub async fn approve(&self, id: &str, decided_by: &str, note: &str) -> Result<bool> {
+        // SEC-001: re-gate at approve time (TOCTOU: BCK_RESTORE_ROOT or the
+        // filesystem may have changed between submit and approve).
+        let target = self.requests.read().await.iter()
+            .find(|r| r.id == id)
+            .map(|r| r.target_path.clone());
+        if let Some(t) = target {
+            if let Err(e) = super::gate_restore_target(&t) {
+                return Err(anyhow!("target_path rejected at approve time: {e}"));
+            }
+        }
         self.decide(id, RestoreRequestStatus::Approved, decided_by, note).await
     }
 

@@ -48,6 +48,14 @@ impl<'a> From<&'a str> for DbVal<'a> {
     }
 }
 
+#[derive(Debug, Default)]
+pub struct ReconcileReport {
+    /// Index snapshots/manifests with no sqlx row (removed).
+    pub index_orphans_removed: usize,
+    /// sqlx snapshot ids with no manifest in the index (reported, kept).
+    pub missing_manifests: Vec<String>,
+}
+
 /// Live state for a job run.
 #[derive(Debug, Clone)]
 pub struct JobRuntime {
@@ -1010,36 +1018,81 @@ impl JobManager {
         }
     }
 
+    /// Reconcile the sqlx snapshot table with the block index (ARCH-001).
+    ///
+    /// Snapshot creation writes index-manifest → index-row → sqlx-row
+    /// non-atomically, so a crash can leave index entries with no sqlx row
+    /// (or vice versa). This removes index orphans (safe direction: blocks
+    /// may leak, data is never deleted blindly) and reports sqlx rows whose
+    /// manifest is missing (needs operator attention — restore would fail).
+    /// Run at daemon startup and periodically.
+    pub async fn reconcile_index(&self) -> Result<ReconcileReport> {
+        let index = BlockIndex::new(&self.index_path())?;
+        let index_snaps = index.list_all_snapshots().unwrap_or_default();
+
+        let mut db_ids = std::collections::HashSet::new();
+        match &self.db {
+            DbPool::Sqlite(pool) => {
+                let rows = sqlx::query_scalar::<_, String>("SELECT id FROM snapshots")
+                    .fetch_all(pool)
+                    .await?;
+                db_ids.extend(rows);
+            }
+            DbPool::Postgres(pool) => {
+                let rows = sqlx::query_scalar::<_, String>("SELECT id FROM snapshots")
+                    .fetch_all(pool)
+                    .await?;
+                db_ids.extend(rows);
+            }
+        }
+
+        let mut report = ReconcileReport::default();
+        for s in &index_snaps {
+            if !db_ids.contains(&s.id) {
+                index.delete_snapshot(&s.id).ok();
+                report.index_orphans_removed += 1;
+            }
+        }
+        for id in &db_ids {
+            if index.load_manifest(id)?.is_none() {
+                report.missing_manifests.push(id.clone());
+                crate::db::record_event(
+                    &self.db,
+                    "snapshot_orphaned",
+                    "reconciler",
+                    &format!("Snapshot {} has no manifest in the block index", id),
+                    None,
+                    None,
+                )
+                .await
+                .ok();
+            }
+        }
+        if report.index_orphans_removed > 0 || !report.missing_manifests.is_empty() {
+            warn!(
+                "Index reconcile: removed {} orphan index entries, {} snapshots missing manifests",
+                report.index_orphans_removed,
+                report.missing_manifests.len()
+            );
+        }
+        Ok(report)
+    }
+
     /// Delete a snapshot and run garbage collection: decrement block refcounts
     /// in the block index, drop the manifest, delete physical blocks that are
     /// no longer referenced by any snapshot, and finally remove the row from
     /// the application database. Without this the block store grew forever.
     pub async fn delete_snapshot_with_gc(&self, snapshot_id: &str, repository_id: &str) -> Result<()> {
         let index = BlockIndex::new(&self.index_path())?;
-        let mut orphans = Vec::new();
-        if let Some(manifest) = index.load_manifest(snapshot_id)? {
-            for block in &manifest.blocks {
-                if index.remove_block(&block.block_id.sha256)? {
-                    orphans.push(block.block_id.sha256.clone());
-                }
-            }
-        }
-        index.delete_snapshot(snapshot_id)?;
+        // 1. Read the manifest first (read-only) to know which blocks to GC.
+        let blocks: Vec<String> = index
+            .load_manifest(snapshot_id)?
+            .map(|m| m.blocks.iter().map(|b| b.block_id.sha256.clone()).collect())
+            .unwrap_or_default();
 
-        // Perform orphan block deletions before DB row removal; if storage fails we still remove DB row
-        // but log the orphan for later reconciliation. Wrap DB delete in transaction where possible.
-        if !orphans.is_empty() {
-            if let Some(repo) = self.load_repository(repository_id).await? {
-                if let Ok(storage) = self.build_storage(&repo).await {
-                    for id in &orphans {
-                        if let Err(e) = storage.delete_block(id).await {
-                            tracing::warn!("Failed to delete orphan block {}: {}", id, e);
-                        }
-                    }
-                }
-            }
-        }
-
+        // 2. ARCH-001: remove the sqlx row FIRST. A crash after this point
+        // leaks blocks (safe, the reconciler reports them) instead of leaving
+        // a DB row that points at deleted blocks (restore corruption).
         match &self.db {
             DbPool::Sqlite(pool) => {
                 sqlx::query("DELETE FROM snapshots WHERE id = ?1")
@@ -1054,6 +1107,30 @@ impl JobManager {
                     .await?;
             }
         }
+
+        // 3. Index GC (atomic refcount handling, see BlockIndex::remove_block).
+        let mut orphans = Vec::new();
+        for sha in &blocks {
+            if index.remove_block(sha)? {
+                orphans.push(sha.clone());
+            }
+        }
+        index.delete_snapshot(snapshot_id)?;
+
+        // 4. Best-effort physical block deletion; failures only warn (the
+        // reconciler surfaces persistent orphans via block leaks, not loss).
+        if !orphans.is_empty() {
+            if let Some(repo) = self.load_repository(repository_id).await? {
+                if let Ok(storage) = self.build_storage(&repo).await {
+                    for id in &orphans {
+                        if let Err(e) = storage.delete_block(id).await {
+                            tracing::warn!("Failed to delete orphan block {}: {}", id, e);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 
-use crate::auth::jwt::Claims;
+use crate::auth::{jwt::Claims, User};
 use crate::auth::policy::{can_manage_agents, tenant_allows};
 use crate::db::DbPool;
 use crate::server::AppState;
@@ -25,6 +25,12 @@ pub struct AgentResponse {
     pub capabilities: String,
     pub created_at: i64,
     pub tenant_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct AgentHeartbeatResponse {
+    pub status: String,
+    pub token: String,
 }
 
 #[derive(Deserialize)]
@@ -228,13 +234,19 @@ fn sanitize_task_payload(mut payload: serde_json::Value) -> serde_json::Value {
 pub async fn poll_pending_tasks(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<AgentTaskResponse>>, StatusCode> {
+    // Validate that the path agent_id matches the authenticated agent ID from JWT
+    if id != claims.sub {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    
     let tasks = match &state.db {
         DbPool::Sqlite(pool) => {
             let rows = sqlx::query(
                 "SELECT id, agent_id, task_type, status, payload, result, created_at, completed_at
-                 FROM agent_tasks WHERE agent_id = ?1 AND status = 'pending'
-                 ORDER BY created_at ASC LIMIT 100",
+                  FROM agent_tasks WHERE agent_id = ?1 AND status = 'pending'
+                  ORDER BY created_at ASC LIMIT 100",
             )
             .bind(&id)
             .fetch_all(pool)
@@ -264,8 +276,8 @@ pub async fn poll_pending_tasks(
         DbPool::Postgres(pool) => {
             let rows = sqlx::query(
                 "SELECT id, agent_id, task_type, status, payload, result, created_at, completed_at
-                 FROM agent_tasks WHERE agent_id = $1 AND status = 'pending'
-                 ORDER BY created_at ASC LIMIT 100",
+                  FROM agent_tasks WHERE agent_id = $1 AND status = 'pending'
+                  ORDER BY created_at ASC LIMIT 100",
             )
             .bind(&id)
             .fetch_all(pool)
@@ -303,6 +315,7 @@ pub async fn report_task_status(
     State(state): State<Arc<AppState>>,
     Path((id, task_id)): Path<(String, String)>,
     Json(req): Json<TaskReportRequest>,
+    Extension(claims): Extension<Claims>,
 ) -> StatusCode {
     let now = chrono::Utc::now().timestamp();
     // Validate status transitions: only `running`, `completed`, `failed` are
@@ -321,18 +334,23 @@ pub async fn report_task_status(
         }
     };
 
-    let result = req.result.map(|r| r.to_string());
+    // Validate that the path agent_id matches the authenticated agent ID from JWT
+    if id != claims.sub {
+        return StatusCode::FORBIDDEN;
+    }
+
+let result = req.result.map(|r| r.to_string());
     let r: Result<(), String> = match &state.db {
         DbPool::Sqlite(pool) => {
             sqlx::query(
                 "UPDATE agent_tasks SET status = ?1, result = ?2, completed_at = ?3
-                 WHERE id = ?4 AND agent_id = ?5",
+                  WHERE id = ?4 AND agent_id = ?5",
             )
             .bind(&status)
             .bind(&result)
             .bind(completed_at)
             .bind(&task_id)
-            .bind(&id)
+            .bind(&claims.sub) // Use validated agent ID from JWT claims
             .execute(pool)
             .await
             .map(|_| ())
@@ -341,13 +359,13 @@ pub async fn report_task_status(
         DbPool::Postgres(pool) => {
             sqlx::query(
                 "UPDATE agent_tasks SET status = $1, result = $2, completed_at = $3
-                 WHERE id = $4 AND agent_id = $5",
+                  WHERE id = $4 AND agent_id = $5",
             )
             .bind(&status)
             .bind(&result)
             .bind(completed_at)
             .bind(&task_id)
-            .bind(&id)
+            .bind(&claims.sub) // Use validated agent ID from JWT claims
             .execute(pool)
             .await
             .map(|_| ())
@@ -482,7 +500,7 @@ async fn fetch_agent_tasks(
 pub async fn heartbeat(
     State(state): State<Arc<AppState>>,
     Json(req): Json<HeartbeatRequest>,
-) -> StatusCode {
+) -> Result<Json<AgentHeartbeatResponse>, StatusCode> {
     let id = req
         .agent_id
         .clone()
@@ -499,13 +517,6 @@ pub async fn heartbeat(
         .clone()
         .map(|caps| serde_json::to_string(&caps).unwrap_or_else(|_| "[]".into()))
         .unwrap_or_else(|| "[]".into());
-
-    // Heartbeat is gated by the agent token only (no JWT), so we cannot stamp
-    // tenant_id from claims. The agent must be provisioned with a tenant at
-    // creation time (admin API); for self-registered agents we leave the
-    // tenant_id NULL (global). The next planned change is to bind the
-    // agent token to a tenant via a signed JWT instead of a static token.
-    let tenant_id: Option<String> = None;
 
     let result: Result<(), String> = match &state.db {
         DbPool::Sqlite(pool) => {
@@ -567,10 +578,28 @@ pub async fn heartbeat(
     };
 
     match result {
-        Ok(()) => StatusCode::OK,
+        Ok(()) => {
+            // Generate JWT token for this agent
+            let agent_user = crate::auth::User {
+                id: id.clone(),
+                username: req.hostname.clone(),
+                role: crate::auth::UserRole::Agent,
+                tenant_id: tenant_id.clone(),
+            };
+            
+            let jwt_token = state
+                .jwt
+                .generate(&agent_user)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            Ok(Json(AgentHeartbeatResponse {
+                status: "online".to_string(),
+                token: jwt_token,
+            }))
+        }
         Err(e) => {
             tracing::error!("agent heartbeat: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

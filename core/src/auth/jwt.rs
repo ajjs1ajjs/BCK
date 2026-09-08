@@ -46,6 +46,7 @@ pub struct Claims {
     pub tenant_id: Option<String>,
 }
 
+#[derive(Clone)]
 pub struct JwtManager {
     secret: Vec<u8>,
     expiration_hours: i64,
@@ -91,6 +92,29 @@ impl JwtManager {
         revoke_token(&self.secret, token);
     }
 
+    /// Decode the expiry of a token without consulting the revocation list
+    /// (used when persisting a revocation that is already in-memory).
+    pub fn expiry_of(&self, token: &str) -> Option<i64> {
+        jsonwebtoken::decode::<Claims>(
+            token,
+            &jsonwebtoken::DecodingKey::from_secret(&self.secret),
+            &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+        )
+        .ok()
+        .map(|d| d.claims.exp as i64)
+    }
+
+        /// Periodically clean up expired entries from the JWT revocation map.
+    /// Returns the number of entries removed.
+    pub fn cleanup_revoked(&self) -> usize {
+        let now = chrono::Utc::now().timestamp();
+        let mut map = revoked_map();
+        let initial_len = map.len();
+        map.retain(|_, exp| *exp > now);
+        let final_len = map.len();
+        initial_len - final_len
+    }
+
     pub fn generate_api_token(&self, name: &str) -> Result<String, anyhow::Error> {
         let now = Utc::now();
         let claims = Claims {
@@ -110,3 +134,4 @@ impl JwtManager {
         Ok(token)
     }
 }
+

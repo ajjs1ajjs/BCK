@@ -24,7 +24,7 @@ impl BlockIndex {
             "CREATE TABLE IF NOT EXISTS blocks (
                 sha256 TEXT PRIMARY KEY,
                 size INTEGER NOT NULL,
-                refcount INTEGER NOT NULL DEFAULT 1,
+                refcount INTEGER NOT NULL DEFAULT 1 CHECK(refcount >= 0),
                 compressed_size INTEGER,
                 storage_path TEXT NOT NULL,
                 created_at INTEGER NOT NULL
@@ -81,24 +81,41 @@ impl BlockIndex {
         Ok(())
     }
 
+    /// Decrement a block's refcount, deleting the row when it reaches zero.
+    ///
+    /// DB-001: the decrement-and-sweep runs inside a single `BEGIN IMMEDIATE`
+    /// write transaction, so two concurrent snapshot deletions can never both
+    /// read a stale refcount and delete a block that is still referenced
+    /// (data loss). The `refcount > 0` guard also makes double-deletes
+    /// idempotent instead of driving the counter negative.
     pub fn remove_block(&self, sha256: &str) -> Result<bool> {
         let conn = self.db.lock().unwrap();
-        conn.execute(
-            "UPDATE blocks SET refcount = refcount - 1 WHERE sha256 = ?1",
-            [sha256],
-        )?;
-
-        let refcount: i64 = conn.query_row(
-            "SELECT refcount FROM blocks WHERE sha256 = ?1",
-            [sha256],
-            |row| row.get(0),
-        ).unwrap_or(0);
-
-        if refcount <= 0 {
-            conn.execute("DELETE FROM blocks WHERE sha256 = ?1", [sha256])?;
-            return Ok(true);
+        conn.execute("BEGIN IMMEDIATE", [])?;
+        let outcome: Result<bool> = (|| {
+            let decremented = conn.execute(
+                "UPDATE blocks SET refcount = refcount - 1 WHERE sha256 = ?1 AND refcount > 0",
+                [sha256],
+            )?;
+            if decremented == 0 {
+                // Missing row or already at zero — another deleter owns it.
+                return Ok(false);
+            }
+            let deleted = conn.execute(
+                "DELETE FROM blocks WHERE sha256 = ?1 AND refcount <= 0",
+                [sha256],
+            )?;
+            Ok(deleted > 0)
+        })();
+        match outcome {
+            Ok(freed) => {
+                conn.execute("COMMIT", [])?;
+                Ok(freed)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                Err(e)
+            }
         }
-        Ok(false)
     }
 
     pub fn get_block_path(&self, sha256: &str) -> Result<Option<String>> {
@@ -268,4 +285,58 @@ fn row_to_snapshot(row: &rusqlite::Row<'_>) -> rusqlite::Result<Snapshot> {
         manifest_path: row.get(10)?,
         tenant_id: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn temp_index(tag: &str) -> BlockIndex {
+        let dir = std::env::temp_dir().join(format!("bck-index-{}-{}", tag, uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        BlockIndex::new(&dir.to_string_lossy()).unwrap()
+    }
+
+    fn test_block(id: &str) -> BlockId {
+        BlockId { sha256: id.to_string(), size: 8 }
+    }
+
+    #[test]
+    fn remove_block_deletes_at_zero_and_is_idempotent() {
+        let index = temp_index("single");
+        index.add_block(&test_block("aaa"), 8, "/store/aaa").unwrap();
+        assert!(!index.block_exists("missing").unwrap());
+        // refcount 1 -> 0 deletes the row.
+        assert!(index.remove_block("aaa").unwrap());
+        assert!(!index.block_exists("aaa").unwrap());
+        // Double delete must not go negative or error.
+        assert!(!index.remove_block("aaa").unwrap());
+    }
+
+    /// DB-001 regression: N concurrent deleters of a block with refcount N
+    /// must free it exactly once and never drive refcount negative.
+    #[test]
+    fn concurrent_remove_block_frees_exactly_once() {
+        let index = Arc::new(temp_index("concurrent"));
+        let sha = "shared-block";
+        for _ in 0..8 {
+            index.add_block(&test_block(sha), 8, "/store/shared").unwrap();
+        }
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let idx = index.clone();
+            handles.push(std::thread::spawn(move || idx.remove_block(sha).unwrap()));
+        }
+        let mut freed = 0;
+        for h in handles {
+            if h.join().unwrap() {
+                freed += 1;
+            }
+        }
+        assert_eq!(freed, 1, "exactly one deleter must free the block");
+        assert!(!index.block_exists(sha).unwrap());
+        // Extra delete after free stays a no-op.
+        assert!(!index.remove_block(sha).unwrap());
+    }
 }

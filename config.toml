@@ -1,5 +1,8 @@
 [server]
-host = "0.0.0.0"
+# SEC-002: loopback by default. Bind 0.0.0.0 only together with TLS
+# (tls_cert/tls_key below) or a TLS-terminating reverse proxy — otherwise
+# JWTs, the agent token and backup data travel in plaintext.
+host = "127.0.0.1"
 port = 9440
 grpc_port = 9441
 web_ui_dir = "./web-ui/dist"

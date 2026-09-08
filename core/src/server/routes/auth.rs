@@ -122,9 +122,80 @@ async fn logout(
     headers: axum::http::HeaderMap,
 ) -> StatusCode {
     if let Some(v) = headers.get(axum::http::header::AUTHORIZATION).and_then(|h| h.to_str().ok()).and_then(|s| s.strip_prefix("Bearer ")) {
+        // In-memory fast path (current process).
         state.jwt.revoke(v);
+        // SEC-003: persistent revocation so logout survives restarts.
+        // Store only the hash, never the token itself.
+        persist_revocation(&state.db, &state.jwt, v).await;
     }
     StatusCode::OK
+}
+
+/// Record a token revocation in the DB (best-effort) and prune expired rows.
+pub(crate) async fn persist_revocation(db: &DbPool, jwt: &crate::auth::jwt::JwtManager, token: &str) {
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(token.as_bytes()));
+    // Token was just revoked in-memory, so `validate` would reject it —
+    // decode the expiry directly (falls back to 24h on malformed tokens).
+    let exp = jwt
+        .expiry_of(token)
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() + 24 * 3600);
+    match db {
+        DbPool::Sqlite(pool) => {
+            let _ = sqlx::query(
+                "INSERT INTO revoked_tokens (token_hash, exp) VALUES (?1, ?2)
+                 ON CONFLICT(token_hash) DO NOTHING",
+            )
+            .bind(&hash)
+            .bind(exp)
+            .execute(pool)
+            .await;
+            let now = chrono::Utc::now().timestamp();
+            let _ = sqlx::query("DELETE FROM revoked_tokens WHERE exp <= ?1")
+                .bind(now)
+                .execute(pool)
+                .await;
+        }
+        DbPool::Postgres(pool) => {
+            let _ = sqlx::query(
+                "INSERT INTO revoked_tokens (token_hash, exp) VALUES ($1, $2)
+                 ON CONFLICT (token_hash) DO NOTHING",
+            )
+            .bind(&hash)
+            .bind(exp)
+            .execute(pool)
+            .await;
+            let now = chrono::Utc::now().timestamp();
+            let _ = sqlx::query("DELETE FROM revoked_tokens WHERE exp <= $1")
+                .bind(now)
+                .execute(pool)
+                .await;
+        }
+    }
+}
+
+/// Check the persistent revocation table (SEC-003). Returns true when revoked.
+pub(crate) async fn is_persistently_revoked(db: &DbPool, token: &str) -> bool {
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(token.as_bytes()));
+    match db {
+        DbPool::Sqlite(pool) => sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM revoked_tokens WHERE token_hash = ?1",
+        )
+        .bind(&hash)
+        .fetch_one(pool)
+        .await
+        .map(|c| c > 0)
+        .unwrap_or(false),
+        DbPool::Postgres(pool) => sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM revoked_tokens WHERE token_hash = $1",
+        )
+        .bind(&hash)
+        .fetch_one(pool)
+        .await
+        .map(|c| c > 0)
+        .unwrap_or(false),
+    }
 }
 
 async fn me(

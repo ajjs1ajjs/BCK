@@ -181,34 +181,43 @@ impl DataLifecycleEngine {
 
     /// Apply retention: physically delete expired backups' blocks (respecting
     /// refcounts) and remove their metadata. Returns the number deleted.
+    /// FIXED for BUG-002: changed deletion order to be crash-safe
     pub async fn apply_retention(&self, policy: &SobrPolicy) -> Result<u64> {
         let candidates = self.evaluate_cleanup(policy).await?;
         let mut deleted = 0u64;
         for id in candidates {
             let tier = self
                 .placement(&id)
-                .await
-                .unwrap_or_else(|| policy.performance_tier_id.clone());
-            let source = self.tier_backend(&tier).await?;
+.await
+                 .unwrap_or_else(|| policy.performance_tier_id.clone());
+         let source = self.tier_backend(&tier).await?
 
-            if let Some(manifest) = self.index.load_manifest(&id)? {
-                let mut shas = Vec::new();
-                for block in &manifest.blocks {
-                    if !shas.contains(&block.block_id.sha256) {
-                        shas.push(block.block_id.sha256.clone());
-                    }
-                }
-                for sha in &shas {
-                    if self.index.remove_block(sha)? {
-                        source.delete_blocks(&[sha.clone()]).await?;
-                    }
-                }
+         // Load manifest and copy block list to memory for safe processing
+        let manifest = match self.index.load_manifest(&id)? {
+            Some(m) => m,
+            None => continue,
+        };
+        let mut shas = Vec::new();
+        for block in &manifest.blocks {
+            if !shas.contains(&block.block_id.sha256) {
+                shas.push(block.block_id.sha256.clone());
             }
-            self.index.delete_snapshot(&id)?;
-            self.remove_placement(&id).await;
-            deleted += 1;
         }
-        Ok(deleted)
+
+        // DELETE METADATA FIRST (crash-safe order per ARCH-001)
+        self.index.delete_snapshot(&id)?;
+
+// PROCESS BLOCKS using in-memory copy
+        for sha in &shas {
+            if self.index.remove_block(sha)? {
+                source.delete_blocks(&[sha.clone()]).await?;
+            }
+}
+
+         self.remove_placement(&id).await?;
+         deleted += 1;
+     }
+     Ok(deleted)
     }
 
     /// Move all backups flagged by `evaluate_movement` / `evaluate_archival`

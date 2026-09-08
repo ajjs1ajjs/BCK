@@ -44,20 +44,19 @@ jobs:
           key: ci-linux-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo audit
-        # Non-blocking (warn only) due to upstream config compatibility issues.
+        # Blocking: a known-vulnerable dependency must not ship to production.
         shell: bash
         run: |
           cargo install cargo-audit --locked
-          cargo audit || true
+          cargo audit
 
       - name: cargo deny
-        # Enforce the deny.toml policy: licenses, advisories, banned crates,
-        # duplicate dependency versions, and source restrictions.
-        # Non-blocking (warn only) due to upstream config compatibility issues.
+        # Blocking: enforce the deny.toml policy: licenses, advisories, banned
+        # crates, duplicate dependency versions, and source restrictions.
         shell: bash
         run: |
           cargo install cargo-deny --locked
-          cargo deny check || true
+          cargo deny check
 
       - name: cargo test --workspace
         shell: bash

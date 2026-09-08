@@ -38,66 +38,11 @@ fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
     }
 }
 
-/// SEC-020: validate the user-supplied `target_path` for a file restore to
-/// prevent arbitrary file writes on the daemon host. The path must be a
-/// plain relative path or an absolute path that lives under the configured
-/// restore root (when one is configured). System-critical directories and
-/// Windows drive roots are always rejected.
+/// SEC-001: the only gate for user-supplied `target_path`. Delegates to the
+/// shared allow-list gate (`crate::restore::gate_restore_target`) so REST,
+/// gRPC and portal approve paths enforce identical semantics.
 fn validate_restore_target(target: &str) -> Result<(), String> {
-    let trimmed = target.trim();
-    if trimmed.is_empty() {
-        return Err("target_path must not be empty".into());
-    }
-    // Reject NUL bytes and other control characters.
-    if trimmed.chars().any(|c| c.is_control()) {
-        return Err("target_path contains control characters".into());
-    }
-    let p = std::path::Path::new(trimmed);
-    // If a restore root is configured, reject anything outside it.
-    if let Ok(root) = std::env::var("BCK_RESTORE_ROOT") {
-        let root = std::path::Path::new(&root);
-        if !p.exists() && !p.starts_with(root) {
-            return Err(format!(
-                "target_path '{}' is outside the configured restore root",
-                trimmed
-            ));
-        }
-        if p.exists() {
-            // Canonicalize both sides to detect ../ escapes.
-            if let (Ok(canon_target), Ok(canon_root)) = (p.canonicalize(), root.canonicalize()) {
-                if !canon_target.starts_with(&canon_root) {
-                    return Err(format!(
-                        "target_path '{}' is outside the configured restore root",
-                        trimmed
-                    ));
-                }
-            }
-        }
-    }
-    // Reject obviously dangerous Unix system directories.
-    #[cfg(unix)]
-    {
-        const BLOCKED: &[&str] = &[
-            "/", "/bin", "/sbin", "/etc", "/boot", "/proc", "/sys", "/dev",
-            "/var/log", "/usr", "/lib", "/lib64",
-        ];
-        for b in BLOCKED {
-            let bp = std::path::Path::new(b);
-            if trimmed == *b || trimmed.starts_with(&format!("{}/", b)) {
-                if trimmed == *b {
-                    return Err(format!("target_path '{}' is a system directory", trimmed));
-                }
-                // Only block if the canonical target matches (avoid
-                // false positives on similarly-named user directories).
-                if let Ok(canon) = p.canonicalize() {
-                    if canon == bp {
-                        return Err(format!("target_path '{}' is a system directory", trimmed));
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
+    crate::restore::gate_restore_target(target).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Load a snapshot and enforce the caller's tenant on it.

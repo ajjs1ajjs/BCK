@@ -277,6 +277,95 @@ fn normalize_manifest_path(p: &str) -> String {
     s.trim_start_matches('/').to_string()
 }
 
+/// Gate a user-supplied restore `target_path` (the base directory restore
+/// output is written to).
+///
+/// SEC-001: allow-list only. `BCK_RESTORE_ROOT` must be set; the target must
+/// resolve inside it. System block-lists are intentionally NOT used here —
+/// they cannot enumerate every sensitive path and gave a false sense of
+/// safety (the previous `canon == dir` check let `/etc/<file>` through).
+/// Returns the canonicalized base directory on success.
+pub fn gate_restore_target(target: &str) -> Result<std::path::PathBuf> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("target_path must not be empty");
+    }
+    if trimmed.chars().any(|c| c.is_control()) {
+        anyhow::bail!("target_path contains control characters");
+    }
+    let root = std::env::var("BCK_RESTORE_ROOT")
+        .map_err(|_| anyhow!("restore is disabled: BCK_RESTORE_ROOT is not configured"))?;
+    if root.trim().is_empty() {
+        anyhow::bail!("restore is disabled: BCK_RESTORE_ROOT is not configured");
+    }
+    let root_path = std::path::Path::new(&root);
+    if !root_path.is_dir() {
+        anyhow::bail!("restore root is not a directory");
+    }
+    let canon_root = root_path.canonicalize()
+        .map_err(|_| anyhow!("restore root cannot be resolved"))?;
+    let canon_base = canonicalize_for_gate(std::path::Path::new(trimmed))?;
+    if !canon_base.starts_with(&canon_root) {
+        anyhow::bail!("target_path is outside the configured restore root");
+    }
+    Ok(canon_base)
+}
+
+/// Canonicalize a path that may not exist yet: resolve the nearest existing
+/// ancestor (following symlinks) and re-append the remainder lexically.
+fn canonicalize_for_gate(p: &std::path::Path) -> Result<std::path::PathBuf> {
+    use std::path::Component;
+    // Reject `..` / absolute escapes lexically first (defense in depth;
+    // the prefix check below is authoritative).
+    if p.components().any(|c| matches!(c, Component::ParentDir)) {
+        anyhow::bail!("target_path must not contain '..'");
+    }
+    if let Ok(canon) = p.canonicalize() {
+        return Ok(canon);
+    }
+    // Walk up to the nearest existing ancestor.
+    let mut ancestor = p;
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        match ancestor.parent() {
+            Some(parent) if !parent.as_os_str().is_empty() => {
+                if let Some(name) = ancestor.file_name() {
+                    tail.push(name.to_os_string());
+                }
+                if parent.exists() {
+                    let mut canon = parent.canonicalize()
+                        .map_err(|_| anyhow!("target_path cannot be resolved"))?;
+                    for comp in tail.iter().rev() {
+                        // Remainder must itself be plain names (no `..`, no abs).
+                        let comp_path = std::path::Path::new(comp);
+                        if comp_path.components().any(|c| !matches!(c, Component::Normal(_))) {
+                            anyhow::bail!("target_path escapes the restore root");
+                        }
+                        canon.push(comp);
+                    }
+                    return Ok(canon);
+                }
+                ancestor = parent;
+            }
+            _ => anyhow::bail!("target_path cannot be resolved"),
+        }
+    }
+}
+
+/// Process-wide mutex serializing tests that mutate `BCK_RESTORE_ROOT`
+/// (the var is process-global). Used by `restore::tests` and `api_tests`.
+#[cfg(test)]
+pub(crate) static RESTORE_GATE_TEST_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn lock_gate_env_for_test() -> std::sync::MutexGuard<'static, ()> {
+    RESTORE_GATE_TEST_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap()
+}
+
 /// Join a manifest path onto a restore root, rejecting any path that could
 /// escape the root (`..`, absolute paths, drive prefixes, symlinks out).
 /// Returns an error instead of writing outside the intended directory.
@@ -354,6 +443,47 @@ mod tests {
         let base = temp_base();
         assert!(safe_join(&base, "").is_err());
         assert!(safe_join(&base, "/").is_err());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // SEC-001 regression tests: the allow-list gate must reject everything
+    // outside BCK_RESTORE_ROOT, including the old `/etc/<file>` bypass.
+    #[cfg(test)]
+    fn gate_lock() -> std::sync::MutexGuard<'static, ()> {
+        lock_gate_env_for_test()
+    }
+    fn with_restore_root(dir: &std::path::Path) -> String {
+        // SAFETY: tests that touch the env hold `gate_lock()` (process-wide),
+        // and CI runs tests single-threaded.
+        unsafe { std::env::set_var("BCK_RESTORE_ROOT", dir) };
+        // Name the env-var value; callers pass concrete targets.
+        dir.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn gate_rejects_outside_root_and_etc_files() {
+        let _g = gate_lock();
+        let root = temp_base();
+        let _ = with_restore_root(&root);
+        // Inside (existing + not-yet-existing subdir) is accepted.
+        assert!(gate_restore_target(&root.to_string_lossy()).is_ok());
+        assert!(gate_restore_target(&root.join("sub").to_string_lossy()).is_ok());
+        // Outside the root — including the classic system-file bypass — fails.
+        assert!(gate_restore_target("/etc/passwd").is_err());
+        assert!(gate_restore_target("/etc/cron.d").is_err());
+        assert!(gate_restore_target("/tmp").is_err());
+        assert!(gate_restore_target("../escape").is_err());
+        assert!(gate_restore_target("").is_err());
+        unsafe { std::env::remove_var("BCK_RESTORE_ROOT") };
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn gate_requires_root_configured() {
+        let _g = gate_lock();
+        unsafe { std::env::remove_var("BCK_RESTORE_ROOT") };
+        let base = temp_base();
+        assert!(gate_restore_target(&base.to_string_lossy()).is_err());
         std::fs::remove_dir_all(&base).ok();
     }
 }

@@ -71,6 +71,20 @@ fn temp_dir(tag: &str) -> String {
     dir.to_string_lossy().into_owned()
 }
 
+/// Point BCK_RESTORE_ROOT at a fresh temp dir for tests that submit restore
+/// targets (SEC-001 gate is allow-list only). The returned guard serializes
+/// with the gate's own tests because the env var is process-global — hold it
+/// for the whole test. Returns the root path.
+fn set_restore_root_for_test(
+    tag: &str,
+) -> (String, std::sync::MutexGuard<'static, ()>) {
+    let g = crate::restore::lock_gate_env_for_test();
+    let root = temp_dir(tag);
+    // SAFETY: env mutation is serialized by the gate test lock.
+    unsafe { std::env::set_var("BCK_RESTORE_ROOT", &root) };
+    (root, g)
+}
+
 #[tokio::test]
 async fn sobr_tiers_and_policies() {
     let state = test_state(&format!("{}\\sobr.db", temp_dir("sobr"))).await;
@@ -553,6 +567,7 @@ async fn tenant_data_plane_isolation() {
 
 #[tokio::test]
 async fn portal_restore_request_lifecycle() {
+    let (restore_root, _env) = set_restore_root_for_test("portal-root");
     let state = test_state(&format!("{}\\portal.db", temp_dir("portal"))).await;
     let app = portal::router().with_state(state.clone());
 
@@ -569,12 +584,16 @@ async fn portal_restore_request_lifecycle() {
     let me: serde_json::Value = read_json(resp).await;
     assert_eq!(me["can_approve"], false);
 
-    // Submit a restore request.
+    // Submit a restore request (target must live under BCK_RESTORE_ROOT).
+    let submit_body = format!(
+        r#"{{"snapshot_id":"snap-1","files":["/etc/hosts"],"target_path":"{}/restore","reason":"test"}}"#,
+        restore_root.replace('\\', "\\\\")
+    );
     let resp = oneshot_with_claims(
         app.clone(),
         "POST",
         "/restore-requests",
-        Some(r#"{"snapshot_id":"snap-1","files":["/etc/hosts"],"target_path":"/tmp/restore","reason":"test"}"#),
+        Some(submit_body.as_str()),
         &admin_claims(),
     ).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
@@ -645,11 +664,15 @@ async fn portal_restore_request_lifecycle() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Submit, then cancel a second request.
+    let submit2 = format!(
+        r#"{{"snapshot_id":"snap-2","files":[],"target_path":"{}/restore2"}}"#,
+        restore_root.replace('\\', "\\\\")
+    );
     let resp = oneshot_with_claims(
         app.clone(),
         "POST",
         "/restore-requests",
-        Some(r#"{"snapshot_id":"snap-2","files":[],"target_path":"/tmp/restore2"}"#),
+        Some(submit2.as_str()),
         &admin_claims(),
     ).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
@@ -678,6 +701,7 @@ async fn portal_restore_request_lifecycle() {
 
 #[tokio::test]
 async fn portal_cancel_requires_ownership() {
+    let (restore_root, _env) = set_restore_root_for_test("portal-idor-root");
     let state = test_state(&format!("{}\\portal-idor.db", temp_dir("portal-idor"))).await;
     let app = portal::router().with_state(state.clone());
 
@@ -699,11 +723,15 @@ async fn portal_cancel_requires_ownership() {
     };
 
     // Victim submits a restore request.
+    let victim_body = format!(
+        r#"{{"snapshot_id":"snap-v","files":[],"target_path":"{}/r"}}"#,
+        restore_root.replace('\\', "\\\\")
+    );
     let resp = oneshot_with_claims(
         app.clone(),
         "POST",
         "/restore-requests",
-        Some(r#"{"snapshot_id":"snap-v","files":[],"target_path":"/tmp/r"}"#),
+        Some(victim_body.as_str()),
         &victim,
     ).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
@@ -971,6 +999,64 @@ async fn rbac_restore_requires_restore_capability() {
         &format!("Bearer {restore_op}"),
     ).await;
     assert_ne!(resp.status(), StatusCode::FORBIDDEN, "restore_operator must be allowed");
+}
+
+#[tokio::test]
+async fn index_reconcile_heals_crash_orphans() {
+    let state = test_state(&format!("{}\\reconcile.db", temp_dir("reconcile"))).await;
+
+    // Simulate a crash after index-write but before the sqlx INSERT:
+    // an index snapshot + manifest with no sqlx row.
+    let index_path = state.config.storage.default_path.to_string_lossy().to_string();
+    std::fs::create_dir_all(&index_path).unwrap();
+    let index = crate::index::BlockIndex::new(&index_path).unwrap();
+    let orphan = crate::types::Snapshot {
+        id: "orphan-1".into(),
+        job_id: "job-x".into(),
+        repository_id: "repo-x".into(),
+        snapshot_type: crate::types::SnapshotType::Full,
+        parent_id: None,
+        size_bytes: 0,
+        unique_bytes: 0,
+        compressed_bytes: 0,
+        checksum: String::new(),
+        consistency: crate::types::ConsistencyLevel::Consistent,
+        app_consistent: false,
+        created_at: 0,
+        manifest_path: index_path.clone(),
+        tenant_id: None,
+    };
+    let manifest = crate::types::BackupManifest {
+        snapshot_id: "orphan-1".into(),
+        parent_id: None,
+        blocks: Vec::new(),
+        total_size: 0,
+        unique_size: 0,
+        compressed_size: 0,
+        file_count: 0,
+        checksum: String::new(),
+        created_at: 0,
+    };
+    index.save_manifest("orphan-1", &manifest).unwrap();
+    index.add_snapshot(&orphan).unwrap();
+
+    // And the reverse: a sqlx row whose manifest never landed.
+    if let crate::db::DbPool::Sqlite(pool) = &state.db {
+        sqlx::query("INSERT INTO repositories (id, name, repo_type, created_at, updated_at) VALUES ('repo-1','r','local',0,0)")
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO backup_jobs (id, name, job_type, repository_id, created_at, updated_at) VALUES ('job-1','j','file','repo-1',0,0)")
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO job_sessions (id, job_id, backup_type, started_at, created_at) VALUES ('sess-1','job-1','full',0,0)")
+            .execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO snapshots (id, job_id, session_id, repository_id, snapshot_type, created_at) VALUES ('snap-1','job-1','sess-1','repo-1','full',0)")
+            .execute(pool).await.unwrap();
+    }
+
+    let jm = state.job_manager.lock().await;
+    let report = jm.reconcile_index().await.unwrap();
+    assert_eq!(report.index_orphans_removed, 1, "crash orphan must be cleaned");
+    assert_eq!(report.missing_manifests, vec!["snap-1".to_string()]);
+    assert!(index.load_manifest("orphan-1").unwrap().is_none());
 }
 
 #[tokio::test]

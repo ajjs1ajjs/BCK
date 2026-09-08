@@ -14,7 +14,7 @@ tokio-stream = "0.1"
 # Web server (Axum)
 axum = { version = "0.7", features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs", "trace", "compression-gzip"] }
+tower-http = { version = "0.7", features = ["cors", "fs", "trace", "compression-gzip", "limit"] }
 hyper = "1"
 
 # gRPC
@@ -96,3 +96,4 @@ tonic-prost-build = "0.14"
 [lib]
 name = "bck_core"
 path = "src/lib.rs"
+

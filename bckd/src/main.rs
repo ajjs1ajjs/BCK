@@ -87,6 +87,8 @@ async fn main() -> anyhow::Result<()> {
     // Initialize components
     let jwt_secret = resolve_jwt_secret(&config)?;
     let jwt = JwtManager::new(&jwt_secret);
+    let jwt_for_cleanup = std::sync::Arc::new(jwt.clone());
+    spawn_jwt_cleanup_task(jwt_for_cleanup);
 
     // Pre-shared token agents must present when calling agent endpoints.
     // Optional: operators can set it explicitly; otherwise a random token is
@@ -481,7 +483,9 @@ async fn seed_default_admin(db: &bck_core::db::DbPool, config: &AppConfig) {
             }
             if let Err(e) = std::fs::write(
                 &bootstrap_path,
-                format!("username: admin\npassword: {}\n", password),
+                format!("username: admin
+password: {}
+", password),
             ) {
                 warn!("Failed to persist bootstrap admin password to {}: {}", bootstrap_path.display(), e);
             } else {
@@ -648,6 +652,22 @@ fn spawn_db_backup_task(config: &bck_core::config::AppConfig) {
                 }
             }
             info!("DB backup created: {}", dst.display());
+        }
+    });
+}
+
+/// Periodically clean up expired entries from the JWT revocation map to prevent memory growth.
+fn spawn_jwt_cleanup_task(jwt: std::sync::Arc<bck_core::auth::jwt::JwtManager>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // Run every hour
+        // First tick completes immediately - skip it, wait 1h.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let removed = jwt.cleanup_revoked();
+            if removed > 0 {
+                tracing::info!("JWT revocation map cleanup: removed {} expired entries", removed);
+            }
         }
     });
 }

@@ -41,6 +41,12 @@ pub async fn auth_middleware(
         .validate(token)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
+    // SEC-003: persistent revocation (survives restarts; the in-memory map in
+    // JwtManager is only a fast path).
+    if crate::server::routes::auth::is_persistently_revoked(&state.db, token).await {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     if matches!(
         req.method(),
         &Method::GET | &Method::HEAD | &Method::OPTIONS

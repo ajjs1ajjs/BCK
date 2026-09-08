@@ -64,12 +64,10 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                // SEC-025: default to loopback so a fresh install does not
-                // expose the API on every interface. Operators who need
-                // network access must explicitly set host = "0.0.0.0" in
-                // config.toml (the install script emits this value
-                // intentionally because the service is meant to be reached
-                // by the web console and CLI).
+                // SEC-002: default to loopback so a fresh install does not
+                // expose the API on every interface. bckd additionally
+                // refuses to start on 0.0.0.0/:: without TLS unless
+                // BCK_ALLOW_PLAINTEXT=1 (reverse-proxy setups opt in).
                 host: "127.0.0.1".into(),
                 port: 9440,
                 grpc_port: 9441,
