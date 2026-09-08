@@ -30,6 +30,18 @@ Custom S3 endpoints that resolve to `127.0.0.1`/`10.x`/`192.168.x` are blocked b
 - `GET /api/v1/metrics` — Prometheus `bck_jobs_total` / `bck_jobs_running`.
 - `POST /api/v1/auth/logout` — revokes JWT (in-memory denylist).
 
+## Security headers
+
+The API server automatically adds the following security headers to every response:
+
+- **Content-Security-Policy**: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'`
+- **X-Content-Type-Options**: `nosniff` — prevents MIME-type sniffing
+- **X-Frame-Options**: `DENY` — prevents clickjacking via framing
+- **Referrer-Policy**: `same-origin` — limits referrer information sent
+- **Strict-Transport-Security**: `max-age=63072000; includeSubDomains; preload` — only served when TLS is enabled via `server.tls_cert` / `server.tls_key` in `config.toml`
+
+These headers provide defense-in-depth against XSS, clickjacking, and protocol downgrade attacks.
+
 ## Backup
 
 SQLite DB is copied daily to `db_backups/` via `VACUUM INTO` (rotation 7).
@@ -38,3 +50,13 @@ SQLite DB is copied daily to `db_backups/` via `VACUUM INTO` (rotation 7).
 
 - `9440` — REST API + Web UI
 - `9441` — gRPC API
+
+## Configuration defaults
+
+Fresh installs bind the API to `127.0.0.1` (loopback only) by default. To expose the API on all interfaces, set `host = "0.0.0.0"` in `config.toml` and ensure TLS is configured via `server.tls_cert` / `server.tls_key`, or terminate TLS at a reverse proxy.
+
+## Security improvements in this release
+
+- JWT token revocation mechanism fixed — tokens can now be properly revoked via the `jwt.revoke()` method, and revoked tokens are denied on subsequent validation.
+- Security headers now included on all API responses: CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, and HSTS (when TLS is enabled).
+- NFS proxy connection handler now properly rejects connections with a clear error message (functional implementation is in progress).

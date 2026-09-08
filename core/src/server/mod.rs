@@ -78,6 +78,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
 
 /// Adds baseline security headers to every response (CSP, nosniff, frame
 /// protection, referrer policy). Defense in depth against XSS/clickjacking.
+/// HSTS is included — it only takes effect when the browser has seen the
+/// site served over HTTPS; on a fresh HTTP deployment it will be stored
+/// but won't block HTTP access until TLS is subsequently enabled.
 async fn security_headers(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
     let mut response = next.run(req).await;
     let headers = response.headers_mut();

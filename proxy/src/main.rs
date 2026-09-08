@@ -73,13 +73,9 @@ async fn start_san_proxy(_cli: &Cli) -> Result<()> {
 }
 
 async fn handle_nfs_connection(_stream: tokio::net::TcpStream) -> Result<()> {
-    // NFS protocol handling:
-    // 1. NFSv3/v4 MOUNT protocol
-    // 2. READ/WRITE operations to export VM disks
-    // 3. Blocks are stored/retrieved from BCK backup storage
-    // 4. Implements NFS READ for restore (direct block access)
-    // 5. Implements NFS WRITE for backup (stream to pipeline)
-
-    info!("NFS connection handler started");
-    Ok(())
+    // TODO: Implement NFSv3/v4 protocol handling
+    // Status: WIP - not functional yet
+    // Required: MOUNT, READ, WRITE operations for VM disk exports
+    warn!("NFS proxy not yet implemented - connection rejected");
+    Err(anyhow::anyhow!("NFS proxy not yet implemented"))
 }

@@ -20,10 +20,10 @@ fn is_revoked(token: &str) -> bool {
     }
     false
 }
-fn revoke_token(token: &str) {
+fn revoke_token(secret: &[u8], token: &str) {
     let exp = jsonwebtoken::decode::<Claims>(
         token,
-        &jsonwebtoken::DecodingKey::from_secret(b""),
+        &jsonwebtoken::DecodingKey::from_secret(secret),
         &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
     )
     .ok()
@@ -88,7 +88,7 @@ impl JwtManager {
     }
 
     pub fn revoke(&self, token: &str) {
-        revoke_token(token);
+        revoke_token(&self.secret, token);
     }
 
     pub fn generate_api_token(&self, name: &str) -> Result<String, anyhow::Error> {

@@ -208,7 +208,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Give in-flight requests up to 10s to drain.
-    tokio::time::sleep(Duration::from_secs(0)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
 
     // Graceful cleanup: stop scheduler, cancel in-flight instant-recovery.
     {

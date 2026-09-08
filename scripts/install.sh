@@ -326,7 +326,7 @@ CONFIG="$BCK_CONFIG_DIR/config.toml"
 if [ ! -f "$CONFIG" ]; then
     cat > "$CONFIG" <<EOF
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = ${BCK_PORT}
 grpc_port = 9441
 web_ui_dir = "${BCK_HOME}/web-ui/dist"

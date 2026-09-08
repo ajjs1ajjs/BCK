@@ -318,7 +318,7 @@ try {
         $tmpWin     = Join-Path $BckDataDir "tmp"
         @"
 [server]
-host = "0.0.0.0"
+host = "127.0.0.1"
 port = $BckPort
 grpc_port = 9441
 web_ui_dir = "$homeWin\web-ui\dist"
