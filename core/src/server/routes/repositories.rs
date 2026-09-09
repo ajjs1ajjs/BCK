@@ -57,6 +57,7 @@ pub struct CreateRepoRequest {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/", axum::routing::get(list_repositories).post(create_repository))
         .route("/:id", axum::routing::get(get_repository).delete(delete_repository))
 }

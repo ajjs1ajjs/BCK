@@ -12,7 +12,7 @@ tokio-util = "0.7"
 tokio-stream = "0.1"
 
 # Web server (Axum)
-axum = { version = "0.7", features = ["macros"] }
+axum = { workspace = true, features = ["macros"] }
 tower = "0.5"
 tower-http = { version = "0.7", features = ["cors", "fs", "trace", "compression-gzip", "limit"] }
 hyper = "1"

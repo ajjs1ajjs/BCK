@@ -11,6 +11,7 @@ use crate::tape::{TapeDrive, TapeMedia};
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/drives", axum::routing::get(list_drives).post(register_drive))
         .route("/drives/:id/load", axum::routing::post(load_media))
         .route("/drives/:id/eject", axum::routing::post(eject_media))

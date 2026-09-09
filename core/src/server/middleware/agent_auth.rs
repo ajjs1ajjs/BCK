@@ -6,7 +6,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::auth::jwt::{Claims, JwtManager};
+use crate::auth::jwt::Claims;
 use crate::server::AppState;
 use crate::db::DbPool;
 

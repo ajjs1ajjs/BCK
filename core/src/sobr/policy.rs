@@ -190,7 +190,7 @@ impl DataLifecycleEngine {
                 .placement(&id)
 .await
                  .unwrap_or_else(|| policy.performance_tier_id.clone());
-         let source = self.tier_backend(&tier).await?
+         let source = self.tier_backend(&tier).await?;
 
          // Load manifest and copy block list to memory for safe processing
         let manifest = match self.index.load_manifest(&id)? {
@@ -214,7 +214,7 @@ impl DataLifecycleEngine {
             }
 }
 
-         self.remove_placement(&id).await?;
+         self.remove_placement(&id).await;
          deleted += 1;
      }
      Ok(deleted)

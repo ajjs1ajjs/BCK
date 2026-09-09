@@ -12,6 +12,7 @@ use crate::server::AppState;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/", axum::routing::get(list_tenants).post(create_tenant))
         .route("/:id", axum::routing::get(get_tenant).delete(delete_tenant))
         .route("/:id/suspend", axum::routing::post(suspend_tenant))

@@ -29,6 +29,7 @@ pub enum UserRole {
     Operator,
     RestoreOperator,
     Viewer,
+    Agent,
 }
 
 impl std::fmt::Display for UserRole {
@@ -39,6 +40,7 @@ impl std::fmt::Display for UserRole {
             UserRole::Operator => write!(f, "operator"),
             UserRole::RestoreOperator => write!(f, "restore_operator"),
             UserRole::Viewer => write!(f, "viewer"),
+            UserRole::Agent => write!(f, "agent"),
         }
     }
 }

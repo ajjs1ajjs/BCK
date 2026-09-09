@@ -17,6 +17,7 @@ const APPROVER_ROLES: [&str; 3] = ["admin", "operator", "super_admin"];
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/me", axum::routing::get(me))
         .route("/restore-requests", axum::routing::get(list_own).post(submit_request))
         .route("/restore-requests/:id/cancel", axum::routing::post(cancel_request))

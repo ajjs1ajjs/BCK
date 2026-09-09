@@ -16,6 +16,7 @@ use crate::server::AppState;
 /// Public endpoints (authorize / callback / ldap login) — no JWT required.
 pub fn public_router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/:id/authorize", axum::routing::get(authorize))
         .route("/:id/callback", axum::routing::get(callback))
         .route("/ldap/login", axum::routing::post(ldap_login))
@@ -24,6 +25,7 @@ pub fn public_router() -> axum::Router<Arc<AppState>> {
 /// Management endpoints (provider registration / listing) — JWT required.
 pub fn protected_router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/providers", axum::routing::get(list_providers).post(register_provider))
         .route("/ldap", axum::routing::post(add_ldap))
 }

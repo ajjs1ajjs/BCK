@@ -13,6 +13,7 @@ use crate::server::AppState;
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/status", axum::routing::get(status))
         .route("/sites", axum::routing::get(list_sites).post(register_site))
         .route("/plans", axum::routing::get(list_plans).post(create_plan))

@@ -10,6 +10,7 @@ use crate::sobr::{SobrPolicy, StorageTier};
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/", axum::routing::get(tier_stats))
         .route("/tiers", axum::routing::post(add_tier))
         .route("/policies", axum::routing::get(list_policies).post(create_policy))

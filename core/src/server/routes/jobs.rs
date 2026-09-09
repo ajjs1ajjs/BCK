@@ -69,6 +69,7 @@ async fn job_owned(jm: &JobManager, claims: &Claims, id: &str) -> bool {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/", axum::routing::get(list_jobs).post(create_job))
         .route("/:id", axum::routing::get(get_job).put(update_job).delete(delete_job))
         .route("/:id/run", axum::routing::post(run_job))

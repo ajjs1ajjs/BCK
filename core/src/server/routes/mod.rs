@@ -25,10 +25,6 @@ mod api_tests;
 
 use axum::response::IntoResponse;
 use std::sync::Arc;
-use std::time::Duration;
-
-use tower::limit::RateLimitLayer;
-
 use axum::Router;
 
 
@@ -37,12 +33,14 @@ use crate::server::AppState;
 /// Routes that do not require authentication.
 pub fn public_api_routes(state: Arc<AppState>) -> Router {
     Router::new()
+        .without_v07_checks()
         .nest("/auth", auth::router())
         .nest("/auth/sso", sso::public_router())
         // Agent endpoints are authenticated with the pre-shared agent token
         // (not a user JWT), so they live outside the user-auth router but are
         // still gated — previously anyone could poll/inject agent tasks.
         .nest("/agents", axum::Router::new()
+            .without_v07_checks()
             .route("/heartbeat", axum::routing::post(agents::heartbeat))
             .route("/:id/tasks/pending", axum::routing::get(agents::poll_pending_tasks))
             .route("/:id/tasks/:task_id/report", axum::routing::post(agents::report_task_status))
@@ -56,6 +54,7 @@ pub fn public_api_routes(state: Arc<AppState>) -> Router {
 /// Routes that require a valid JWT.
 pub fn protected_api_routes(state: Arc<AppState>) -> Router {
     Router::new()
+        .without_v07_checks()
         .nest("/jobs", jobs::router())
         .nest("/repositories", repositories::router())
         .nest("/snapshots", snapshots::router())

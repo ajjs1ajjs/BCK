@@ -103,6 +103,7 @@ pub struct FileEntry {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/vm", axum::routing::post(restore_vm))
         .route("/file", axum::routing::post(restore_file))
         .route("/instant", axum::routing::post(instant_recovery))

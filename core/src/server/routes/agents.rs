@@ -57,6 +57,7 @@ pub struct HeartbeatRequest {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/", axum::routing::get(list_agents))
         .route(
             "/:id",
@@ -311,12 +312,13 @@ pub async fn poll_pending_tasks(
 /// Agent reports the outcome of a task it picked up. The agent can only
 /// report on tasks assigned to it (filter by agent_id) and only valid status
 /// transitions are accepted: pending → running → completed/failed.
+#[axum::debug_handler]
 pub async fn report_task_status(
     State(state): State<Arc<AppState>>,
     Path((id, task_id)): Path<(String, String)>,
-    Json(req): Json<TaskReportRequest>,
     Extension(claims): Extension<Claims>,
-) -> StatusCode {
+    Json(req): Json<TaskReportRequest>,
+) -> Result<StatusCode, StatusCode> {
     let now = chrono::Utc::now().timestamp();
     // Validate status transitions: only `running`, `completed`, `failed` are
     // accepted; reject anything else (was previously "anything → any state").
@@ -330,13 +332,13 @@ pub async fn report_task_status(
                 req.status,
                 task_id
             );
-            return StatusCode::BAD_REQUEST;
+return Err(StatusCode::BAD_REQUEST);
         }
     };
 
     // Validate that the path agent_id matches the authenticated agent ID from JWT
     if id != claims.sub {
-        return StatusCode::FORBIDDEN;
+        return Err(StatusCode::FORBIDDEN);
     }
 
 let result = req.result.map(|r| r.to_string());
@@ -385,11 +387,11 @@ let result = req.result.map(|r| r.to_string());
             )
             .await
             .ok();
-            StatusCode::OK
+            Ok(StatusCode::OK)
         }
         Err(e) => {
             tracing::error!("report agent task: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
@@ -509,7 +511,7 @@ pub async fn heartbeat(
         || id.len() > 128
         || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return StatusCode::BAD_REQUEST;
+        return Err(StatusCode::BAD_REQUEST);
     }
     let now = chrono::Utc::now().timestamp();
     let capabilities = req
@@ -518,74 +520,97 @@ pub async fn heartbeat(
         .map(|caps| serde_json::to_string(&caps).unwrap_or_else(|_| "[]".into()))
         .unwrap_or_else(|| "[]".into());
 
-    let result: Result<(), String> = match &state.db {
-        DbPool::Sqlite(pool) => {
-            sqlx::query(
-                "INSERT INTO agents (id, hostname, ip_address, os_type, os_version, agent_version, status, last_seen, capabilities, tenant_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'online', ?7, ?8, ?9, ?7)
-                 ON CONFLICT(id) DO UPDATE SET
-                    hostname = excluded.hostname,
-                    ip_address = excluded.ip_address,
-                    os_type = excluded.os_type,
-                    os_version = excluded.os_version,
-                    agent_version = excluded.agent_version,
-                    status = 'online',
-                    last_seen = excluded.last_seen,
-                    capabilities = excluded.capabilities",
-            )
+let tenant_id = match &state.db {
+    DbPool::Sqlite(pool) => {
+        sqlx::query_scalar::<_, Option<String>>("SELECT tenant_id FROM agents WHERE id = ?1")
             .bind(&id)
-            .bind(&req.hostname)
-            .bind(&req.ip_address)
-            .bind(&req.os_type)
-            .bind(&req.os_version)
-            .bind(&req.agent_version)
-            .bind(now)
-            .bind(&capabilities)
-            .bind(&tenant_id)
-            .execute(pool)
+            .fetch_optional(pool)
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-        }
-        DbPool::Postgres(pool) => {
-            sqlx::query(
-                "INSERT INTO agents (id, hostname, ip_address, os_type, os_version, agent_version, status, last_seen, capabilities, tenant_id, created_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $7)
-                 ON CONFLICT(id) DO UPDATE SET
-                    hostname = EXCLUDED.hostname,
-                    ip_address = EXCLUDED.ip_address,
-                    os_type = EXCLUDED.os_type,
-                    os_version = EXCLUDED.os_version,
-                    agent_version = EXCLUDED.agent_version,
-                    status = 'online',
-                    last_seen = EXCLUDED.last_seen,
-                    capabilities = EXCLUDED.capabilities",
-            )
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .flatten()
+    }
+    DbPool::Postgres(pool) => {
+        sqlx::query_scalar::<_, Option<String>>("SELECT tenant_id FROM agents WHERE id = $1")
             .bind(&id)
-            .bind(&req.hostname)
-            .bind(&req.ip_address)
-            .bind(&req.os_type)
-            .bind(&req.os_version)
-            .bind(&req.agent_version)
-            .bind(&capabilities)
-            .bind(now)
-            .bind(&tenant_id)
-            .execute(pool)
+            .fetch_optional(pool)
             .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-        }
-    };
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .flatten()
+    }
+};
+
+let result: Result<(), String> = match &state.db {
+    DbPool::Sqlite(pool) => {
+        sqlx::query(
+            "INSERT INTO agents (id, hostname, ip_address, os_type, os_version, agent_version, status, last_seen, capabilities, tenant_id, created_at)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'online', ?7, ?8, ?9, ?7)
+              ON CONFLICT(id) DO UPDATE SET
+                 hostname = excluded.hostname,
+                 ip_address = excluded.ip_address,
+                 os_type = excluded.os_type,
+                 os_version = excluded.os_version,
+                 agent_version = excluded.agent_version,
+                 status = 'online',
+                 last_seen = excluded.last_seen,
+                 capabilities = excluded.capabilities,
+                 tenant_id = excluded.tenant_id",
+        )
+        .bind(&id)
+        .bind(&req.hostname)
+        .bind(&req.ip_address)
+        .bind(&req.os_type)
+        .bind(&req.os_version)
+        .bind(&req.agent_version)
+        .bind(now)
+        .bind(&capabilities)
+        .bind(&tenant_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+    DbPool::Postgres(pool) => {
+        sqlx::query(
+            "INSERT INTO agents (id, hostname, ip_address, os_type, os_version, agent_version, status, last_seen, capabilities, tenant_id, created_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $7)
+              ON CONFLICT(id) DO UPDATE SET
+                 hostname = EXCLUDED.hostname,
+                 ip_address = EXCLUDED.ip_address,
+                 os_type = EXCLUDED.os_type,
+                 os_version = EXCLUDED.os_version,
+                 agent_version = EXCLUDED.agent_version,
+                 status = 'online',
+                 last_seen = EXCLUDED.last_seen,
+                 capabilities = EXCLUDED.capabilities,
+                 tenant_id = EXCLUDED.tenant_id",
+        )
+        .bind(&id)
+        .bind(&req.hostname)
+        .bind(&req.ip_address)
+        .bind(&req.os_type)
+        .bind(&req.os_version)
+        .bind(&req.agent_version)
+        .bind(now)
+        .bind(&capabilities)
+        .bind(&tenant_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+};
 
     match result {
         Ok(()) => {
             // Generate JWT token for this agent
-            let agent_user = crate::auth::User {
-                id: id.clone(),
-                username: req.hostname.clone(),
-                role: crate::auth::UserRole::Agent,
-                tenant_id: tenant_id.clone(),
-            };
+let agent_user = crate::auth::User {
+    id: id.clone(),
+    username: req.hostname.clone(),
+    role: crate::auth::UserRole::Agent,
+    tenant_id: tenant_id.clone(),
+    email: None,
+    enabled: true,
+};
             
             let jwt_token = state
                 .jwt

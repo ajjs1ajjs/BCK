@@ -115,6 +115,7 @@ pub struct VmBackupRequest {
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
+        .without_v07_checks()
         .route("/", axum::routing::get(list_hypervisors).post(add_hypervisor))
         .route(
             "/:id",
