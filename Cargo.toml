@@ -28,3 +28,10 @@ hex = "0.4"
 futures = "0.3"
 cron = "0.12"
 axum = "0.8"
+azure_core = "0.22.0"
+h2 = "0.4.16"
+quick-xml = "0.41.0"
+ring = "0.17.12"
+lru = "0.16.4"
+
+[patch.crates-io]

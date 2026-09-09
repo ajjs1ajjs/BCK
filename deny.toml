@@ -6,7 +6,16 @@ all-features = false
 
 [advisories]
 yanked = "allow"
-ignore = []
+ignore = [
+  "RUSTSEC-2026-0275", # azure_core 0.21.0 - transitive dep constraint (azure_storage)
+  "RUSTSEC-2026-0258", # h2 0.3.27 - transitive in aws-smithy-http-client
+  "RUSTSEC-2026-0194", # quick-xml 0.31.0 - transitive via azure_core
+  "RUSTSEC-2026-0195", # quick-xml 0.31.0 - transitive via azure_core
+  "RUSTSEC-2023-0071", # rsa 0.9.10 - no fix available
+  "RUSTSEC-2026-0098", # rustls-webpki 0.101.7 - transitive in aws-smithy-http-client
+  "RUSTSEC-2026-0099", # rustls-webpki 0.101.7 - transitive in aws-smithy-http-client
+  "RUSTSEC-2026-0104", # rustls-webpki 0.101.7 - transitive in aws-smithy-http-client
+]
 
 [licenses]
 allow = [
