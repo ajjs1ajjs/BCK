@@ -319,6 +319,7 @@ fi
 mkdir -p "$BCK_HOME/bin"
 mkdir -p "$BCK_CONFIG_DIR"
 mkdir -p "$BCK_DATA_DIR"
+mkdir -p "$BCK_DATA_DIR/restore"
 install -m 0755 "$BIN_DIR"/bckd     "$BCK_HOME/bin/" 2>/dev/null || true
 install -m 0755 "$BIN_DIR"/bck-agent "$BCK_HOME/bin/" 2>/dev/null || true
 install -m 0755 "$BIN_DIR"/bck      "$BCK_HOME/bin/" 2>/dev/null || true
@@ -352,6 +353,9 @@ migrate = true
 default_path = "${BCK_DATA_DIR}/backups"
 temp_path = "${BCK_DATA_DIR}/tmp"
 
+# SEC-001: file-level restores are confined to this directory.
+restore_root = "${BCK_DATA_DIR}/restore"
+
 [encryption]
 algorithm = "aes-256-gcm"
 
@@ -362,6 +366,12 @@ EOF
     log "Created default config at $CONFIG"
 else
     log "Config exists — preserving it."
+    # Migrate configs predating 0.9.28: ensure restore_root exists so file
+    # restores work and the daemon never depends on the working directory.
+    if ! grep -Eq '^\s*restore_root\s*=' "$CONFIG" 2>/dev/null; then
+        printf '\n# SEC-001: file-level restores are confined to this directory (added by installer).\nrestore_root = "%s/restore"\n' "$BCK_DATA_DIR" >> "$CONFIG"
+        log "Added restore_root to existing config at $CONFIG"
+    fi
 fi
 
 # Symlink binaries into PATH
@@ -398,7 +408,18 @@ EOF
     systemctl daemon-reload 2>/dev/null || true
     systemctl enable bckd 2>/dev/null || true
     systemctl restart bckd 2>/dev/null || true
-    log "systemd service 'bckd' started. Status: systemctl status bckd"
+    sleep 2
+    if systemctl is-active --quiet bckd 2>/dev/null; then
+        log "systemd service 'bckd' started. Status: systemctl status bckd"
+    else
+        warn "systemd service 'bckd' is NOT running after restart. Recent log:"
+        journalctl -u bckd -n 15 --no-pager 2>/dev/null || true
+        warn "Common causes:"
+        warn "  - Refusing to bind ... without TLS: set server.tls_cert/server.tls_key, or add"
+        warn "    [Service] Environment=BCK_ALLOW_PLAINTEXT=1 via 'systemctl edit bckd' (LAN without TLS)."
+        warn "  - Bad paths/permissions in $CONFIG (data dirs must be writable by $BCK_USER)."
+        fail "bckd failed to start — fix the issue above and re-run the installer."
+    fi
     # On a fresh install the daemon generates the admin password and writes it
     # to a bootstrap file; surface it so the operator does not have to grep
     # the journal. The file is removed after first login / password change.

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.29] - 2026-09-10
+
+### Виправлено (автодовстановлення)
+
+- **Критично (0.9.28 regression)**: демон crash-loop'ився (`Read-only file system`) на старих конфігах без `restore_root` — відносний дефолт `./data/restore` створювався від `/` під `ProtectSystem=strict`.
+- `AppConfig::restore_root_resolved()`: legacy `./data/restore` резолвиться в `<datadir>/restore`; створення директорії best-effort (warn, не crash) — restore fail closed, демон стартує завжди.
+- **Інсталер (sh + ps1)**: автостворення `<data>/restore`, авто-міграція `restore_root` в існуючі конфіги, перевірка що сервіс реально Running після рестарту (з діагностикою: TLS-bind, шляхи/права).
+- Тести: 214/214 passing.
+
 ## [0.9.28] - 2026-09-10
 
 ### Безпека (production audit fixes)

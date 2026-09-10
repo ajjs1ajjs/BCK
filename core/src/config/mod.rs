@@ -112,6 +112,39 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    /// Absolute restore root for file-level restores.
+    ///
+    /// - Absolute values are used as-is.
+    /// - The legacy `./data/restore` default (present in configs written by
+    ///   0.9.28 and in old configs that predate the field) resolves to
+    ///   `<parent of storage.default_path>/restore` (usually the data dir),
+    ///   so production installs keep working regardless of the daemon's
+    ///   working directory (systemd runs with `/` as CWD + read-only `/`).
+    /// - Any other relative value resolves against the CWD when that
+    ///   directory exists (dev layout), otherwise against the parent of
+    ///   `storage.default_path`.
+    pub fn restore_root_resolved(&self) -> String {
+        let rel = self.restore_root.trim();
+        let p = std::path::Path::new(rel);
+        if p.is_absolute() {
+            return rel.to_string();
+        }
+        let data_parent: std::path::PathBuf = self
+            .storage
+            .default_path
+            .parent()
+            .map(|pp| pp.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        if rel == "./data/restore" || rel == "data/restore" {
+            return data_parent.join("restore").to_string_lossy().to_string();
+        }
+        let cwd_joined = std::path::Path::new(".").join(p);
+        if cwd_joined.is_dir() {
+            return cwd_joined.to_string_lossy().to_string();
+        }
+        data_parent.join(p).to_string_lossy().to_string()
+    }
+
     pub fn load(path: &str) -> Result<Self, anyhow::Error> {
         let content = std::fs::read_to_string(path)?;
         let config: AppConfig = toml::from_str(&content)?;
@@ -125,5 +158,35 @@ impl AppConfig {
         }
         std::fs::write(path, content)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_default_resolves_beside_backups() {
+        // Old configs (and the 0.9.28 default) carry "./data/restore".
+        // With default storage (./data/backups) this resolves to ./data/restore —
+        // and with a production data dir to <datadir>/restore, never to CWD-/.
+        // (Compared as PathBuf: separators differ per OS.)
+        let mut cfg = AppConfig::default();
+        assert_eq!(
+            PathBuf::from(cfg.restore_root_resolved()),
+            PathBuf::from("./data").join("restore")
+        );
+        cfg.storage.default_path = PathBuf::from("/var/lib/bck/backups");
+        assert_eq!(
+            PathBuf::from(cfg.restore_root_resolved()),
+            PathBuf::from("/var/lib/bck/restore")
+        );
+    }
+
+    #[test]
+    fn absolute_restore_root_is_used_as_is() {
+        let mut cfg = AppConfig::default();
+        cfg.restore_root = "/srv/bck/restore".into();
+        assert_eq!(cfg.restore_root_resolved(), "/srv/bck/restore");
     }
 }

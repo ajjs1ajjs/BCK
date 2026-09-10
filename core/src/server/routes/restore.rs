@@ -42,7 +42,7 @@ fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
 /// shared allow-list gate (`crate::restore::gate_restore_target`) so REST,
 /// gRPC and portal approve paths enforce identical semantics.
 fn validate_restore_target(state: &AppState, target: &str) -> Result<(), String> {
-    crate::restore::gate_restore_target(target, &state.config.restore_root).map(|_| ()).map_err(|e| e.to_string())
+    crate::restore::gate_restore_target(target, &state.config.restore_root_resolved()).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Load a snapshot and enforce the caller's tenant on it.

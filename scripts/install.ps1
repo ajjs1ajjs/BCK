@@ -295,6 +295,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $BckDataDir "config") -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $BckDataDir "backups") -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $BckDataDir "tmp") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $BckDataDir "restore") -Force | Out-Null
 
     foreach ($b in $BinNames) {
         $src = Join-Path $BinDir $b
@@ -332,6 +333,9 @@ migrate = true
 default_path = "$backupsWin"
 temp_path = "$tmpWin"
 
+# SEC-001: file-level restores are confined to this directory.
+restore_root = "$dataFwd/restore"
+
 [encryption]
 algorithm = "aes-256-gcm"
 
@@ -342,6 +346,15 @@ json = false
         Log "Created default config at $Config"
     } else {
         Log "Config exists - preserving it."
+        # Migrate configs predating 0.9.28: ensure restore_root exists.
+        $cfgText = Get-Content $Config -Raw -ErrorAction SilentlyContinue
+        if ($cfgText -notmatch '(?m)^\s*restore_root\s*=') {
+            $dataFwd = $BckDataDir.Replace('\', '/')
+            Add-Content -Path $Config -Encoding UTF8 -Value ""
+            Add-Content -Path $Config -Encoding UTF8 -Value "# SEC-001: file-level restores are confined to this directory (added by installer)."
+            Add-Content -Path $Config -Encoding UTF8 -Value "restore_root = `"$dataFwd/restore`""
+            Log "Added restore_root to existing config at $Config"
+        }
     }
 
     # Add binaries to machine PATH
@@ -369,7 +382,15 @@ json = false
         sc.exe failure bckd reset= 86400 actions= restart/5000 | Out-Null
     }
     Start-Service -Name "bckd" -ErrorAction SilentlyContinue
-    Log "Service 'bckd' registered. Status: Get-Service bckd"
+    Start-Sleep -Seconds 2
+    $svcState = (Get-Service -Name "bckd" -ErrorAction SilentlyContinue).Status
+    if ($svcState -eq "Running") {
+        Log "Service 'bckd' registered and running. Status: Get-Service bckd"
+    } else {
+        Warn "Service 'bckd' is NOT running (status: $svcState)."
+        Warn "Common causes: Refusing to bind without TLS (set tls_cert/tls_key or bind 127.0.0.1), bad paths in $Config."
+        Warn "Check: Get-WinEvent -LogName Application -MaxEvents 20 | Where-Object { $_.Message -like '*bckd*' }"
+    }
 
     # Bootstrap admin password (fresh installs only)
     $BootstrapFile = Join-Path $BckDataDir "bootstrap_admin.txt"

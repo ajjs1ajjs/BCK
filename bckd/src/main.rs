@@ -67,10 +67,19 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting BCK Enterprise Backup Daemon");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
-    // Ensure directories exist (SEC-001: restore root must exist or restores fail).
+    // Ensure directories exist.
     std::fs::create_dir_all(&config.storage.default_path)?;
     std::fs::create_dir_all(&config.storage.temp_path)?;
-    std::fs::create_dir_all(&config.restore_root)?;
+    // SEC-001: restore root is best-effort — a missing/unwritable directory
+    // must reject restores (fail closed), never crash-loop the daemon
+    // (e.g. legacy relative default under a read-only CWD).
+    let restore_root = config.restore_root_resolved();
+    if let Err(e) = std::fs::create_dir_all(&restore_root) {
+        warn!(
+            "Could not create restore_root {}: {} — file restores will be rejected until it exists and is writable",
+            restore_root, e
+        );
+    }
 
     // Connect to database
     info!("Connecting to database...");
@@ -121,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
         )?,
         dr: bck_core::dr::DrOrchestrator::new(),
         tenants: bck_core::enterprise::multitenant::TenantManager::new(db),
-        restore_requests: bck_core::restore::requests::RestoreRequestManager::new(config.restore_root.clone()),
+        restore_requests: bck_core::restore::requests::RestoreRequestManager::new(restore_root.clone()),
     });
 
     // Start scheduler
