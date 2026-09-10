@@ -2,6 +2,7 @@
 name = "bckd"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "BCK Enterprise Backup Daemon"
 
 [dependencies]
