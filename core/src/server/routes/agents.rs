@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 
-use crate::auth::{jwt::Claims, User};
+use crate::auth::jwt::Claims;
 use crate::auth::policy::{can_manage_agents, tenant_allows};
 use crate::db::DbPool;
 use crate::server::AppState;
@@ -60,11 +60,11 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .without_v07_checks()
         .route("/", axum::routing::get(list_agents))
         .route(
-            "/:id",
+            "/{id}",
             axum::routing::get(get_agent).delete(delete_agent),
         )
-        .route("/:id/tasks", axum::routing::post(create_agent_task))
-        .route("/:id/tasks", axum::routing::get(list_agent_tasks))
+        .route("/{id}/tasks", axum::routing::post(create_agent_task))
+        .route("/{id}/tasks", axum::routing::get(list_agent_tasks))
 }
 
 #[derive(Deserialize)]
@@ -124,7 +124,7 @@ pub async fn create_agent_task(
     let task_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now().timestamp();
     // Strip sensitive keys from the payload before persistence so an
-    // operator who later calls /agents/:id/tasks does not see encryption
+    // operator who later calls /agents/{id}/tasks does not see encryption
     // material they themselves set. The agent fetches the full payload via
     // the gated /tasks/pending polling endpoint (which is agent-token
     // authenticated and not exposed to user-role APIs).

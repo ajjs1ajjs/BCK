@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.28] - 2026-09-10
+
+### Безпека (production audit fixes)
+
+- **SEC-001**: `restore_root` в конфігу (дефолт `./data/restore`, автостворення директорії) — restore працює з коробки; gRPC/REST/portal використовують один гейт.
+- **SEC-002**: відмова старту на `0.0.0.0`/`::` без TLS без `BCK_ALLOW_PLAINTEXT=1`.
+- **SEC-003**: bounded JWT revocation map (10k, evict expired + soonest-expiring).
+- **SEC-004**: constant-time порівняння agent token без length oracle (REST + gRPC).
+- **SEC-005**: SSRF — DNS-імена endpoint'ів відхиляються за замовчуванням (`BCK_ALLOW_DNS_ENDPOINTS=1` для довіреного DNS).
+- **SEC-006**: TTL 24h для `bootstrap_admin.txt` + автоочистка.
+- **Agent auth**: middleware приймає JWT або pre-shared токен (heartbeat реєстрація працює).
+- **BUG-001**: scheduler на wall-clock UTC без дрейфу; **BUG-003**: логування помилок decrypt storage-секретів; **PERF-001**: batch upsert VMs в одній транзакції.
+- **OPS-002**: `x-request-id` (Set + Propagate) для кореляції логів; tower-http `request-id` feature.
+- **Axum 0.8**: міграція роутів `:id` → `{id}` (прибрано паніки `without_v07_checks`).
+- **TLS**: полагоджено `serve_tls` під tokio-rustls 0.24 / rustls 0.21.
+
+### Тести
+
+- 212/212 passing (`cargo test -p bck-core --lib`).
+
 ## [0.8.6] - 2026-09-02
 
 ### Безпека (remaining audit)

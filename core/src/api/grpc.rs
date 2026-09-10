@@ -306,8 +306,8 @@ impl BackupEngine for BackupEngineImpl {
     ) -> Result<Response<Self::RestoreFileStream>, Status> {
         let req = request.into_inner();
         // SEC-001: same allow-list gate as the REST endpoint. The daemon must
-        // never write outside BCK_RESTORE_ROOT, regardless of API surface.
-        if let Err(e) = crate::restore::gate_restore_target(&req.target_path) {
+        // never write outside restore_root, regardless of API surface.
+        if let Err(e) = crate::restore::gate_restore_target(&req.target_path, &self.state.config.restore_root) {
             warn!("gRPC restore_file rejected target_path: {}", e);
             return Err(Status::invalid_argument(format!("target_path rejected: {e}")));
         }

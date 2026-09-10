@@ -280,12 +280,12 @@ fn normalize_manifest_path(p: &str) -> String {
 /// Gate a user-supplied restore `target_path` (the base directory restore
 /// output is written to).
 ///
-/// SEC-001: allow-list only. `BCK_RESTORE_ROOT` must be set; the target must
-/// resolve inside it. System block-lists are intentionally NOT used here —
+/// SEC-001: allow-list only. The target must resolve inside the configured
+/// `restore_root` from AppConfig. System block-lists are intentionally NOT used here —
 /// they cannot enumerate every sensitive path and gave a false sense of
 /// safety (the previous `canon == dir` check let `/etc/<file>` through).
 /// Returns the canonicalized base directory on success.
-pub fn gate_restore_target(target: &str) -> Result<std::path::PathBuf> {
+pub fn gate_restore_target(target: &str, restore_root: &str) -> Result<std::path::PathBuf> {
     let trimmed = target.trim();
     if trimmed.is_empty() {
         anyhow::bail!("target_path must not be empty");
@@ -293,12 +293,10 @@ pub fn gate_restore_target(target: &str) -> Result<std::path::PathBuf> {
     if trimmed.chars().any(|c| c.is_control()) {
         anyhow::bail!("target_path contains control characters");
     }
-    let root = std::env::var("BCK_RESTORE_ROOT")
-        .map_err(|_| anyhow!("restore is disabled: BCK_RESTORE_ROOT is not configured"))?;
-    if root.trim().is_empty() {
-        anyhow::bail!("restore is disabled: BCK_RESTORE_ROOT is not configured");
+    if restore_root.trim().is_empty() {
+        anyhow::bail!("restore is disabled: restore_root is not configured");
     }
-    let root_path = std::path::Path::new(&root);
+    let root_path = std::path::Path::new(restore_root);
     if !root_path.is_dir() {
         anyhow::bail!("restore root is not a directory");
     }
@@ -363,7 +361,7 @@ pub(crate) fn lock_gate_env_for_test() -> std::sync::MutexGuard<'static, ()> {
     RESTORE_GATE_TEST_LOCK
         .get_or_init(|| std::sync::Mutex::new(()))
         .lock()
-        .unwrap()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 /// Join a manifest path onto a restore root, rejecting any path that could
@@ -447,43 +445,33 @@ mod tests {
     }
 
     // SEC-001 regression tests: the allow-list gate must reject everything
-    // outside BCK_RESTORE_ROOT, including the old `/etc/<file>` bypass.
+    // outside restore_root, including the old `/etc/<file>` bypass.
     #[cfg(test)]
     fn gate_lock() -> std::sync::MutexGuard<'static, ()> {
         lock_gate_env_for_test()
-    }
-    fn with_restore_root(dir: &std::path::Path) -> String {
-        // SAFETY: tests that touch the env hold `gate_lock()` (process-wide),
-        // and CI runs tests single-threaded.
-        unsafe { std::env::set_var("BCK_RESTORE_ROOT", dir) };
-        // Name the env-var value; callers pass concrete targets.
-        dir.to_string_lossy().into_owned()
     }
 
     #[test]
     fn gate_rejects_outside_root_and_etc_files() {
         let _g = gate_lock();
         let root = temp_base();
-        let _ = with_restore_root(&root);
         // Inside (existing + not-yet-existing subdir) is accepted.
-        assert!(gate_restore_target(&root.to_string_lossy()).is_ok());
-        assert!(gate_restore_target(&root.join("sub").to_string_lossy()).is_ok());
+        assert!(gate_restore_target(&root.to_string_lossy(), &root.to_string_lossy()).is_ok());
+        assert!(gate_restore_target(&root.join("sub").to_string_lossy(), &root.to_string_lossy()).is_ok());
         // Outside the root — including the classic system-file bypass — fails.
-        assert!(gate_restore_target("/etc/passwd").is_err());
-        assert!(gate_restore_target("/etc/cron.d").is_err());
-        assert!(gate_restore_target("/tmp").is_err());
-        assert!(gate_restore_target("../escape").is_err());
-        assert!(gate_restore_target("").is_err());
-        unsafe { std::env::remove_var("BCK_RESTORE_ROOT") };
+        assert!(gate_restore_target("/etc/passwd", &root.to_string_lossy()).is_err());
+        assert!(gate_restore_target("/etc/cron.d", &root.to_string_lossy()).is_err());
+        assert!(gate_restore_target("/tmp", &root.to_string_lossy()).is_err());
+        assert!(gate_restore_target("../escape", &root.to_string_lossy()).is_err());
+        assert!(gate_restore_target("", &root.to_string_lossy()).is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn gate_requires_root_configured() {
         let _g = gate_lock();
-        unsafe { std::env::remove_var("BCK_RESTORE_ROOT") };
         let base = temp_base();
-        assert!(gate_restore_target(&base.to_string_lossy()).is_err());
+        assert!(gate_restore_target(&base.to_string_lossy(), "").is_err());
         std::fs::remove_dir_all(&base).ok();
     }
 }

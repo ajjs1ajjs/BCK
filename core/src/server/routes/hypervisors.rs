@@ -118,13 +118,13 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .without_v07_checks()
         .route("/", axum::routing::get(list_hypervisors).post(add_hypervisor))
         .route(
-            "/:id",
+            "/{id}",
             axum::routing::get(get_hypervisor).delete(delete_hypervisor),
         )
-        .route("/:id/test", axum::routing::post(test_hypervisor))
-        .route("/:id/vms", axum::routing::get(list_vms))
+        .route("/{id}/test", axum::routing::post(test_hypervisor))
+        .route("/{id}/vms", axum::routing::get(list_vms))
         .route(
-            "/:id/vms/:vm_ref/backup",
+            "/{id}/vms/{vm_ref}/backup",
             axum::routing::post(start_vm_backup),
         )
 }
@@ -407,18 +407,12 @@ async fn list_vms(
         StatusCode::BAD_GATEWAY
     })?;
 
-    let mut responses = Vec::new();
-    for vm in &vms {
-        upsert_vm(&state.db, &id, vm)
-            .await
-            .map_err(|e| {
-                tracing::error!("persist VM {}: {}", vm.name, e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-    }
-    for vm in &vms {
-        responses.push(vm_to_response(vm, &id));
-    }
+    // PERF-001: batch upserts in a single transaction (was N*2 round-trips).
+    upsert_vms_batch(&state.db, &id, &vms).await.map_err(|e| {
+        tracing::error!("persist VMs on {}: {}", model.host, e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let responses: Vec<VmResponse> = vms.iter().map(|vm| vm_to_response(vm, &id)).collect();
 
     crate::db::record_event(
         &state.db,
@@ -541,8 +535,29 @@ fn vm_to_response(vm: &VmInfo, hypervisor_id: &str) -> VmResponse {
     }
 }
 
-async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> {
-    let t = chrono::Utc::now().timestamp();
+/// PERF-001: batch upsert all discovered VMs in a single transaction.
+/// Previously each VM cost SELECT + INSERT/UPDATE round-trips (N+1).
+async fn upsert_vms_batch(db: &DbPool, hypervisor_id: &str, vms: &[VmInfo]) -> Result<()> {
+    match db {
+        DbPool::Sqlite(pool) => {
+            let mut tx = pool.begin().await?;
+            for vm in vms {
+                upsert_vm_sqlite_tx(&mut tx, hypervisor_id, vm).await?;
+            }
+            tx.commit().await?;
+        }
+        DbPool::Postgres(pool) => {
+            let mut tx = pool.begin().await?;
+            for vm in vms {
+                upsert_vm_postgres_tx(&mut tx, hypervisor_id, vm).await?;
+            }
+            tx.commit().await?;
+        }
+    }
+    Ok(())
+}
+
+fn vm_row(vm: &VmInfo) -> (i64, Option<String>) {
     let disk_gb = vm
         .disks
         .iter()
@@ -553,104 +568,73 @@ async fn upsert_vm(db: &DbPool, hypervisor_id: &str, vm: &VmInfo) -> Result<()> 
         PowerState::Suspended => Some("suspended".to_string()),
         PowerState::PoweredOff => Some("off".to_string()),
     };
+    (disk_gb, power_state)
+}
 
-    let existing: Option<String> = match db {
-        DbPool::Sqlite(pool) => {
-            sqlx::query_scalar("SELECT id FROM vms WHERE hypervisor_id = ?1 AND mo_ref = ?2")
-                .bind(hypervisor_id)
-                .bind(&vm.mo_ref)
-                .fetch_optional(pool)
-                .await?
-        }
-        DbPool::Postgres(pool) => {
-            sqlx::query_scalar("SELECT id FROM vms WHERE hypervisor_id = $1 AND mo_ref = $2")
-                .bind(hypervisor_id)
-                .bind(&vm.mo_ref)
-                .fetch_optional(pool)
-                .await?
-        }
-    };
+async fn upsert_vm_sqlite_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    hypervisor_id: &str,
+    vm: &VmInfo,
+) -> Result<()> {
+    use sqlx::Row;
+    let t = chrono::Utc::now().timestamp();
+    let (disk_gb, power_state) = vm_row(vm);
+    let existing: Option<String> = sqlx::query("SELECT id FROM vms WHERE hypervisor_id = ?1 AND mo_ref = ?2")
+        .bind(hypervisor_id)
+        .bind(&vm.mo_ref)
+        .map(|r: sqlx::sqlite::SqliteRow| r.get(0))
+        .fetch_optional(&mut **tx)
+        .await?;
+    if let Some(vm_id) = existing {
+        sqlx::query(
+            "UPDATE vms SET name = ?1, power_state = ?2, os = ?3, cpu_count = ?4, ram_mb = ?5, disk_gb = ?6, updated_at = ?7 WHERE id = ?8",
+        )
+        .bind(&vm.name).bind(&power_state).bind(&vm.os).bind(vm.cpu_count)
+        .bind(vm.ram_mb).bind(disk_gb).bind(t).bind(&vm_id)
+        .execute(&mut **tx).await?;
+    } else {
+        let id = format!("{}-{}", hypervisor_id, vm.mo_ref);
+        sqlx::query(
+            "INSERT INTO vms (id, name, hypervisor_id, mo_ref, power_state, os, cpu_count, ram_mb, disk_gb, protection_status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'unprotected', ?10, ?10)",
+        )
+        .bind(&id).bind(&vm.name).bind(hypervisor_id).bind(&vm.mo_ref)
+        .bind(&power_state).bind(&vm.os).bind(vm.cpu_count).bind(vm.ram_mb)
+        .bind(disk_gb).bind(t)
+        .execute(&mut **tx).await?;
+    }
+    Ok(())
+}
 
-    match existing {
-        Some(vm_id) => match db {
-            DbPool::Sqlite(pool) => {
-                sqlx::query(
-                    "UPDATE vms SET name = ?1, power_state = ?2, os = ?3, cpu_count = ?4,
-                            ram_mb = ?5, disk_gb = ?6, updated_at = ?7 WHERE id = ?8",
-                )
-                .bind(&vm.name)
-                .bind(&power_state)
-                .bind(&vm.os)
-                .bind(vm.cpu_count)
-                .bind(vm.ram_mb)
-                .bind(disk_gb)
-                .bind(t)
-                .bind(&vm_id)
-                .execute(pool)
-                .await?;
-            }
-            DbPool::Postgres(pool) => {
-                sqlx::query(
-                    "UPDATE vms SET name = $1, power_state = $2, os = $3, cpu_count = $4,
-                            ram_mb = $5, disk_gb = $6, updated_at = $7 WHERE id = $8",
-                )
-                .bind(&vm.name)
-                .bind(&power_state)
-                .bind(&vm.os)
-                .bind(vm.cpu_count)
-                .bind(vm.ram_mb)
-                .bind(disk_gb)
-                .bind(t)
-                .bind(&vm_id)
-                .execute(pool)
-                .await?;
-            }
-        },
-        None => {
-            let id = format!("{}-{}", hypervisor_id, vm.mo_ref);
-            match db {
-                DbPool::Sqlite(pool) => {
-                    sqlx::query(
-                        "INSERT INTO vms
-                         (id, name, hypervisor_id, mo_ref, power_state, os, cpu_count, ram_mb,
-                          disk_gb, protection_status, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'unprotected', ?10, ?10)",
-                    )
-                    .bind(&id)
-                    .bind(&vm.name)
-                    .bind(hypervisor_id)
-                    .bind(&vm.mo_ref)
-                    .bind(&power_state)
-                    .bind(&vm.os)
-                    .bind(vm.cpu_count)
-                    .bind(vm.ram_mb)
-                    .bind(disk_gb)
-                    .bind(t)
-                    .execute(pool)
-                    .await?;
-                }
-                DbPool::Postgres(pool) => {
-                    sqlx::query(
-                        "INSERT INTO vms
-                         (id, name, hypervisor_id, mo_ref, power_state, os, cpu_count, ram_mb,
-                          disk_gb, protection_status, created_at, updated_at)
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unprotected', $10, $10)",
-                    )
-                    .bind(&id)
-                    .bind(&vm.name)
-                    .bind(hypervisor_id)
-                    .bind(&vm.mo_ref)
-                    .bind(&power_state)
-                    .bind(&vm.os)
-                    .bind(vm.cpu_count)
-                    .bind(vm.ram_mb)
-                    .bind(disk_gb)
-                    .bind(t)
-                    .execute(pool)
-                    .await?;
-                }
-            }
-        }
+async fn upsert_vm_postgres_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    hypervisor_id: &str,
+    vm: &VmInfo,
+) -> Result<()> {
+    use sqlx::Row;
+    let t = chrono::Utc::now().timestamp();
+    let (disk_gb, power_state) = vm_row(vm);
+    let existing: Option<String> = sqlx::query("SELECT id FROM vms WHERE hypervisor_id = $1 AND mo_ref = $2")
+        .bind(hypervisor_id)
+        .bind(&vm.mo_ref)
+        .map(|r: sqlx::postgres::PgRow| r.get(0))
+        .fetch_optional(&mut **tx)
+        .await?;
+    if let Some(vm_id) = existing {
+        sqlx::query(
+            "UPDATE vms SET name = $1, power_state = $2, os = $3, cpu_count = $4, ram_mb = $5, disk_gb = $6, updated_at = $7 WHERE id = $8",
+        )
+        .bind(&vm.name).bind(&power_state).bind(&vm.os).bind(vm.cpu_count)
+        .bind(vm.ram_mb).bind(disk_gb).bind(t).bind(&vm_id)
+        .execute(&mut **tx).await?;
+    } else {
+        let id = format!("{}-{}", hypervisor_id, vm.mo_ref);
+        sqlx::query(
+            "INSERT INTO vms (id, name, hypervisor_id, mo_ref, power_state, os, cpu_count, ram_mb, disk_gb, protection_status, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'unprotected', $10, $10)",
+        )
+        .bind(&id).bind(&vm.name).bind(hypervisor_id).bind(&vm.mo_ref)
+        .bind(&power_state).bind(&vm.os).bind(vm.cpu_count).bind(vm.ram_mb)
+        .bind(disk_gb).bind(t)
+        .execute(&mut **tx).await?;
     }
     Ok(())
 }

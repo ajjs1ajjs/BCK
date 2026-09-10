@@ -546,8 +546,9 @@ impl VSphereConnector {
 }
 
 fn parse_changed_disk_areas_response(xml: &str) -> Result<Vec<ChangedBlock>> {
-    use quick_xml::events::Event;
-    use quick_xml::Reader;
+use quick_xml::events::Event;
+use quick_xml::Reader;
+use quick_xml::escape::unescape;
 
     let mut reader = Reader::from_str(xml);
     let mut buf = Vec::new();
@@ -571,7 +572,8 @@ fn parse_changed_disk_areas_response(xml: &str) -> Result<Vec<ChangedBlock>> {
                 }
             }
             Ok(Event::Text(e)) => {
-                if let Ok(text) = e.unescape() {
+                let text = String::from_utf8_lossy(e.as_ref());
+                if let Ok(text) = unescape(&text) {
                     if in_offset { current_offset = text.parse().unwrap_or(0); }
                     if in_length { current_length = text.parse().unwrap_or(0); }
                 }

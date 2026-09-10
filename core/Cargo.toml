@@ -14,7 +14,7 @@ tokio-stream = "0.1"
 # Web server (Axum)
 axum = { workspace = true, features = ["macros"] }
 tower = "0.5"
-tower-http = { version = "0.7", features = ["cors", "fs", "trace", "compression-gzip", "limit"] }
+tower-http = { version = "0.7", features = ["cors", "fs", "trace", "compression-gzip", "limit", "request-id"] }
 hyper = "1"
 
 # gRPC
@@ -24,6 +24,7 @@ tonic-prost = { workspace = true }
 
 # Database
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "sqlite", "uuid", "chrono", "migrate"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Serialization
 serde = { workspace = true }
@@ -58,7 +59,7 @@ reqwest = { version = "0.12", features = ["stream", "json"] }
 # confusion / authorization bypass via malformed claims).
 jsonwebtoken = { version = ">=10.3.0", default-features = false, features = ["rust_crypto"] }
 argon2 = "0.5"
-ldap3 = { version = "0.12.1", default-features = false, features = ["sync", "tls-rustls"] }
+ldap3 = { version = "0.12.1", default-features = false, features = ["sync", "tls-rustls-ring"] }
 
 # Config
 toml = "0.8"

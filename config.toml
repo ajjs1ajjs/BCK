@@ -11,6 +11,8 @@ web_ui_dir = "./web-ui/dist"
 # TLS (optional; otherwise terminate TLS at a reverse proxy):
 # tls_cert = "/etc/bck/tls/fullchain.pem"
 # tls_key = "/etc/bck/tls/privkey.pem"
+# SEC-002: set BCK_ALLOW_PLAINTEXT=1 to allow binding to 0.0.0.0/:: without TLS.
+# This is NOT recommended for production.
 
 [database]
 url = "sqlite://./data/bck.db?mode=rwc"
@@ -20,6 +22,10 @@ migrate = true
 [storage]
 default_path = "./data/backups"
 temp_path = "./data/tmp"
+
+# SEC-001: root directory for file-level restores. Restores are confined
+# to this directory. Default enables restores out of the box.
+restore_root = "./data/restore"
 
 [encryption]
 # Leave empty to auto-generate the key under data/keys/encryption.key.

@@ -42,8 +42,8 @@ pub fn public_api_routes(state: Arc<AppState>) -> Router {
         .nest("/agents", axum::Router::new()
             .without_v07_checks()
             .route("/heartbeat", axum::routing::post(agents::heartbeat))
-            .route("/:id/tasks/pending", axum::routing::get(agents::poll_pending_tasks))
-            .route("/:id/tasks/:task_id/report", axum::routing::post(agents::report_task_status))
+            .route("/{id}/tasks/pending", axum::routing::get(agents::poll_pending_tasks))
+            .route("/{id}/tasks/{task_id}/report", axum::routing::post(agents::report_task_status))
             .route_layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 crate::server::middleware::agent_auth::agent_auth_middleware,

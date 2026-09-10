@@ -4,9 +4,33 @@ use chrono::Utc;
 
 use super::User;
 
+/// SEC-003: bound the in-memory revocation map to prevent unbounded growth.
+const MAX_REVOKED_TOKENS: usize = 10_000;
+
 fn revoked_map() -> &'static dashmap::DashMap<String, i64> {
     static MAP: std::sync::OnceLock<dashmap::DashMap<String, i64>> = std::sync::OnceLock::new();
     MAP.get_or_init(dashmap::DashMap::new)
+}
+
+fn bound_revoked_map() {
+    let map = revoked_map();
+    if map.len() <= MAX_REVOKED_TOKENS {
+        return;
+    }
+    let now = chrono::Utc::now().timestamp();
+    // First drop expired entries.
+    map.retain(|_, exp| *exp > now);
+    if map.len() <= MAX_REVOKED_TOKENS {
+        return;
+    }
+    // Still overfull: drop a batch of the soonest-expiring entries to
+    // keep memory bounded (persistent DB table remains authoritative).
+    let mut entries: Vec<(String, i64)> = map.iter().map(|e| (e.key().clone(), *e.value())).collect();
+    entries.sort_by_key(|(_, exp)| *exp);
+    let to_drop = map.len() - MAX_REVOKED_TOKENS + 1000;
+    for (k, _) in entries.into_iter().take(to_drop) {
+        map.remove(&k);
+    }
 }
 fn is_revoked(token: &str) -> bool {
     let now = chrono::Utc::now().timestamp();
@@ -30,9 +54,8 @@ fn revoke_token(secret: &[u8], token: &str) {
     .map(|d| d.claims.exp as i64)
     .unwrap_or_else(|| chrono::Utc::now().timestamp() + 24 * 3600);
     revoked_map().insert(token.to_string(), exp);
-    // Prune expired entries opportunistically (keep map bounded)
-    let now = chrono::Utc::now().timestamp();
-    revoked_map().retain(|_, exp| *exp > now);
+    // Prune expired entries opportunistically + enforce hard bound (keep map bounded)
+    bound_revoked_map();
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,7 +131,7 @@ impl JwtManager {
     /// Returns the number of entries removed.
     pub fn cleanup_revoked(&self) -> usize {
         let now = chrono::Utc::now().timestamp();
-        let mut map = revoked_map();
+        let map = revoked_map();
         let initial_len = map.len();
         map.retain(|_, exp| *exp > now);
         let final_len = map.len();

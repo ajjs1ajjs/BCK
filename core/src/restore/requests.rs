@@ -41,12 +41,14 @@ pub struct RestoreRequest {
 /// Self-service restore request manager.
 pub struct RestoreRequestManager {
     requests: Arc<RwLock<Vec<RestoreRequest>>>,
+    restore_root: String,
 }
 
 impl RestoreRequestManager {
-    pub fn new() -> Self {
+    pub fn new(restore_root: impl Into<String>) -> Self {
         Self {
             requests: Arc::new(RwLock::new(Vec::new())),
+            restore_root: restore_root.into(),
         }
     }
 
@@ -65,7 +67,7 @@ impl RestoreRequestManager {
         }
         // SEC-001: gate at submit time so obviously-outside roots never enter
         // the queue. Re-checked at approve time (root may change in between).
-        if let Err(e) = super::gate_restore_target(target_path) {
+        if let Err(e) = super::gate_restore_target(target_path, &self.restore_root) {
             return Err(anyhow!("target_path rejected: {e}"));
         }
         let request = RestoreRequest {
@@ -112,13 +114,13 @@ impl RestoreRequestManager {
 
     /// Approve a pending request.
     pub async fn approve(&self, id: &str, decided_by: &str, note: &str) -> Result<bool> {
-        // SEC-001: re-gate at approve time (TOCTOU: BCK_RESTORE_ROOT or the
+        // SEC-001: re-gate at approve time (TOCTOU: restore_root or the
         // filesystem may have changed between submit and approve).
         let target = self.requests.read().await.iter()
             .find(|r| r.id == id)
             .map(|r| r.target_path.clone());
         if let Some(t) = target {
-            if let Err(e) = super::gate_restore_target(&t) {
+            if let Err(e) = super::gate_restore_target(&t, &self.restore_root) {
                 return Err(anyhow!("target_path rejected at approve time: {e}"));
             }
         }

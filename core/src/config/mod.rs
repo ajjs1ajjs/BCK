@@ -13,6 +13,11 @@ pub struct AppConfig {
     /// persists one on first start.
     #[serde(default)]
     pub agent_token: Option<String>,
+    /// Root directory for file-level restores. Must be set to enable restores.
+    /// SEC-001: default to a safe subdirectory under data dir so restores work
+    /// out of the box without additional configuration.
+    #[serde(default = "default_restore_root")]
+    pub restore_root: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +65,11 @@ pub struct LoggingConfig {
     pub file: Option<String>,
 }
 
+fn default_restore_root() -> String {
+    // Default to a subdirectory of the default storage path so it works out of the box
+    "./data/restore".into()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -96,6 +106,7 @@ impl Default for AppConfig {
                 file: None,
             },
             agent_token: None,
+            restore_root: default_restore_root(),
         }
     }
 }

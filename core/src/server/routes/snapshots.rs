@@ -56,7 +56,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .without_v07_checks()
         .route("/", axum::routing::get(list_snapshots))
-        .route("/:id", axum::routing::get(get_snapshot).delete(delete_snapshot))
+        .route("/{id}", axum::routing::get(get_snapshot).delete(delete_snapshot))
 }
 
 fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {

@@ -17,8 +17,8 @@ use crate::server::AppState;
 pub fn public_router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .without_v07_checks()
-        .route("/:id/authorize", axum::routing::get(authorize))
-        .route("/:id/callback", axum::routing::get(callback))
+        .route("/{id}/authorize", axum::routing::get(authorize))
+        .route("/{id}/callback", axum::routing::get(callback))
         .route("/ldap/login", axum::routing::post(ldap_login))
 }
 

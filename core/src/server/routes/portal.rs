@@ -20,11 +20,11 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .without_v07_checks()
         .route("/me", axum::routing::get(me))
         .route("/restore-requests", axum::routing::get(list_own).post(submit_request))
-        .route("/restore-requests/:id/cancel", axum::routing::post(cancel_request))
+        .route("/restore-requests/{id}/cancel", axum::routing::post(cancel_request))
         .route("/admin/restore-requests", axum::routing::get(list_all))
-        .route("/admin/restore-requests/:id/approve", axum::routing::post(approve_request))
-        .route("/admin/restore-requests/:id/reject", axum::routing::post(reject_request))
-        .route("/admin/restore-requests/:id/complete", axum::routing::post(complete_request))
+        .route("/admin/restore-requests/{id}/approve", axum::routing::post(approve_request))
+        .route("/admin/restore-requests/{id}/reject", axum::routing::post(reject_request))
+        .route("/admin/restore-requests/{id}/complete", axum::routing::post(complete_request))
 }
 
 #[derive(Deserialize)]

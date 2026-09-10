@@ -13,6 +13,13 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
     let base = std::path::Path::new(db_path)
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
+    // Portal tests point BCK_RESTORE_ROOT at a fresh temp dir via
+    // set_restore_root_for_test(); respect it when present so submit/approve
+    // gates validate against the same root the test targets.
+    let restore_dir = std::env::var("BCK_RESTORE_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| base.join("restore"));
+    std::fs::create_dir_all(&restore_dir).ok();
     let config = AppConfig {
         database: crate::config::DatabaseConfig {
             url: url.clone(),
@@ -23,6 +30,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
             default_path: base.join("backups"),
             temp_path: base.join("tmp"),
         },
+        restore_root: restore_dir.to_string_lossy().to_string(),
         ..AppConfig::default()
     };
 
@@ -35,7 +43,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
     let cdp_dir = db_path.replace(".db", "-cdp");
     std::fs::create_dir_all(&cdp_dir).unwrap();
     Arc::new(AppState {
-        config,
+        config: config.clone(),
         db: db.clone(),
         job_manager,
         scheduler,
@@ -53,7 +61,7 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
         cdp: crate::cdp::CdpEngine::new(&cdp_dir).unwrap(),
         dr: crate::dr::DrOrchestrator::new(),
         tenants: crate::enterprise::multitenant::TenantManager::new(db),
-        restore_requests: crate::restore::requests::RestoreRequestManager::new(),
+        restore_requests: crate::restore::requests::RestoreRequestManager::new(config.restore_root.clone()),
     })
 }
 

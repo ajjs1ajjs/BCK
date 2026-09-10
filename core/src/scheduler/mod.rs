@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{self, Duration, Instant};
+use tokio::time::{self, Duration};
 use tracing::{info, warn, error};
 
 use crate::job::JobManager;
@@ -12,7 +12,7 @@ use crate::db::models::job::BackupJobModel;
 pub struct ScheduledJob {
     pub job_id: String,
     pub cron_expression: String,
-    pub next_run: Option<Instant>,
+    pub next_run: Option<chrono::DateTime<chrono::Utc>>,
     pub enabled: bool,
 }
 
@@ -68,14 +68,15 @@ impl Scheduler {
         let running = self.running.clone();
 
         tokio::spawn(async move {
-            let mut interval = time::interval(Duration::from_secs(30));
+            let mut interval = time::interval(Duration::from_secs(15));
             loop {
                 interval.tick().await;
                 if !*running.read().await {
                     break;
                 }
 
-                let now = Instant::now();
+                // BUG-001: use wall-clock UTC, not Instant, to avoid drift.
+                let now = chrono::Utc::now();
                 let mut to_run = Vec::new();
 
                 {
@@ -90,12 +91,28 @@ impl Scheduler {
                 }
 
                 for job_id in to_run {
+                    // Re-check under write lock to avoid double-fire on slow ticks.
+                    let should_run = {
+                        let jobs_guard = jobs.read().await;
+                        jobs_guard.get(&job_id).is_some_and(|s| {
+                            s.enabled && s.next_run.is_some_and(|n| n <= chrono::Utc::now())
+                        })
+                    };
+                    if !should_run {
+                        continue;
+                    }
                     let jm = job_manager.lock().await;
                     if let Err(e) = jm.start_job(&job_id).await {
-                        error!("Failed to start scheduled job {}: {}", job_id, e);
+                        // "already running" is expected on overlap — don't spam error.
+                        if e.to_string().contains("already running") {
+                            info!("Scheduled job {} skipped (already running)", job_id);
+                        } else {
+                            error!("Failed to start scheduled job {}: {}", job_id, e);
+                        }
                     }
+                    drop(jm);
 
-                    // Update next run
+                    // Update next run from wall-clock to prevent drift accumulation.
                     let mut jobs_guard = jobs.write().await;
                     if let Some(scheduled) = jobs_guard.get_mut(&job_id) {
                         scheduled.next_run = Self::next_cron_time(&scheduled.cron_expression);
@@ -111,7 +128,7 @@ impl Scheduler {
         info!("Scheduler stopped");
     }
 
-    fn next_cron_time(expression: &str) -> Option<Instant> {
+    fn next_cron_time(expression: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         let parts: Vec<&str> = expression.split_whitespace().collect();
         if parts.is_empty() {
             warn!("Invalid cron expression: {}", expression);
@@ -125,11 +142,10 @@ impl Scheduler {
             expression.to_string()
         };
         let schedule = cron::Schedule::from_str(&cron_expr).ok()?;
-        // Use UTC so schedule does not depend on host timezone/DST.
+        // BUG-001: return wall-clock time directly — no Instant conversion,
+        // so no drift accumulation across ticks/restarts.
         let now = chrono::Utc::now();
-        let next = schedule.after(&now).next()?;
-        let secs = (next - now).num_seconds().max(0) as u64;
-        Some(Instant::now() + Duration::from_secs(secs))
+        schedule.after(&now).next()
     }
 }
 
@@ -148,15 +164,15 @@ mod tests {
         // Daily at 02:00 — must be in the future, and (now that cron is parsed)
         // must be no more than ~24h away, not a fixed 5 minutes.
         let next = Scheduler::next_cron_time("0 2 * * *").expect("cron must parse");
-        let delta = next.duration_since(Instant::now());
-        assert!(delta > Duration::from_secs(60), "next run must be in the future");
-        assert!(delta < Duration::from_secs(24 * 3600 + 120), "next run must respect the daily schedule");
+        let delta = (next - chrono::Utc::now()).num_seconds();
+        assert!(delta > 30, "next run must be in the future");
+        assert!(delta < 24 * 3600 + 120, "next run must respect the daily schedule");
     }
 
     #[test]
     fn every_five_minutes_cron() {
         let next = Scheduler::next_cron_time("*/5 * * * *").expect("cron must parse");
-        let delta = next.duration_since(Instant::now());
-        assert!(delta >= Duration::from_secs(0) && delta <= Duration::from_secs(300 + 5));
+        let delta = (next - chrono::Utc::now()).num_seconds();
+        assert!((0..=(300 + 5)).contains(&delta));
     }
 }

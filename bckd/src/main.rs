@@ -67,9 +67,10 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting BCK Enterprise Backup Daemon");
     info!("Version: {}", env!("CARGO_PKG_VERSION"));
 
-    // Ensure directories exist
+    // Ensure directories exist (SEC-001: restore root must exist or restores fail).
     std::fs::create_dir_all(&config.storage.default_path)?;
     std::fs::create_dir_all(&config.storage.temp_path)?;
+    std::fs::create_dir_all(&config.restore_root)?;
 
     // Connect to database
     info!("Connecting to database...");
@@ -120,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
         )?,
         dr: bck_core::dr::DrOrchestrator::new(),
         tenants: bck_core::enterprise::multitenant::TenantManager::new(db),
-        restore_requests: bck_core::restore::requests::RestoreRequestManager::new(),
+        restore_requests: bck_core::restore::requests::RestoreRequestManager::new(config.restore_root.clone()),
     });
 
     // Start scheduler
@@ -144,23 +145,31 @@ async fn main() -> anyhow::Result<()> {
     let app = server::create_router(app_state.clone());
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
     let use_tls = config.server.tls_cert.is_some() && config.server.tls_key.is_some();
     let scheme = if use_tls { "https" } else { "http" };
-    info!("API server listening on {}://{}", scheme, addr);
-    if !use_tls {
-        warn!("TLS is DISABLED for the API. Set server.tls_cert/server.tls_key in config.toml or terminate TLS at a reverse proxy.");
+    
+    // SEC-002: refuse to start on 0.0.0.0/:: without TLS unless explicitly opted in.
+    // This prevents accidental plaintext exposure of credentials and backup data.
+    let allow_plaintext = std::env::var("BCK_ALLOW_PLAINTEXT").as_deref() == Ok("1");
+    if (config.server.host == "0.0.0.0" || config.server.host == "::") && !use_tls && !allow_plaintext {
+        anyhow::bail!(
+            "Refusing to bind to {} without TLS. Set server.tls_cert/server.tls_key, \
+            terminate TLS at a reverse proxy, or set BCK_ALLOW_PLAINTEXT=1 to acknowledge the risk.",
+            config.server.host
+        );
     }
-    if config.server.host == "0.0.0.0" && !use_tls {
-        // SEC-025: warn loudly when binding to all interfaces without TLS.
-        warn!("API server bound to 0.0.0.0 without TLS — credentials and backup data will be exposed in plaintext to any reachable network. Strongly recommended: set server.tls_cert/server.tls_key or terminate TLS at a reverse proxy.");
+    
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    info!("API server listening on {}://{}", scheme, addr);
+    if !use_tls && !allow_plaintext {
+        warn!("TLS is DISABLED for the API. Set server.tls_cert/server.tls_key in config.toml or terminate TLS at a reverse proxy.");
     }
 
     // Start gRPC server
     let grpc_addr = format!("{}:{}", config.server.host, config.server.grpc_port);
     let grpc_listener = tokio::net::TcpListener::bind(&grpc_addr).await?;
     info!("gRPC server listening on {}", grpc_addr);
-    if use_tls {
+    if !use_tls {
         warn!("gRPC is served without TLS; agents authenticate with the shared agent token instead");
     }
 
@@ -257,10 +266,14 @@ async fn serve_tls(
 
     let certs = load_certs(cert_path)?;
     let key = load_key(key_path)?;
-    let config = rustls::ServerConfig::builder()
+    // tokio-rustls 0.24 bundles rustls 0.21: safe defaults + explicit TLS versions.
+    let config = tokio_rustls::rustls::ServerConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+        .with_protocol_versions(&[
+            &tokio_rustls::rustls::version::TLS13,
+            &tokio_rustls::rustls::version::TLS12,
+        ])
         .map_err(|e| anyhow::anyhow!("TLS protocol config: {}", e))?
         .with_no_client_auth()
         .with_single_cert(certs, key)
@@ -291,20 +304,20 @@ async fn serve_tls(
     }
 }
 
-fn load_certs(path: &str) -> anyhow::Result<Vec<rustls::Certificate>> {
+fn load_certs(path: &str) -> anyhow::Result<Vec<tokio_rustls::rustls::Certificate>> {
     let mut reader = std::io::BufReader::new(std::fs::File::open(path)?);
     let certs = rustls_pemfile::certs(&mut reader)
         .map_err(|e| anyhow::anyhow!("failed to load certs from {}: {}", path, e))?;
-    Ok(certs.into_iter().map(rustls::Certificate).collect())
+    Ok(certs.into_iter().map(tokio_rustls::rustls::Certificate).collect())
 }
 
-fn load_key(path: &str) -> anyhow::Result<rustls::PrivateKey> {
+fn load_key(path: &str) -> anyhow::Result<tokio_rustls::rustls::PrivateKey> {
     // Try PKCS#8 first, then RSA ("BEGIN RSA PRIVATE KEY").
     if let Some(der) = read_pem_key(path, rustls_pemfile::pkcs8_private_keys) {
-        return Ok(rustls::PrivateKey(der));
+        return Ok(tokio_rustls::rustls::PrivateKey(der));
     }
     if let Some(der) = read_pem_key(path, rustls_pemfile::rsa_private_keys) {
-        return Ok(rustls::PrivateKey(der));
+        return Ok(tokio_rustls::rustls::PrivateKey(der));
     }
     Err(anyhow::anyhow!("no private key found in {}", path))
 }
@@ -349,17 +362,17 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
             .ok_or_else(|| Status::unauthenticated("missing agent token"))?;
-        // Constant-time compare (length leak is acceptable; timing of iteration is not).
-        let mut diff = 0u8;
-        if provided.as_bytes().len() != expected.as_bytes().len() {
-            // Still do dummy iteration to avoid early return timing difference.
-            diff = 1;
-        } else {
-            for (a, b) in provided.as_bytes().iter().zip(expected.as_bytes()) {
-                diff |= a ^ b;
-            }
+        // SEC-004: constant-time compare without length oracle.
+        // Always iterate over expected length; missing bytes count as mismatch.
+        let exp = expected.as_bytes();
+        let got = provided.as_bytes();
+        let mut diff = (exp.len() ^ got.len()) as u8;
+        for i in 0..exp.len() {
+            let g = *got.get(i).unwrap_or(&0);
+            diff |= exp[i] ^ g;
         }
-        if diff == 0 && provided.as_bytes().len() == expected.as_bytes().len() {
+        // Use subtle-style check to avoid compiler short-circuit.
+        if diff == 0 {
             Ok(req)
         } else {
             Err(Status::unauthenticated("invalid agent token"))
@@ -415,6 +428,9 @@ async fn seed_default_admin(db: &bck_core::db::DbPool, config: &AppConfig) {
         }
     };
 
+    // SEC-006: bootstrap file TTL — remove stale bootstrap credentials on every
+    // start (expired, or users already exist and admin already logged in).
+    cleanup_bootstrap_file(config, count > 0);
     if count > 0 {
         return;
     }
@@ -472,12 +488,8 @@ async fn seed_default_admin(db: &bck_core::db::DbPool, config: &AppConfig) {
             // Persist the password to a bootstrap file (0600) next to the data
             // dir so the installer / operator can read it without scanning the
             // journal. The file is intentionally NOT in the backups directory.
-            let bootstrap_path = config
-                .storage
-                .default_path
-                .parent()
-                .unwrap_or(&config.storage.default_path)
-                .join("bootstrap_admin.txt");
+            // SEC-006: cleanup_bootstrap_file() removes it after 24h / init.
+            let bootstrap_path = bootstrap_path(config);
             if let Some(parent) = bootstrap_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
@@ -501,6 +513,37 @@ password: {}
             }
         }
         Err(e) => warn!("Failed to seed default admin: {}", e),
+    }
+}
+
+/// SEC-006: bootstrap credential TTL (24h). The bootstrap file is removed when
+/// it is older than 24h, or when users already exist (fresh install already
+/// initialized). Prevents the initial admin password lingering on disk.
+fn bootstrap_path(config: &AppConfig) -> std::path::PathBuf {
+    config
+        .storage
+        .default_path
+        .parent()
+        .unwrap_or(&config.storage.default_path)
+        .join("bootstrap_admin.txt")
+}
+
+fn cleanup_bootstrap_file(config: &AppConfig, users_exist: bool) {
+    const TTL_SECS: u64 = 24 * 3600;
+    let path = bootstrap_path(config);
+    if !path.exists() {
+        return;
+    }
+    let expired = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().map(|e| e.as_secs() > TTL_SECS).unwrap_or(true))
+        .unwrap_or(true);
+    if expired || users_exist {
+        let _ = std::fs::remove_file(&path);
+        info!(
+            "Removed stale bootstrap admin file ({})",
+            if expired { "expired" } else { "already initialized" }
+        );
     }
 }
 

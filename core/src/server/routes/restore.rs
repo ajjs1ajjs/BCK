@@ -41,8 +41,8 @@ fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
 /// SEC-001: the only gate for user-supplied `target_path`. Delegates to the
 /// shared allow-list gate (`crate::restore::gate_restore_target`) so REST,
 /// gRPC and portal approve paths enforce identical semantics.
-fn validate_restore_target(target: &str) -> Result<(), String> {
-    crate::restore::gate_restore_target(target).map(|_| ()).map_err(|e| e.to_string())
+fn validate_restore_target(state: &AppState, target: &str) -> Result<(), String> {
+    crate::restore::gate_restore_target(target, &state.config.restore_root).map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Load a snapshot and enforce the caller's tenant on it.
@@ -109,13 +109,13 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/instant", axum::routing::post(instant_recovery))
         .route("/instant", axum::routing::get(list_instant_recovery))
         .route("/instant/vm", axum::routing::post(instant_recovery_vm))
-        .route("/instant/:id/stop", axum::routing::post(stop_instant_recovery))
-        .route("/explore/:snapshot_id", axum::routing::get(browse_snapshot))
-        .route("/explore/:snapshot_id/file", axum::routing::get(download_file))
+        .route("/instant/{id}/stop", axum::routing::post(stop_instant_recovery))
+        .route("/explore/{snapshot_id}", axum::routing::get(browse_snapshot))
+        .route("/explore/{snapshot_id}/file", axum::routing::get(download_file))
         .route("/surebackup", axum::routing::post(start_surebackup))
         .route("/surebackup", axum::routing::get(list_surebackup))
-        .route("/surebackup/:id", axum::routing::get(get_surebackup))
-        .route("/session/:id", axum::routing::get(get_session))
+        .route("/surebackup/{id}", axum::routing::get(get_surebackup))
+        .route("/session/{id}", axum::routing::get(get_session))
 }
 
 async fn restore_vm(
@@ -174,7 +174,7 @@ async fn restore_file(
     Json(req): Json<FileRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
     // SEC-020: validate the target path before any work begins.
-    if let Err(msg) = validate_restore_target(&req.target_path) {
+    if let Err(msg) = validate_restore_target(&state, &req.target_path) {
         tracing::warn!(
             "restore_file: rejected target_path for sub={} reason={}",
             claims.sub,

@@ -47,11 +47,21 @@ pub struct StorageConfig {
 /// Build a `StorageConfig` from a stored JSON config, decrypting the secret
 /// fields (`secret_key`, `connection_string`) with the application key when it
 /// is provided. Plaintext legacy values decrypt transparently.
+///
+/// BUG-003: decryption failures are logged (not silently dropped to None),
+/// so misconfigured credentials fail loudly at backend creation instead of
+/// producing empty-string secrets.
 pub fn storage_config_from_json(cfg: &serde_json::Value, key: Option<&[u8]>) -> StorageConfig {
-    let decrypt = |v: Option<&str>| -> Option<String> {
+    let decrypt = |field: &str, v: Option<&str>| -> Option<String> {
         let v = v?;
         match key {
-            Some(k) => crate::encrypt::decrypt_secret(k, v).ok(),
+            Some(k) => match crate::encrypt::decrypt_secret(k, v) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::warn!("storage config: failed to decrypt {}: {}", field, e);
+                    None
+                }
+            },
             None => Some(v.to_string()),
         }
     };
@@ -62,9 +72,9 @@ pub fn storage_config_from_json(cfg: &serde_json::Value, key: Option<&[u8]>) -> 
         region: cfg["region"].as_str().map(str::to_string),
         endpoint: cfg["endpoint"].as_str().map(str::to_string),
         access_key: cfg["access_key"].as_str().map(str::to_string),
-        secret_key: decrypt(cfg["secret_key"].as_str()),
+        secret_key: decrypt("secret_key", cfg["secret_key"].as_str()),
         container: cfg["container"].as_str().map(str::to_string),
-        connection_string: decrypt(cfg["connection_string"].as_str()),
+        connection_string: decrypt("connection_string", cfg["connection_string"].as_str()),
         account: cfg["account"].as_str().map(str::to_string),
     }
 }
@@ -127,6 +137,12 @@ pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBack
 /// rejected so the daemon cannot be pointed at internal or cloud-metadata
 /// hosts (SSRF). Loopback and RFC1918 private addresses are rejected by default;
 /// set `BCK_ALLOW_PRIVATE_ENDPOINTS=1` to allow on-prem storage.
+///
+/// SEC-005 (DNS rebinding): DNS names are resolved at validation time, but the
+/// actual S3 client resolves again at request time (TOCTOU). By default DNS
+/// hostnames are rejected — use a literal IP, or set
+/// `BCK_ALLOW_DNS_ENDPOINTS=1` to acknowledge the rebinding risk (only for
+/// trusted DNS).
 pub fn validate_storage_endpoint(endpoint: &str) -> Result<()> {
     let u = reqwest::Url::parse(endpoint)
         .map_err(|_| anyhow::anyhow!("invalid storage endpoint: {endpoint}"))?;
@@ -138,12 +154,20 @@ pub fn validate_storage_endpoint(endpoint: &str) -> Result<()> {
         // Check literal IP first
         if let Ok(ip) = host.parse::<std::net::IpAddr>() {
             check_ip(ip, endpoint)?;
-        } else if std::env::var("BCK_ALLOW_PRIVATE_ENDPOINTS").as_deref() != Ok("1") {
-            // DNS rebinding check: resolve hostname and inspect each IP
-            let addrs = format!("{}:443", host).to_socket_addrs();
-            if let Ok(addrs) = addrs {
-                for addr in addrs {
-                    check_ip(addr.ip(), endpoint)?;
+        } else {
+            // Hostname: fail closed by default to kill DNS-rebinding TOCTOU.
+            if std::env::var("BCK_ALLOW_DNS_ENDPOINTS").as_deref() != Ok("1") {
+                anyhow::bail!(
+                    "storage endpoint must be a literal IP (DNS rebinding risk); use an IP or set BCK_ALLOW_DNS_ENDPOINTS=1 for trusted DNS: {endpoint}"
+                );
+            }
+            if std::env::var("BCK_ALLOW_PRIVATE_ENDPOINTS").as_deref() != Ok("1") {
+                // Best-effort check at validation time (request-time may differ).
+                let addrs = format!("{}:443", host).to_socket_addrs();
+                if let Ok(addrs) = addrs {
+                    for addr in addrs {
+                        check_ip(addr.ip(), endpoint)?;
+                    }
                 }
             }
         }

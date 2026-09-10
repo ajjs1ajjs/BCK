@@ -14,7 +14,7 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/", axum::routing::get(tier_stats))
         .route("/tiers", axum::routing::post(add_tier))
         .route("/policies", axum::routing::get(list_policies).post(create_policy))
-        .route("/policies/:id/execute", axum::routing::post(execute_policy))
+        .route("/policies/{id}/execute", axum::routing::post(execute_policy))
 }
 
 async fn tier_stats(

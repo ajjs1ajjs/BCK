@@ -17,9 +17,9 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/status", axum::routing::get(status))
         .route("/sites", axum::routing::get(list_sites).post(register_site))
         .route("/plans", axum::routing::get(list_plans).post(create_plan))
-        .route("/plans/:id/failover", axum::routing::post(failover))
-        .route("/plans/:id/failback", axum::routing::post(failback))
-        .route("/plans/:id/test", axum::routing::post(test_failover))
+        .route("/plans/{id}/failover", axum::routing::post(failover))
+        .route("/plans/{id}/failback", axum::routing::post(failback))
+        .route("/plans/{id}/test", axum::routing::post(test_failover))
 }
 
 async fn status(

@@ -103,6 +103,8 @@ require() {
 }
 
 # Install the Rust toolchain (rustup) when missing. Safe to run repeatedly.
+# INFRA-001: sh.rustup.rs is fetched over pinned HTTPS+TLS1.2; integrity is
+# checked via shebang + optional BCK_RUSTUP_SHA256 pin (set to enforce exact hash).
 ensure_rust() {
     if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
         return 0
@@ -113,11 +115,21 @@ ensure_rust() {
         test -s "$TMPDIR/rustup.sh"
         # Verify rustup.sh is a shell script (starts with #!) and not an error page
         head -n1 "$TMPDIR/rustup.sh" | grep -q "^#!" || fail "rustup.sh download integrity check failed"
+        if [ -n "${BCK_RUSTUP_SHA256:-}" ]; then
+            echo "$BCK_RUSTUP_SHA256  $TMPDIR/rustup.sh" | sha256sum -c - || fail "rustup.sh SHA256 mismatch (BCK_RUSTUP_SHA256)"
+            log "rustup.sh SHA256 verified"
+        else
+            warn "BCK_RUSTUP_SHA256 not set — skipping exact-hash pin (shebang check only)"
+        fi
         sh "$TMPDIR/rustup.sh" -y --profile minimal --default-toolchain stable
     elif command -v wget >/dev/null 2>&1; then
-        wget -q https://sh.rustup.rs -O "$TMPDIR/rustup.sh"
+        wget -q --secure-protocol=TLSv1_2 https://sh.rustup.rs -O "$TMPDIR/rustup.sh"
         test -s "$TMPDIR/rustup.sh"
         head -n1 "$TMPDIR/rustup.sh" | grep -q "^#!" || fail "rustup.sh download integrity check failed"
+        if [ -n "${BCK_RUSTUP_SHA256:-}" ]; then
+            echo "$BCK_RUSTUP_SHA256  $TMPDIR/rustup.sh" | sha256sum -c - || fail "rustup.sh SHA256 mismatch (BCK_RUSTUP_SHA256)"
+            log "rustup.sh SHA256 verified"
+        fi
         sh "$TMPDIR/rustup.sh" -y --profile minimal --default-toolchain stable
     else
         fail "Need curl or wget to install Rust"

@@ -14,14 +14,14 @@ pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .without_v07_checks()
         .route("/", axum::routing::get(list_tenants).post(create_tenant))
-        .route("/:id", axum::routing::get(get_tenant).delete(delete_tenant))
-        .route("/:id/suspend", axum::routing::post(suspend_tenant))
-        .route("/:id/activate", axum::routing::post(activate_tenant))
-        .route("/:id/disable", axum::routing::post(disable_tenant))
-        .route("/:id/quota", axum::routing::put(update_quota))
-        .route("/:id/settings", axum::routing::put(update_settings))
-        .route("/:id/usage", axum::routing::get(get_usage).post(update_usage))
-        .route("/:id/check-quota", axum::routing::get(check_quota))
+        .route("/{id}", axum::routing::get(get_tenant).delete(delete_tenant))
+        .route("/{id}/suspend", axum::routing::post(suspend_tenant))
+        .route("/{id}/activate", axum::routing::post(activate_tenant))
+        .route("/{id}/disable", axum::routing::post(disable_tenant))
+        .route("/{id}/quota", axum::routing::put(update_quota))
+        .route("/{id}/settings", axum::routing::put(update_settings))
+        .route("/{id}/usage", axum::routing::get(get_usage).post(update_usage))
+        .route("/{id}/check-quota", axum::routing::get(check_quota))
 }
 
 /// A tenant-scoped admin may manage only its own tenant; global admins /

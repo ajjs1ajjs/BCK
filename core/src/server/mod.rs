@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::auth::jwt::JwtManager;
@@ -57,12 +58,18 @@ pub fn create_router(state: Arc<AppState>) -> Router {
     // is only allowed for explicitly configured origins — never `permissive()`.
     let cors = cors_layer(&state.config.server.allowed_origins);
 
+    // OPS-002: propagate x-request-id for log correlation.
+    let request_id = SetRequestIdLayer::x_request_id(MakeRequestUuid);
+    let propagate = PropagateRequestIdLayer::x_request_id();
+
     // Serve the built web UI (SPA) if a directory is configured and exists.
     let mut router = Router::new()
         .nest("/api/v1", api)
         .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
+        .layer(propagate)
+        .layer(request_id)
         .layer(cors);
 
     if let Some(web_dir) = &state.config.server.web_ui_dir {

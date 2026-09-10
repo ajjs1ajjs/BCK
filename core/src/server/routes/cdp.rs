@@ -12,9 +12,9 @@ pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
         .without_v07_checks()
         .route("/policies", axum::routing::get(list_policies).post(create_policy))
-        .route("/policies/:id/start", axum::routing::post(start_protection))
+        .route("/policies/{id}/start", axum::routing::post(start_protection))
         .route("/sessions", axum::routing::get(list_sessions))
-        .route("/sessions/:id/stop", axum::routing::post(stop_protection))
+        .route("/sessions/{id}/stop", axum::routing::post(stop_protection))
         .route("/stats", axum::routing::get(stats))
 }
 

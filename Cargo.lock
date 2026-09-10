@@ -970,7 +970,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bck"
-version = "0.9.27"
+version = "0.9.28"
 dependencies = [
  "anyhow",
  "bck-core",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "bck-agent"
-version = "0.9.27"
+version = "0.9.28"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "bck-core"
-version = "0.9.27"
+version = "0.9.28"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1048,6 +1048,7 @@ dependencies = [
  "quick-xml 0.41.0",
  "reqwest",
  "ring",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1072,7 +1073,7 @@ dependencies = [
 
 [[package]]
 name = "bck-proxy"
-version = "0.9.27"
+version = "0.9.28"
 dependencies = [
  "anyhow",
  "bck-core",
@@ -1084,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "bckd"
-version = "0.9.27"
+version = "0.9.28"
 dependencies = [
  "anyhow",
  "axum",
@@ -3889,6 +3890,7 @@ dependencies = [
  "aws-lc-rs",
  "log",
  "once_cell",
+ "ring",
  "rustls-pki-types",
  "rustls-webpki 0.103.15",
  "subtle",
@@ -4939,6 +4941,7 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

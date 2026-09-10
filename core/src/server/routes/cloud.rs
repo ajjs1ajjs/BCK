@@ -188,16 +188,16 @@ pub fn router() -> axum::Router<Arc<AppState>> {
     let accounts_routes = axum::Router::new()
         .without_v07_checks()
         .route("/", axum::routing::get(list_accounts).post(register_account))
-        .route("/:id", axum::routing::get(get_account).delete(remove_account))
-        .route("/:id/restorable", axum::routing::get(list_restorable))
-        .route("/:id/restore", axum::routing::post(submit_restore))
-        .route("/:id/restores", axum::routing::get(list_account_restores));
+        .route("/{id}", axum::routing::get(get_account).delete(remove_account))
+        .route("/{id}/restorable", axum::routing::get(list_restorable))
+        .route("/{id}/restore", axum::routing::post(submit_restore))
+        .route("/{id}/restores", axum::routing::get(list_account_restores));
     axum::Router::new()
         .without_v07_checks()
         .route("/debug", axum::routing::get(debug_handler))
         .nest("/accounts", accounts_routes)
         .route("/restores", axum::routing::get(list_all_restores))
-        .route("/restores/:rid", axum::routing::get(get_restore))
+        .route("/restores/{rid}", axum::routing::get(get_restore))
 }
 
 /// Never serialize cloud credentials to API responses. The struct is the

@@ -219,6 +219,7 @@ impl XmlNode {
 pub(crate) fn parse_xml_tree(xml: &str) -> Result<XmlNode, quick_xml::Error> {
     use quick_xml::events::Event;
     use quick_xml::Reader;
+    use quick_xml::escape::unescape;
 
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
@@ -258,7 +259,8 @@ pub(crate) fn parse_xml_tree(xml: &str) -> Result<XmlNode, quick_xml::Error> {
             }
             Ok(Event::Text(t)) => {
                 if let Some(top) = stack.last_mut() {
-                    top.text.push_str(&t.unescape()?);
+                    let text = String::from_utf8_lossy(t.as_ref());
+                    top.text.push_str(&unescape(&text)?);
                 }
             }
             Ok(Event::Eof) => break,
