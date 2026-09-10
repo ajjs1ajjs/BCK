@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.30] - 2026-09-10
+
+### Виправлено (web console не стартувала)
+
+- **Критично**: демон панікував на старті `Nesting at the root is no longer supported` (axum 0.8 заборонив `nest_service("/")` для SPA) — веб-консоль і `/dashboard` не працювали з моменту переходу на axum 0.8.
+- SPA тепер на `fallback_service`: `/` і `/dashboard` віддають `index.html`, `/api/v1/*` як і раніше йдуть в API.
+- Regression test `spa_fallback_serves_index_without_swallowing_api`.
+- Тести: 215/215 passing.
+
 ## [0.9.29] - 2026-09-10
 
 ### Виправлено (автодовстановлення)
