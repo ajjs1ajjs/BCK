@@ -135,7 +135,7 @@ footer a{color:var(--accent);text-decoration:none}
 <div class="live"><span class="dot"></span> PRODUCTION READY &nbsp;•&nbsp; MIT LICENSE &nbsp;•&nbsp; v1.0.0</div>
 <h1>🛡️ BCK <span class='grad'>Enterprise</span></h1>
 <p class="tagline">Enterprise Backup & Disaster Recovery для сучасної інфраструктури. Альтернатива Veeam — повністю на Rust, з миттєвим відновленням VM та наскрізним шифруванням.</p>
-<div class="badges"><span class='badge'>🪟 Windows</span><span class='badge'>🐧 Ubuntu/Debian</span><span class='badge'>🍎 macOS</span><span class='badge'>🦀 Rust</span><span class='badge'>🔐 AES-256-GCM</span></div>
+<div class="badges"><span class='badge'>🐧 Ubuntu</span><span class='badge'>🦀 Rust</span><span class='badge'>🔐 AES-256-GCM</span></div>
 <div class="shields"><img src='https://img.shields.io/github/v/release/ajjs1ajjs/BCK?label=release' alt='release' loading='lazy'><img src='https://img.shields.io/github/downloads/ajjs1ajjs/BCK/total?label=downloads' alt='downloads' loading='lazy'><img src='https://img.shields.io/github/actions/workflow/status/ajjs1ajjs/BCK/ci.yml?label=CI' alt='CI' loading='lazy'><img src='https://img.shields.io/badge/license-MIT-green' alt='MIT' loading='lazy'></div>
 <div class="cta">
 <a class="btn btn-primary" href="#install">🚀 Швидкий старт</a>
@@ -151,20 +151,20 @@ footer a{color:var(--accent);text-decoration:none}
 
 <section id="install"><div class="sec-head reveal"><h2>Встановлення за <span class="u">30 секунд</span></h2><p>Одна команда — і все працює. Оберіть свою ОС:</p></div>
 <div class="install reveal">
-<div class="tabs"><button class='active' onclick="tab(this,'linux')">🐧 Linux</button><button onclick="tab(this,'win')">🪟 Windows</button><button onclick="tab(this,'mac')">🍎 macOS</button></div>
+<div class="tabs"><button class='active'>🐧 Ubuntu</button></div>
 <div class="term"><code id="cmd">curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash</code><button class="copy" onclick="copyCmd()">📋 Копіювати</button></div>
 </div>
-<p class="hint">💡 На Linux/macOS потрібен sudo • На Windows — PowerShell від імені адміністратора</p>
+<p class="hint">💡 Потрібен sudo</p>
 <div class="steps" style="margin-top:26px"><div class='step reveal'><div class='n'>1</div><b>Встановіть bckd</b><p>Демон з REST + gRPC та планувальником</p></div><div class='step reveal'><div class='n'>2</div><b>Відкрийте консоль</b><p>http://host:9440 — створіть репозиторій</p></div><div class='step reveal'><div class='n'>3</div><b>Запустіть перший job</b><p>Інкрементальний бекап + розклад</p></div></div>
 </section>
 
 <section id="screenshots"><div class="sec-head reveal"><h2>Живий <span class="u">інтерфейс</span></h2><p>Реальні скріншоти продукту — натисніть щоб збільшити</p></div>
 <div class="gallery"><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/dashboard.png' alt='Dashboard'></div><h3>📊 Dashboard</h3><p>Огляд jobs, сховищ та останніх запусків</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/jobs.png' alt='Jobs'></div><h3>⚙️ Jobs</h3><p>Бекап-завдання та їх статуси</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/repositories.png' alt='Repositories'></div><h3>📦 Repositories</h3><p>Репозиторії та SOBR-рівні</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/snapshots.png' alt='Snapshots'></div><h3>📸 Snapshots</h3><p>Снапшоти та точки відновлення</p></div><div class='shot reveal'><div class='imgwrap'><img src='https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/docs/screenshots/login.png' alt='Login'></div><h3>🔑 Login</h3><p>JWT + SSO вхід</p></div></div></section>
 
-<section id="platforms"><div class="sec-head reveal"><h2>Працює <span class="u">скрізь</span></h2><p>Нативні збірки під кожну платформу</p></div>
-<div class="os-grid"><div class='os-card reveal'><div class='oi'>🪟</div><b>Windows</b><span>Server 2022 / 2025</span></div><div class='os-card reveal'><div class='oi'>🐧</div><b>Ubuntu</b><span>24 / 25 / 26 LTS</span></div><div class='os-card reveal'><div class='oi'>🍎</div><b>macOS</b><span>Intel + Apple Silicon</span></div></div></section>
+<section id="platforms"><div class="sec-head reveal"><h2>Працює на <span class="u">Ubuntu</span></h2><p>Нативна збірка Ubuntu x86_64</p></div>
+<div class="os-grid"><div class='os-card reveal'><div class='oi'>🐧</div><b>Ubuntu</b><span>24 / 25 / 26 LTS</span></div></div></section>
 
-<section id="download"><div class="sec-head reveal"><h2>Завантажити <span class="u">BCK Enterprise</span></h2><p>Останній реліз з бінарниками під всі ОС</p></div><div style="text-align:center"><a class="btn btn-primary" href="https://github.com/ajjs1ajjs/BCK/releases/latest">⬇️ Завантажити останній реліз</a> <a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/BCK/releases">📋 Всі релізи</a></div></section>
+<section id="download"><div class="sec-head reveal"><h2>Завантажити <span class="u">BCK Enterprise</span></h2><p>Останній реліз з бінарником Ubuntu x86_64</p></div><div style="text-align:center"><a class="btn btn-primary" href="https://github.com/ajjs1ajjs/BCK/releases/latest">⬇️ Завантажити останній реліз</a> <a class="btn btn-ghost" href="https://github.com/ajjs1ajjs/BCK/releases">📋 Всі релізи</a></div></section>
 
 <div class="cta-big reveal">
 <h2>Захистіть дані до інциденту</h2>
@@ -182,8 +182,6 @@ footer a{color:var(--accent);text-decoration:none}
 <div id="lightbox" onclick="this.classList.remove('open')"><div><img id="lbImg" src="" alt=""><div class="cap" id="lbCap"></div></div></div>
 <button id="toTop" onclick="scrollTo({top:0,behavior:'smooth'})" aria-label="top">↑</button>
 <script>
-const CMDS={linux:'curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash',win:'irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex',mac:'curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash'};
-function tab(el,os){document.querySelectorAll('.tabs button').forEach(b=>b.classList.remove('active'));el.classList.add('active');document.getElementById('cmd').textContent=CMDS[os];}
 function copyCmd(){const t=document.getElementById('cmd').textContent;navigator.clipboard.writeText(t).then(()=>{const b=document.querySelector('.copy');const o=b.textContent;b.textContent='✅ Скопійовано!';setTimeout(()=>b.textContent=o,1800);});}
 const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}}),{threshold:.12});
 document.querySelectorAll('.reveal').forEach(el=>io.observe(el));

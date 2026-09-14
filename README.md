@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/tests-188%20passing-green" alt="Tests">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/API-REST%20%2B%20gRPC-cyan" alt="API">
-  <img src="https://img.shields.io/badge/Platform-Ubuntu%20%2F%20Debian%20%2F%20Windows%20%2F%20macOS-orange" alt="Platform">
+  <img src="https://img.shields.io/badge/Platform-Ubuntu%20Linux-orange" alt="Platform">
   <img src="https://img.shields.io/badge/PWA-offline-cyan" alt="PWA">
 </p>
 
@@ -76,7 +76,7 @@
 
 ## Quick Start
 
-> **Target platforms:** **Ubuntu / Debian** and **Windows**.
+> **Target platforms:** **Ubuntu Linux**.
 > Managed via the web console (`http://<host>:9440`).
 
 ```bash
@@ -98,33 +98,23 @@ First login creates a random `admin` password (printed once, `bootstrap_admin.tx
 
 Install **and update** with a single command — re-running the same command upgrades the daemon, agent, CLI, proxy and web UI **in place**, while preserving your configuration and backup data.
 
-**Ubuntu / Debian** (installs Rust, build dependencies, binaries, web console, registers the systemd service):
+**Ubuntu** (installs Rust, build dependencies, binaries, web console, registers the systemd service):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
 ```
 
-**Windows** (PowerShell, run as Administrator — installs binaries, web console, registers the `bckd` Windows service):
-```powershell
-irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
-```
+The installer:
 
-The installer (both platforms):
-
-1. Download the latest GitHub release for the platform (or **build from source** when no release exists — on Windows this also bootstraps Rust, Git, protoc, Node.js and MSVC Build Tools as needed via `rustup`/`winget`).
+1. Download the latest GitHub release for the platform (or **build from source** when no release exists).
 2. Install `bckd`, `bck-agent`, `bck`, `bck-proxy` and the web console.
 3. Create a default config — existing config is **preserved** on update.
-4. Register `bckd` as a service (systemd on Linux, a Windows service on Windows) with restart-on-failure.
+4. Register `bckd` as a systemd service with restart-on-failure.
 
 The same command is used for fresh installs and upgrades, so you can script regular updates:
 
 ```bash
-# Ubuntu / Debian — add a weekly update
+# Ubuntu — add a weekly update
 0 3 * * 0  curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
-```
-
-```powershell
-# Windows — re-run any time to update in place
-irm https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.ps1 | iex
 ```
 
 **Verify installation:**

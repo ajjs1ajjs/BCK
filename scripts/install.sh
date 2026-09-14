@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# BCK Enterprise Backup — one-line installer (Ubuntu / Debian)
+# BCK Enterprise Backup — one-line installer (Ubuntu)
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/ajjs1ajjs/BCK/main/scripts/install.sh | sudo bash
@@ -44,8 +44,8 @@ check_ubuntu_version() {
         fail "Cannot determine OS version (/etc/os-release not found)."
     fi
     . /etc/os-release
-    if [ "$ID" != "ubuntu" ] && [ "$ID" != "debian" ]; then
-        fail "This installer supports Ubuntu and Debian only. Detected: $ID"
+    if [ "$ID" != "ubuntu" ]; then
+        fail "This installer supports Ubuntu only. Detected: $ID"
     fi
     local ver="${VERSION_ID%%.*}"
     local supported="24 25 26"
@@ -57,7 +57,7 @@ check_ubuntu_version() {
         fi
     done
     if [ "$is_supported" -eq 0 ]; then
-        fail "Unsupported $ID version: $VERSION_ID. Supported: Ubuntu/Debian 24, 25, 26 (latest and preview)."
+        fail "Unsupported Ubuntu version: $VERSION_ID. Supported: Ubuntu 24, 25, 26 (latest and preview)."
     fi
     log "Detected $ID $VERSION_ID ($PRETTY_NAME) — supported."
 }
@@ -151,7 +151,7 @@ ensure_rust() {
     log "Rust toolchain ready (cargo $(cargo --version | awk '{print $2}'))."
 }
 
-# Install build prerequisites (Ubuntu / Debian): C toolchain + OpenSSL + protoc + node.
+# Install build prerequisites (Ubuntu): C toolchain + OpenSSL + protoc + node.
 ensure_build_deps() {
     # Only the packages that are actually missing get installed, so distro
     # repos that already provide node (e.g. nodesource) are never disturbed.
@@ -166,7 +166,7 @@ ensure_build_deps() {
     if [ -n "$missing" ]; then
         log "Installing build dependencies:$missing ..."
         if ! command -v apt-get >/dev/null 2>&1; then
-            warn "apt-get not found — this installer requires Ubuntu / Debian."
+            warn "apt-get not found — this installer requires Ubuntu."
             warn "Install the dependencies manually and re-run, e.g.:"
             warn "  sudo apt-get install -y build-essential cmake pkg-config libssl-dev libzstd-dev protobuf-compiler"
             return 1
@@ -221,6 +221,12 @@ get_latest_release() {
 BIN_NAMES=(bckd bck-agent bck bck-proxy)
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
+
+# Prebuilt archives are published for Ubuntu x86_64 only; other arches build from source.
+if [ "$ARCH_LOWER" != "x86_64" ]; then
+    log "No prebuilt archive for this arch (releases publish x86_64 only) - building from source."
+    MODE="source"
+fi
 
 if [ "$MODE" = "release" ]; then
     TAG="${BCK_VERSION:-$(get_latest_release)}"

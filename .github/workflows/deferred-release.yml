@@ -1,0 +1,49 @@
+name: Deferred release (Oct 1)
+
+# Queued while Actions minutes are exhausted (reset Oct 1).
+# Publishes tag v0.9.31 which triggers release.yml (build + GitHub Release).
+on:
+  schedule:
+    - cron: '5 0 1 10 *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run before 2026-10-01 (minutes must be available)'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deferred-release
+  cancel-in-progress: false
+
+jobs:
+  tag-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Date guard
+        run: |
+          TODAY="$(date -u +%F)"
+          if [ "${{ inputs.force }}" != "true" ] && [ "$TODAY" '<' "2026-10-01" ]; then
+            echo "Minutes renew 2026-10-01; today is $TODAY. Re-run with force=true to override."
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push tag v0.9.31
+        run: |
+          set -eux
+          git fetch --tags origin
+          if git rev-parse "v0.9.31" >/dev/null 2>&1; then
+            echo "Tag v0.9.31 already exists, nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v0.9.31" -m "BCK Enterprise v0.9.31 (Ubuntu-only release)"
+          git push origin "v0.9.31"
