@@ -13,6 +13,8 @@ pub struct S3Storage {
     client: Client,
     bucket: String,
     prefix: String,
+    /// WORM retention days for Object Lock (COMPLIANCE mode). None = disabled.
+    object_lock_days: Option<u32>,
 }
 
 impl S3Storage {
@@ -22,6 +24,17 @@ impl S3Storage {
         endpoint: Option<&str>,
         access_key: Option<&str>,
         secret_key: Option<&str>,
+    ) -> Result<Self> {
+        Self::new_with_lock(bucket, region, endpoint, access_key, secret_key, None).await
+    }
+
+    pub async fn new_with_lock(
+        bucket: &str,
+        region: &str,
+        endpoint: Option<&str>,
+        access_key: Option<&str>,
+        secret_key: Option<&str>,
+        object_lock_days: Option<u32>,
     ) -> Result<Self> {
         let mut config_builder = aws_sdk_s3::Config::builder()
             .region(Region::new(region.to_string()));
@@ -41,7 +54,7 @@ impl S3Storage {
         let client = Client::from_conf(config_builder.build());
         let prefix = String::new();
 
-        Ok(Self { client, bucket: bucket.to_string(), prefix })
+        Ok(Self { client, bucket: bucket.to_string(), prefix, object_lock_days })
     }
 
     fn object_key(&self, id: &str) -> String {
@@ -55,13 +68,25 @@ impl S3Storage {
 impl StorageBackend for S3Storage {
     async fn write_block(&self, id: &str, data: &[u8]) -> Result<()> {
         let key = self.object_key(id);
-        self.client
+        let mut put = self.client
             .put_object()
             .bucket(&self.bucket)
             .key(&key)
-            .body(ByteStream::from(data.to_vec()))
-            .send()
-            .await?;
+            .body(ByteStream::from(data.to_vec()));
+        // P1 WORM (10/10): Object Lock COMPLIANCE retention when configured.
+        // Bucket must have Object Lock enabled; otherwise S3 rejects with
+        // InvalidRequest and the error surfaces (fail-closed, no silent plaintext).
+        if let Some(days) = self.object_lock_days {
+            if days > 0 {
+                let retain_until = (chrono::Utc::now() + chrono::Duration::days(days as i64)).to_rfc3339();
+                put = put.object_lock_mode(aws_sdk_s3::types::ObjectLockMode::Compliance)
+                    .object_lock_retain_until_date(
+                        aws_sdk_s3::primitives::DateTime::from_str(&retain_until, aws_sdk_s3::primitives::DateTimeFormat::DateTime)
+                            .map_err(|e| anyhow::anyhow!("object-lock date: {e}"))?,
+                    );
+            }
+        }
+        put.send().await?;
         Ok(())
     }
 

@@ -14,6 +14,12 @@
 #   2. Install binaries, web UI and default config to BCK_HOME (/opt/bck).
 #   3. Create systemd service.
 #   4. Idempotent: safe to re-run, acts as an upgrade.
+#
+# Supply-chain (10/10):
+#   - Release archives are SHA256-verified when a .sha256 asset exists.
+#   - Set BCK_REQUIRE_CHECKSUM=1 to fail closed when no checksum is published.
+#   - Cosign/minisign signatures: verify manually for now
+#     (see docs/OPERATIONS.md); automated signature verification is roadmap.
 
 set -euo pipefail
 
@@ -240,7 +246,10 @@ if [ "$MODE" = "release" ]; then
                 (cd "$TMPDIR" && sha256sum -c "$ARCHIVE.sha256") || fail "SHA256 verification failed for $ARCHIVE"
                 log "SHA256 verified for $ARCHIVE"
             else
-                warn "No .sha256 file for $ARCHIVE — skipping SHA verify (structural check already passed)"
+                if [ "${BCK_REQUIRE_CHECKSUM:-0}" = "1" ]; then
+                    fail "No .sha256 for $ARCHIVE and BCK_REQUIRE_CHECKSUM=1 (fail-closed)"
+                fi
+                warn "No .sha256 file for $ARCHIVE — skipping SHA verify (structural check already passed). Set BCK_REQUIRE_CHECKSUM=1 to fail closed."
             fi
             tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
             SRC_DIR="$TMPDIR"

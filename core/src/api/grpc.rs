@@ -38,6 +38,52 @@ use bck_proto::{
 use crate::server::AppState;
 
 // ---------------------------------------------------------------------------
+// gRPC auth: split planes (10/10).
+// - Agent service: pre-shared agent token OR per-agent JWT (agent plane).
+// - All other services: user JWT with RBAC + tenant scope (admin plane).
+//   A bare agent token is NOT sufficient for BackupEngine/SOBR/Cloud/M365.
+// ---------------------------------------------------------------------------
+
+fn bearer_of<T>(req: &Request<T>) -> Option<String> {
+    req.metadata()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(|s| s.to_string())
+}
+
+fn user_claims(state: &AppState, req: &Request<impl prost::Message>) -> Result<crate::auth::jwt::Claims, Status> {
+    let t = bearer_of(req).ok_or_else(|| Status::unauthenticated("missing credentials"))?;
+    // Agent-token alone must not unlock the admin plane.
+    if let Some(expected) = state.agent_token.as_deref() {
+        if !expected.is_empty() {
+            let (e, g) = (expected.as_bytes(), t.as_bytes());
+            let mut diff = (e.len() ^ g.len()) as u8;
+            for i in 0..e.len() {
+                diff |= e[i] ^ *g.get(i).unwrap_or(&0);
+            }
+            if diff == 0 {
+                return Err(Status::permission_denied(
+                    "agent token is valid for the Agent service only; use a user JWT for this method",
+                ));
+            }
+        }
+    }
+    state.jwt.validate(&t).map_err(|_| Status::unauthenticated("invalid or revoked token"))
+        .and_then(|c| {
+            if c.role == "agent" {
+                Err(Status::permission_denied("agent identity cannot call admin-plane methods"))
+            } else {
+                Ok(c)
+            }
+        })
+}
+
+fn status_err(e: anyhow::Error) -> Status {
+    Status::internal(e.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // BackupEngine (core engine operations, backed by the real JobManager + DB)
 // ---------------------------------------------------------------------------
 
@@ -57,6 +103,18 @@ impl BackupEngine for BackupEngineImpl {
         &self,
         request: Request<JobConfig>,
     ) -> Result<Response<JobHandle>, Status> {
+        let token = bearer_of(&request);
+        let claims = user_claims(&self.state, &request)?;
+        if !crate::auth::policy::can_mutate(&claims) {
+            return Err(Status::permission_denied("operator role required"));
+        }
+        // Persistent revocation (logout survives restarts) — async DB check.
+        if let Some(t) = token {
+            if crate::server::routes::auth::is_persistently_revoked(&self.state.db, &t).await {
+                return Err(Status::unauthenticated("token revoked"));
+            }
+        }
+        let tenant = crate::auth::policy::scoped_tenant(&claims);
         let config = request.into_inner();
         info!("gRPC start_job: {}", config.name);
 
@@ -80,7 +138,7 @@ impl BackupEngine for BackupEngineImpl {
                 &config.destination.as_ref().map(|d| d.repository_id.clone()).unwrap_or_default(),
                 None,
                 retention_days(&config),
-                None, // gRPC agent token is global scope
+                tenant.as_deref(),
             ).await.map_err(status_err)?
         } else {
             let source_path = config.source.as_ref()
@@ -95,7 +153,7 @@ impl BackupEngine for BackupEngineImpl {
                 &config.destination.as_ref().map(|d| d.repository_id.clone()).unwrap_or_default(),
                 None,
                 retention_days(&config),
-                None, // gRPC is authenticated by the shared agent token (global scope)
+                tenant.as_deref(),
             ).await.map_err(status_err)?
         };
 
@@ -117,6 +175,10 @@ impl BackupEngine for BackupEngineImpl {
         &self,
         request: Request<JobHandle>,
     ) -> Result<Response<Empty>, Status> {
+        let claims = user_claims(&self.state, &request)?;
+        if !crate::auth::policy::can_mutate(&claims) {
+            return Err(Status::permission_denied("operator role required"));
+        }
         let handle = request.into_inner();
         info!("gRPC cancel_job: {}", handle.job_id);
         let jm = self.state.job_manager.lock().await;
@@ -177,14 +239,18 @@ impl BackupEngine for BackupEngineImpl {
         &self,
         request: Request<SnapshotQuery>,
     ) -> Result<Response<SnapshotList>, Status> {
+        let claims = user_claims(&self.state, &request)?;
         let query = request.into_inner();
         let snapshots = crate::server::routes::snapshots::fetch_snapshots(
             &self.state.db,
             if query.job_id.is_empty() { None } else { Some(query.job_id.as_str()) },
-            if query.limit > 0 { query.limit as i64 } else { 100 },
+            if query.limit > 0 { (query.limit as i64).min(1000) } else { 100 },
         ).await.map_err(status_err)?;
+        let _tenant = crate::auth::policy::scoped_tenant(&claims);
 
-        let list: Vec<bck_proto::Snapshot> = snapshots.into_iter().map(|s| bck_proto::Snapshot {
+        let list: Vec<bck_proto::Snapshot> = snapshots.into_iter()
+            .filter(|s| crate::auth::policy::tenant_allows(&claims, s.tenant_id.as_deref()))
+            .map(|s| bck_proto::Snapshot {
             id: s.id,
             job_id: s.job_id,
             repository_id: s.repository_id,
@@ -237,6 +303,26 @@ impl BackupEngine for BackupEngineImpl {
         &self,
         request: Request<RestoreConfig>,
     ) -> Result<Response<Self::RestoreStream>, Status> {
+        // Admin plane: user JWT + restore capability + tenant ownership.
+        let token = bearer_of(&request);
+        let claims = user_claims(&self.state, &request)?;
+        if !crate::auth::policy::can_restore(&claims) {
+            return Err(Status::permission_denied("restore role required"));
+        }
+        if let Some(t) = token {
+            if crate::server::routes::auth::is_persistently_revoked(&self.state.db, &t).await {
+                return Err(Status::unauthenticated("token revoked"));
+            }
+        }
+        let snapshot_id_pre = request.get_ref().snapshot_id.clone();
+        // Tenant check synchronously before spawning (fail fast on чужому).
+        if let Ok(Some(snap)) = crate::server::routes::snapshots::fetch_snapshot(&self.state.db, &snapshot_id_pre).await {
+            if !crate::auth::policy::tenant_allows(&claims, snap.tenant_id.as_deref()) {
+                return Err(Status::not_found("snapshot not found"));
+            }
+        } else {
+            return Err(Status::not_found("snapshot not found"));
+        }
         let cfg = request.into_inner();
         let (tx, rx) = mpsc::channel(100);
         let state = self.state.clone();
@@ -266,15 +352,23 @@ impl BackupEngine for BackupEngineImpl {
                         };
                         match storage {
                             Some(storage) => {
+                                let want = if datastore.is_empty() { target.clone() } else { datastore };
+                                // SEC-001: gRPC VM restore uses the same allow-list.
+                                if let Err(e) = crate::restore::gate_restore_target(&want, &state.config.restore_root_resolved()) {
+                                    warn!("gRPC restore rejected target_datastore: {}", e);
+                                    None
+                                } else {
                                 r.restore_vm(
                                     &snapshot_id,
-                                    &if datastore.is_empty() { target.clone() } else { datastore },
+                                    &want,
                                     storage.as_ref(),
                                     None,
                                     None,
                                     &format!("bck-restore-{}", &snapshot_id[..snapshot_id.len().min(12)]),
                                     power_on,
+                                    Some(&state.config.restore_root_resolved()),
                                 ).await.ok()
+                                }
                             }
                             None => None,
                         }
@@ -1182,10 +1276,6 @@ impl Agent for AgentService {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn status_err(e: anyhow::Error) -> Status {
-    Status::internal(e.to_string())
-}
 
 fn retention_days(config: &JobConfig) -> Option<i32> {
     config.policy.as_ref().and_then(|p| {

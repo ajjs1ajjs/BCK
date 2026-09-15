@@ -145,7 +145,7 @@ async fn ldap_login(
 async fn register_provider(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
-    Json(provider): Json<SsoProvider>,
+    Json(mut provider): Json<SsoProvider>,
 ) -> Result<Json<SsoProvider>, StatusCode> {
     // SSO provider management is a security-sensitive admin surface;
     // the middleware already enforces global_admin on the /auth/sso
@@ -154,6 +154,13 @@ async fn register_provider(
         return Err(StatusCode::FORBIDDEN);
     }
     let _ = can_manage_dr; // keep import used
+    // SEC-008: encrypt IdP client secret at rest (enc: prefix). Legacy
+    // plaintext still decrypts transparently.
+    if !provider.encrypted_client_secret.is_empty() && !provider.encrypted_client_secret.starts_with("enc:") {
+        let key = crate::encrypt::app_key(&state.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        provider.encrypted_client_secret = crate::encrypt::encrypt_secret(&key, &provider.encrypted_client_secret)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
     let provider = sso(&state)
         .register_provider(provider)
         .await
@@ -164,10 +171,20 @@ async fn register_provider(
 async fn add_ldap(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
-    Json(cfg): Json<LdapConfig>,
+    Json(mut cfg): Json<LdapConfig>,
 ) -> StatusCode {
     if !is_global_admin(&claims) {
         return StatusCode::FORBIDDEN;
+    }
+    // SEC-008: encrypt LDAP bind password at rest.
+    if !cfg.bind_password.is_empty() && !cfg.bind_password.starts_with("enc:") {
+        match crate::encrypt::app_key(&state.config) {
+            Ok(key) => match crate::encrypt::encrypt_secret(&key, &cfg.bind_password) {
+                Ok(enc) => cfg.bind_password = enc,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+            },
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        }
     }
     sso(&state).add_ldap_config(cfg).await;
     StatusCode::OK

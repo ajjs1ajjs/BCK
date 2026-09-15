@@ -23,6 +23,19 @@ pub struct GraphAuth {
     pub expires_at: DateTime<Utc>,
 }
 
+/// Azure tenant id must be a UUID or a verified domain (no `/`, no scheme).
+fn is_valid_tenant_id(s: &str) -> bool {
+    if s.is_empty() || s.len() > 253 || s.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    if s.contains('/') || s.contains('\\') || s.contains("..") || s.contains("://") || s.contains('@') {
+        return false;
+    }
+    // UUID or domain-like.
+    uuid::Uuid::parse_str(s).is_ok()
+        || (s.contains('.') && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-'))
+}
+
 #[derive(Debug, Deserialize)]
 struct AuthResponse {
     access_token: String,
@@ -30,11 +43,14 @@ struct AuthResponse {
     token_type: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct GraphPage {
+    #[serde(default)]
     value: Vec<Value>,
     #[serde(rename = "@odata.nextLink")]
     next_link: Option<String>,
+    #[serde(rename = "@odata.deltaLink", default)]
+    delta_link: Option<String>,
 }
 
 /// Microsoft Graph API client (app-only, OAuth2 client-credentials flow).
@@ -60,8 +76,15 @@ impl Clone for GraphClient {
 
 impl GraphClient {
     pub fn new(tenant_id: String, client_id: String, client_secret: String) -> Self {
+        // SRE: 30s timeout + limited retries at the reqwest level so a hung
+        // Graph endpoint cannot wedge backup workers forever.
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
-            client: reqwest::Client::new(),
+            client,
             tenant_id,
             client_id,
             client_secret,
@@ -71,6 +94,11 @@ impl GraphClient {
 
     /// Authenticate with Microsoft Graph using the OAuth2 client-credentials flow.
     pub async fn authenticate(&self) -> Result<GraphAuth> {
+        // tenant_id is interpolated into the token URL path — validate strictly
+        // (UUID or domain) so `/` cannot rewrite the path on the MS host.
+        if !is_valid_tenant_id(&self.tenant_id) {
+            anyhow::bail!("invalid azure tenant id");
+        }
         let url = format!(
             "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
             self.tenant_id
@@ -132,6 +160,14 @@ impl GraphClient {
                 None
             }
         })
+    }
+
+    /// P2 delta query (10/10 minimal): follow a `@odata.deltaLink` when the
+    /// caller has one, otherwise start from the collection URL. Returns
+    /// (items, next_delta_link). Callers persist the link for the next run.
+    pub async fn get_delta_page(&self, url: &str) -> Result<(Vec<Value>, Option<String>)> {
+        let page: GraphPage = self.get(url).await?;
+        Ok((page.value, page.delta_link))
     }
 
     /// Perform an authenticated GET and deserialize the JSON body.

@@ -54,11 +54,22 @@ async fn register_tenant(
     // Stamp the caller's BCK owning tenant; azure_tenant_id is preserved from the
     // client request (it identifies the Azure AD tenant, not the BCK tenant).
     tenant.tenant_id = scoped_tenant(&claims);
+    // SEC-008: encrypt the OAuth client secret at rest. Legacy plaintext is
+    // still accepted on read (decrypt_secret passthrough) for migration.
+    if !tenant.encrypted_secret.is_empty() && !tenant.encrypted_secret.starts_with("enc:") {
+        let key = crate::encrypt::app_key(&state.config).map_err(|e| {
+            tracing::error!("m365 credential encryption key: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+        tenant.encrypted_secret = crate::encrypt::encrypt_secret(&key, &tenant.encrypted_secret)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
     let tenant = state.m365.register_tenant(tenant).await
         .map_err(|e| {
             tracing::error!("register M365 tenant: {}", e);
             StatusCode::BAD_REQUEST
         })?;
+    state.m365.snapshot(&state.db).await; // P0 durability
     Ok((StatusCode::CREATED, Json(redact_tenant(&tenant))))
 }
 
@@ -101,7 +112,8 @@ async fn start_backup(
             && tenant_allows(&claims, t.tenant_id.as_deref())
     }).ok_or(StatusCode::BAD_REQUEST)?;
 
-    let job = state.m365.start_backup(&tenant.azure_tenant_id, req.backup_type).await
+    let app_key = crate::encrypt::app_key(&state.config).ok();
+    let job = state.m365.start_backup_with_key(&tenant.azure_tenant_id, req.backup_type, app_key).await
         .map_err(|e| {
             tracing::error!("start M365 backup: {}", e);
             StatusCode::BAD_REQUEST

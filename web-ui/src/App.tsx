@@ -15,12 +15,23 @@ import Hypervisors from './pages/Hypervisors'
 import SelfService from './pages/SelfService'
 import Login from './pages/Login'
 import Layout from './components/Layout'
-import { getToken } from './api/client'
+import { getToken, getUser } from './api/client'
 import type { JSX } from 'react'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   if (!getToken()) {
     return <Navigate to="/login" replace />
+  }
+  return children
+}
+
+// SEC-010 hardening: hide admin structure from non-admin roles client-side
+// (server remains authoritative via 403).
+function RequireAdmin({ children }: { children: JSX.Element }) {
+  const u = getUser()
+  const role = (u as unknown as { role?: string })?.role ?? ''
+  if (!['admin', 'super_admin'].includes(role)) {
+    return <Navigate to="/dashboard" replace />
   }
   return children
 }
@@ -44,7 +55,7 @@ function App() {
         <Route path="/tenants" element={<Tenants />} />
         <Route path="/hypervisors" element={<Hypervisors />} />
         <Route path="/portal" element={<SelfService />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/admin" element={<RequireAdmin><Admin /></RequireAdmin>} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

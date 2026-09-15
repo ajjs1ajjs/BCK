@@ -30,6 +30,12 @@ pub mod m365;
 pub mod cloud;
 pub mod enterprise;
 pub mod validation;
+pub mod ransomware;
+pub mod ha;
+pub mod sim;
+
+#[cfg(test)]
+mod hardening_tests;
 
 pub use pipeline::BackupPipeline;
 pub use storage::StorageBackend;

@@ -65,6 +65,10 @@ impl StorageBackend for LocalStorage {
     }
 
     async fn list_blocks(&self, prefix: &str) -> Result<Vec<String>> {
+        // F7 hardening: reject traversal/absolute prefixes.
+        if prefix.contains("..") || prefix.contains('/') || prefix.contains('\\') || prefix.starts_with('.') {
+            anyhow::bail!("invalid block prefix");
+        }
         let mut blocks = Vec::new();
         let prefix_path = if prefix.is_empty() {
             self.root.clone()

@@ -106,13 +106,31 @@ impl NfsExporter {
     }
 
     /// Start the NFSv3 server. Blocks until stopped.
+    /// SEC-007: bounded concurrency (max 64 conns) + peer ACL. Loopback peers
+    /// always allowed; non-loopback requires BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1
+    /// (operator acknowledges public snapshot bytes).
     pub async fn serve(self: Arc<Self>, addr: SocketAddr) -> Result<()> {
         let listener = TcpListener::bind(addr).await?;
         info!("NFSv3 server listening on {} ({} files)", addr, self.files.len());
+        let sem = Arc::new(tokio::sync::Semaphore::new(64));
         loop {
             let (stream, peer) = listener.accept().await?;
+            if !peer.ip().is_loopback()
+                && std::env::var("BCK_ALLOW_PUBLIC_INSTANT_RECOVERY").as_deref() != Ok("1")
+            {
+                warn!("NFS conn {} rejected: non-loopback without BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1", peer);
+                continue;
+            }
+            let permit = match sem.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!("NFS conn {} rejected: too many connections", peer);
+                    continue;
+                }
+            };
             let this = self.clone();
             tokio::spawn(async move {
+                let _permit = permit;
                 if let Err(e) = this.handle_conn(stream).await {
                     warn!("NFS conn {} closed: {}", peer, e);
                 }

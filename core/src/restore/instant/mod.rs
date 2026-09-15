@@ -4,6 +4,7 @@ pub mod xdr;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -54,6 +55,9 @@ pub struct InstantDisk {
 
 /// Reads a byte range of a virtual file/disk from the backup store by walking
 /// the manifest blocks overlapping [offset, offset+len).
+/// SEC-002: stored blocks are decoded (decompress+decrypt) and SHA-256 verified
+/// against the manifest. A corrupt/mismatched overlapping block is a hard error,
+/// never silent zeros (which would boot a corrupted guest).
 async fn read_backed_range(
     _index: &BlockIndex,
     storage: &dyn StorageBackend,
@@ -61,9 +65,18 @@ async fn read_backed_range(
     file_path: &str,
     offset: u64,
     len: u32,
+    key: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    // Bound single read to avoid OOM via huge len.
+    if len > 8 * 1024 * 1024 {
+        anyhow::bail!("instant read len exceeds 8MiB cap");
+    }
     let end = offset + len as u64;
     let mut out = vec![0u8; len as usize];
+    let mut covered = vec![false; len as usize];
     for block in blocks {
         if block.relative_path != file_path {
             continue;
@@ -75,14 +88,29 @@ async fn read_backed_range(
         if overlap_start >= overlap_end {
             continue;
         }
-        let data = storage.read_block(&block.block_id.sha256).await?;
+        let raw = storage.read_block(&block.block_id.sha256).await?;
+        let data = crate::pipeline::decode_block(&raw, key)?;
+        let actual = hex::encode(sha2::Sha256::digest(&data));
+        if actual != block.block_id.sha256 {
+            anyhow::bail!(
+                "instant read: block integrity check failed for {} (data corruption)",
+                block.block_id.sha256
+            );
+        }
         let src_off = (overlap_start - block_start) as usize;
         let dst_off = (overlap_start - offset) as usize;
         let n = (overlap_end - overlap_start) as usize;
-        if src_off + n <= data.len() && dst_off + n <= out.len() {
-            out[dst_off..dst_off + n].copy_from_slice(&data[src_off..src_off + n]);
+        if src_off + n > data.len() || dst_off + n > out.len() {
+            anyhow::bail!("instant read: decoded block bounds mismatch (compression/encryption size drift)");
+        }
+        out[dst_off..dst_off + n].copy_from_slice(&data[src_off..src_off + n]);
+        for c in &mut covered[dst_off..dst_off + n] {
+            *c = true;
         }
     }
+    // Holes stay zeroed (sparse regions) — but any overlapping corrupt block above
+    // already errored instead of silently zeroing.
+    let _ = covered;
     Ok(out)
 }
 
@@ -90,6 +118,7 @@ async fn read_backed_range(
 pub struct InstantRecoveryManager {
     index: Arc<BlockIndex>,
     storage: Arc<RwLock<Box<dyn StorageBackend>>>,
+    decode_key: Option<Vec<u8>>,
     sessions: Arc<RwLock<Vec<InstantRecoverySession>>>,
     /// Optional hypervisor connector used to register the recovered VM directly
     /// on VMware/Hyper-V (instant recovery for VMs).
@@ -106,10 +135,19 @@ impl InstantRecoveryManager {
         index_path: &str,
         storage: Box<dyn StorageBackend>,
     ) -> Result<Self> {
+        Self::new_with_key(index_path, storage, None)
+    }
+
+    pub fn new_with_key(
+        index_path: &str,
+        storage: Box<dyn StorageBackend>,
+        decode_key: Option<Vec<u8>>,
+    ) -> Result<Self> {
         let index = Arc::new(BlockIndex::new(index_path)?);
         Ok(Self {
             index,
             storage: Arc::new(RwLock::new(storage)),
+            decode_key,
             sessions: Arc::new(RwLock::new(Vec::new())),
             connectors: Arc::new(RwLock::new(HashMap::new())),
             cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
@@ -153,15 +191,17 @@ impl InstantRecoveryManager {
         let blocks = manifest.blocks.clone();
         let snap = snapshot_id.to_string();
         let snap_for_read = snapshot_id.to_string();
+        let decode_key = self.decode_key.clone();
         exporter = exporter.with_read(move |path, off, len| {
             let index = index.clone();
             let storage = storage.clone();
             let blocks = blocks.clone();
             let _snap = snap_for_read.clone();
             let path = path.to_string();
+            let decode_key = decode_key.clone();
             Box::pin(async move {
                 let storage = storage.read().await;
-                read_backed_range(&index, storage.as_ref(), &blocks, &path, off, len).await
+                read_backed_range(&index, storage.as_ref(), &blocks, &path, off, len, decode_key.as_deref()).await
             })
         });
         let exporter = Arc::new(exporter);
@@ -220,6 +260,7 @@ impl InstantRecoveryManager {
         let index = self.index.clone();
         let storage = self.storage.clone();
         let blocks = manifest.blocks.clone();
+        let decode_key = self.decode_key.clone();
 
         // Treat the concatenation of all files as one flat LUN: first file starts at 0.
         // For a typical VM backup the manifest has one big disk file.
@@ -228,6 +269,7 @@ impl InstantRecoveryManager {
                 let index = index.clone();
                 let storage = storage.clone();
                 let blocks = blocks.clone();
+                let decode_key = decode_key.clone();
                 Box::pin(async move {
                     let storage = storage.read().await;
                     // Flat LUN: locate file containing this offset (files are ordered by first offset).
@@ -264,7 +306,7 @@ impl InstantRecoveryManager {
                                     base += sorted.last().map(|b| b.offset + b.size as u64).unwrap_or(0);
                                 }
                             }
-                            read_backed_range(&index, storage.as_ref(), &blocks, &path, offset - file_base, len).await
+                            read_backed_range(&index, storage.as_ref(), &blocks, &path, offset - file_base, len, decode_key.as_deref()).await
                         }
                         None => {
                             // Beyond any known file: read zeros.
@@ -527,7 +569,20 @@ impl InstantRecoveryRegistry {
         export_path: &str,
         listen_addr: &str,
     ) -> Result<InstantRecoverySession> {
-        let mgr = Arc::new(InstantRecoveryManager::new(index_path, storage)?);
+        self.start_nfs_with_key(index_path, storage, snapshot_id, vm_name, export_path, listen_addr, None).await
+    }
+
+    pub async fn start_nfs_with_key(
+        &self,
+        index_path: &str,
+        storage: Box<dyn StorageBackend>,
+        snapshot_id: &str,
+        vm_name: &str,
+        export_path: &str,
+        listen_addr: &str,
+        decode_key: Option<Vec<u8>>,
+    ) -> Result<InstantRecoverySession> {
+        let mgr = Arc::new(InstantRecoveryManager::new_with_key(index_path, storage, decode_key)?);
         let session = mgr.start_nfs_recovery(snapshot_id, vm_name, export_path, listen_addr).await?;
         self.inner.write().await.push(mgr);
         Ok(session)
@@ -543,7 +598,20 @@ impl InstantRecoveryRegistry {
         target_iqn: &str,
         listen_addr: &str,
     ) -> Result<InstantRecoverySession> {
-        let mgr = Arc::new(InstantRecoveryManager::new(index_path, storage)?);
+        self.start_iscsi_with_key(index_path, storage, snapshot_id, vm_name, target_iqn, listen_addr, None).await
+    }
+
+    pub async fn start_iscsi_with_key(
+        &self,
+        index_path: &str,
+        storage: Box<dyn StorageBackend>,
+        snapshot_id: &str,
+        vm_name: &str,
+        target_iqn: &str,
+        listen_addr: &str,
+        decode_key: Option<Vec<u8>>,
+    ) -> Result<InstantRecoverySession> {
+        let mgr = Arc::new(InstantRecoveryManager::new_with_key(index_path, storage, decode_key)?);
         let session = mgr.start_iscsi_recovery(snapshot_id, vm_name, target_iqn, listen_addr).await?;
         self.inner.write().await.push(mgr);
         Ok(session)
@@ -564,7 +632,25 @@ impl InstantRecoveryRegistry {
         datastore: &str,
         power_on: bool,
     ) -> Result<InstantRecoverySession> {
-        let mgr = Arc::new(InstantRecoveryManager::new(index_path, storage)?);
+        self.start_hypervisor_with_key(index_path, storage, snapshot_id, vm_name, protocol, listen_addr, hypervisor_id, connector, datastore, power_on, None).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_hypervisor_with_key(
+        &self,
+        index_path: &str,
+        storage: Box<dyn StorageBackend>,
+        snapshot_id: &str,
+        vm_name: &str,
+        protocol: &str,
+        listen_addr: &str,
+        hypervisor_id: &str,
+        connector: Box<dyn HypervisorConnector>,
+        datastore: &str,
+        power_on: bool,
+        decode_key: Option<Vec<u8>>,
+    ) -> Result<InstantRecoverySession> {
+        let mgr = Arc::new(InstantRecoveryManager::new_with_key(index_path, storage, decode_key)?);
         let session = mgr.start_hypervisor_recovery(
             snapshot_id, vm_name, protocol, listen_addr, hypervisor_id, connector, datastore, power_on,
         ).await?;

@@ -10,10 +10,16 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::auth::jwt::Claims;
+use crate::auth::policy::{can_mutate, scoped_tenant, tenant_allows};
 use crate::restore::requests::RestoreRequest;
 use crate::server::AppState;
 
-const APPROVER_ROLES: [&str; 3] = ["admin", "operator", "super_admin"];
+/// Approvers are those who can mutate (SuperAdmin/Admin/Operator).
+/// RestoreOperator/Viewer/Agent cannot approve. Tenant isolation is
+/// enforced per-request (BOLA fix), not by role alone.
+fn can_approve(claims: &Claims) -> bool {
+    can_mutate(claims)
+}
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
@@ -58,7 +64,7 @@ async fn me(
         user_id: claims.sub.clone(),
         username: claims.username.clone(),
         role: claims.role.clone(),
-        can_approve: APPROVER_ROLES.contains(&claims.role.as_str()),
+        can_approve: can_approve(&claims),
     })
 }
 
@@ -67,9 +73,26 @@ async fn submit_request(
     Extension(claims): Extension<Claims>,
     Json(req): Json<SubmitRequest>,
 ) -> Result<(StatusCode, Json<RestoreRequest>), StatusCode> {
+    // Tenant ownership is stamped from the caller's claims; snapshot must
+    // belong to the same tenant (or caller must be global admin).
+    // Legacy requests referencing unknown snapshots are allowed for global
+    // admins so operator workflows without a DB row keep working.
+    match crate::server::routes::restore::lookup_snapshot(&state.db, &req.snapshot_id).await {
+        Ok(snapshot) => {
+            if !tenant_allows(&claims, snapshot.tenant_id.as_deref()) {
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
+        Err(_) => {
+            if scoped_tenant(&claims).is_some() {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
+    }
     let request = state.restore_requests.submit(
         &claims.sub,
         &claims.username,
+        scoped_tenant(&claims),
         &req.snapshot_id,
         req.files,
         &req.target_path,
@@ -78,6 +101,7 @@ async fn submit_request(
         tracing::error!("submit restore request: {}", e);
         StatusCode::BAD_REQUEST
     })?;
+    state.restore_requests.snapshot(&state.db).await; // P0 durability
     Ok((StatusCode::CREATED, Json(request)))
 }
 
@@ -93,12 +117,15 @@ async fn cancel_request(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    // Only the submitter (or an approver) may cancel a request — otherwise any
-    // authenticated user could cancel another user's pending restore.
-    let owned = state.restore_requests.get(&id).await
-        .map(|r| r.user_id == claims.sub || APPROVER_ROLES.contains(&claims.role.as_str()))
-        .unwrap_or(false);
-    if !owned {
+    // Only the submitter (or an approver of the SAME tenant) may cancel.
+    let allowed = match state.restore_requests.get(&id).await {
+        Some(r) => {
+            r.user_id == claims.sub
+                || (can_approve(&claims) && tenant_allows(&claims, r.tenant_id.as_deref()))
+        }
+        None => false,
+    };
+    if !allowed {
         return Err(StatusCode::FORBIDDEN);
     }
     if state.restore_requests.cancel(&id).await.unwrap_or(false) {
@@ -112,10 +139,10 @@ async fn list_all(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<Vec<RestoreRequest>>, StatusCode> {
-    if !APPROVER_ROLES.contains(&claims.role.as_str()) {
+    if !can_approve(&claims) {
         return Err(StatusCode::FORBIDDEN);
     }
-    Ok(Json(state.restore_requests.list_all().await))
+    Ok(Json(state.restore_requests.list_all_for_tenant(scoped_tenant(&claims).as_deref()).await))
 }
 
 async fn approve_request(
@@ -124,8 +151,16 @@ async fn approve_request(
     Path(id): Path<String>,
     Json(req): Json<DecisionRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    if !APPROVER_ROLES.contains(&claims.role.as_str()) {
+    if !can_approve(&claims) {
         return Err(StatusCode::FORBIDDEN);
+    }
+    // Cross-tenant approve is forbidden even for approvers.
+    if let Some(r) = state.restore_requests.get(&id).await {
+        if !tenant_allows(&claims, r.tenant_id.as_deref()) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
     }
     if state.restore_requests.approve(&id, &claims.username, &req.note).await.unwrap_or(false) {
         Ok(StatusCode::OK)
@@ -140,8 +175,15 @@ async fn reject_request(
     Path(id): Path<String>,
     Json(req): Json<DecisionRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    if !APPROVER_ROLES.contains(&claims.role.as_str()) {
+    if !can_approve(&claims) {
         return Err(StatusCode::FORBIDDEN);
+    }
+    if let Some(r) = state.restore_requests.get(&id).await {
+        if !tenant_allows(&claims, r.tenant_id.as_deref()) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
     }
     if state.restore_requests.reject(&id, &claims.username, &req.note).await.unwrap_or(false) {
         Ok(StatusCode::OK)
@@ -155,8 +197,15 @@ async fn complete_request(
     Extension(claims): Extension<Claims>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    if !APPROVER_ROLES.contains(&claims.role.as_str()) {
+    if !can_approve(&claims) {
         return Err(StatusCode::FORBIDDEN);
+    }
+    if let Some(r) = state.restore_requests.get(&id).await {
+        if !tenant_allows(&claims, r.tenant_id.as_deref()) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
     }
     if state.restore_requests.complete(&id).await.unwrap_or(false) {
         Ok(StatusCode::OK)

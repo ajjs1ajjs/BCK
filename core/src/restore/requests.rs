@@ -22,6 +22,10 @@ pub struct RestoreRequest {
     pub id: String,
     pub user_id: String,
     pub username: String,
+    /// Owning BCK tenant of the submitter (`None` = global). Used for
+    /// cross-tenant isolation of approve/list (BOLA fix).
+    #[serde(default)]
+    pub tenant_id: Option<String>,
     pub snapshot_id: String,
     #[serde(default)]
     pub files: Vec<String>,
@@ -57,6 +61,7 @@ impl RestoreRequestManager {
         &self,
         user_id: &str,
         username: &str,
+        tenant_id: Option<String>,
         snapshot_id: &str,
         files: Vec<String>,
         target_path: &str,
@@ -74,6 +79,7 @@ impl RestoreRequestManager {
             id: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_string(),
             username: username.to_string(),
+            tenant_id,
             snapshot_id: snapshot_id.to_string(),
             files,
             target_path: target_path.to_string(),
@@ -103,6 +109,39 @@ impl RestoreRequestManager {
     /// List all requests (approvers).
     pub async fn list_all(&self) -> Vec<RestoreRequest> {
         self.requests.read().await.clone()
+    }
+
+    /// Replace entire state (DB hydration on startup).
+    pub async fn replace_all(&self, v: Vec<RestoreRequest>) {
+        *self.requests.write().await = v;
+    }
+
+    pub async fn snapshot(&self, db: &crate::db::DbPool) {
+        let all = self.requests.read().await.clone();
+        if let Ok(v) = serde_json::to_string(&all) {
+            let _ = crate::db::persist_set(db, "portal", "requests", &v).await;
+        }
+    }
+
+    pub async fn hydrate(&self, db: &crate::db::DbPool) {
+        for (k, v) in crate::db::persist_list(db, "portal").await {
+            if k == "requests" {
+                if let Ok(r) = serde_json::from_str::<Vec<RestoreRequest>>(&v) {
+                    *self.requests.write().await = r;
+                }
+            }
+        }
+    }
+
+    /// List all requests visible to a tenant scope (`None` = global admin).
+    pub async fn list_all_for_tenant(&self, tenant: Option<&str>) -> Vec<RestoreRequest> {
+        match tenant {
+            None => self.list_all().await,
+            Some(mine) => self.requests.read().await.iter()
+                .filter(|r| r.tenant_id.as_deref() == Some(mine))
+                .cloned()
+                .collect(),
+        }
     }
 
     /// Get a request by id.

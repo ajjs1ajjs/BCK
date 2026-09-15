@@ -20,6 +20,8 @@ pub struct Scheduler {
     jobs: Arc<RwLock<HashMap<String, ScheduledJob>>>,
     job_manager: Arc<Mutex<JobManager>>,
     running: Arc<RwLock<bool>>,
+    /// Worker pool bound (10/10): max 4 concurrent job starts per tick.
+    worker_sem: Arc<tokio::sync::Semaphore>,
 }
 
 impl Scheduler {
@@ -28,6 +30,7 @@ impl Scheduler {
             jobs: Arc::new(RwLock::new(HashMap::new())),
             job_manager,
             running: Arc::new(RwLock::new(false)),
+            worker_sem: Arc::new(tokio::sync::Semaphore::new(4)),
         }
     }
 
@@ -66,6 +69,7 @@ impl Scheduler {
         let jobs = self.jobs.clone();
         let job_manager = self.job_manager.clone();
         let running = self.running.clone();
+        let worker_sem = self.worker_sem.clone();
 
         tokio::spawn(async move {
             let mut interval = time::interval(Duration::from_secs(15));
@@ -91,7 +95,7 @@ impl Scheduler {
                 }
 
                 for job_id in to_run {
-                    // Re-check under write lock to avoid double-fire on slow ticks.
+                    // Re-check under read lock to avoid double-fire on slow ticks.
                     let should_run = {
                         let jobs_guard = jobs.read().await;
                         jobs_guard.get(&job_id).is_some_and(|s| {
@@ -101,16 +105,26 @@ impl Scheduler {
                     if !should_run {
                         continue;
                     }
-                    let jm = job_manager.lock().await;
-                    if let Err(e) = jm.start_job(&job_id).await {
-                        // "already running" is expected on overlap — don't spam error.
-                        if e.to_string().contains("already running") {
-                            info!("Scheduled job {} skipped (already running)", job_id);
-                        } else {
-                            error!("Failed to start scheduled job {}: {}", job_id, e);
+                    // Worker pool (10/10): bound concurrent starts to 4, never
+                    // hold the JM lock across the tick loop.
+                    let jm = job_manager.clone();
+                    let sem = worker_sem.clone();
+                    let spawn_id = job_id.clone();
+                    tokio::spawn(async move {
+                        let _permit = sem.acquire_owned().await;
+                        // Short lock only for the start call itself.
+                        let res = {
+                            let jm = jm.lock().await;
+                            jm.start_job(&spawn_id).await.map(|_| ()).map_err(|e| e.to_string())
+                        };
+                        if let Err(msg) = res {
+                            if msg.contains("already running") {
+                                info!("Scheduled job {} skipped (already running)", spawn_id);
+                            } else {
+                                error!("Failed to start scheduled job {}: {}", spawn_id, msg);
+                            }
                         }
-                    }
-                    drop(jm);
+                    });
 
                     // Update next run from wall-clock to prevent drift accumulation.
                     let mut jobs_guard = jobs.write().await;

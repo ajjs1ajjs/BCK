@@ -283,7 +283,9 @@ async fn tape_drive_media_roundtrip() {
     let drive: serde_json::Value = read_json(resp).await;
     let drive_id = drive["id"].as_str().unwrap().to_string();
 
-    let tape_path = format!("{}\\BK0001L9.ltfs", dir);
+    let tape_dir = std::path::Path::new(&dir).join("tapes");
+    std::fs::create_dir_all(&tape_dir).unwrap();
+    let tape_path = tape_dir.join("BK0001L9.ltfs").to_string_lossy().to_string();
     let format_body = format!(
         r#"{{"device_path":"{}","barcode":"BK0001L9","capacity_bytes":10000}}"#,
         tape_path.replace('\\', "\\\\"),
@@ -825,9 +827,13 @@ async fn agent_endpoints_require_agent_token() {
     // Correct pre-shared token -> accepted (200).
     let resp = oneshot_auth(app.clone(), "POST", "/agents/heartbeat", Some(heartbeat), "Bearer test-agent-token").await;
     assert_eq!(resp.status(), StatusCode::OK);
+    let hb_json: serde_json::Value = read_json(resp).await;
+    let agent_jwt = hb_json["token"].as_str().unwrap().to_string();
 
-    // Pending-task polling also requires the token.
+    // Pending-task polling requires the per-agent JWT (SEC-003); shared secret alone -> 401.
     let resp = oneshot_auth(app.clone(), "GET", "/agents/agent-1/tasks/pending", None, "Bearer test-agent-token").await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = oneshot_auth(app.clone(), "GET", "/agents/agent-1/tasks/pending", None, &format!("Bearer {}", agent_jwt)).await;
     assert_eq!(resp.status(), StatusCode::OK);
     let resp = oneshot(app.clone(), "GET", "/agents/agent-1/tasks/pending", None).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);

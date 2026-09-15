@@ -138,23 +138,8 @@ impl JwtManager {
         initial_len - final_len
     }
 
-    pub fn generate_api_token(&self, name: &str) -> Result<String, anyhow::Error> {
-        let now = Utc::now();
-        let claims = Claims {
-            sub: uuid::Uuid::new_v4().to_string(),
-            username: format!("api_{}", name),
-            role: "api".into(),
-            exp: (now + chrono::Duration::days(365)).timestamp() as usize,
-            iat: now.timestamp() as usize,
-            tenant_id: None,
-        };
-
-        let token = encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(&self.secret),
-        )?;
-        Ok(token)
-    }
+    // NOTE: long-lived API tokens (365d, role="api") were removed.
+    // All automation uses short-lived user JWTs (24h) or per-agent JWTs.
+    // Reintroduce only with scoped permissions + rotation + audit log.
 }
 

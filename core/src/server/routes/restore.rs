@@ -1,7 +1,6 @@
 use axum::{
     extract::{Extension, Path, State, Query},
     Json,
-    body::Body,
     http::StatusCode,
     response::Response,
 };
@@ -123,6 +122,29 @@ async fn restore_vm(
     Extension(claims): Extension<Claims>,
     Json(req): Json<VmRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
+    if state.require_leader().await.is_err() {
+        return Err(StatusCode::CONFLICT);
+    }
+    // SEC-001: gate VM restore target through the same allow-list as file restore.
+    if let Err(msg) = validate_restore_target(&state, &req.target_datastore) {
+        tracing::warn!(
+            "restore_vm: rejected target_datastore for sub={} reason={}",
+            claims.sub,
+            msg
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    // Validate optional display fields to avoid log injection / oversized values.
+    if let Some(host) = &req.target_host {
+        if host.len() > 253 || host.chars().any(|c| c.is_control()) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+    if let Some(name) = &req.vm_name {
+        if name.len() > 128 || name.chars().any(|c| c.is_control()) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
     let snapshot = scoped_snapshot(&state, &claims, &req.snapshot_id).await?;
 
     let session = RestoreSession {
@@ -173,6 +195,9 @@ async fn restore_file(
     Extension(claims): Extension<Claims>,
     Json(req): Json<FileRestoreRequest>,
 ) -> Result<Json<RestoreSessionResponse>, StatusCode> {
+    if state.require_leader().await.is_err() {
+        return Err(StatusCode::CONFLICT);
+    }
     // SEC-020: validate the target path before any work begins.
     if let Err(msg) = validate_restore_target(&state, &req.target_path) {
         tracing::warn!(
@@ -268,10 +293,11 @@ async fn instant_recovery(
     // Start the actual NFS/iSCSI server in the background.
     let registry = state.instant_recovery.clone();
     let index_str2 = index_str.clone();
+    let decode_key = encryption_key(&state);
     tokio::spawn(async move {
         let result = match req.protocol.to_lowercase().as_str() {
-            "nfs" => registry.start_nfs(&index_str2, storage, &snap_id, &vm_name, "", &listen).await,
-            _ => registry.start_iscsi(&index_str2, storage, &snap_id, &vm_name, "", &listen).await,
+            "nfs" => registry.start_nfs_with_key(&index_str2, storage, &snap_id, &vm_name, "", &listen, decode_key).await,
+            _ => registry.start_iscsi_with_key(&index_str2, storage, &snap_id, &vm_name, "", &listen, decode_key).await,
         };
         match result {
             Ok(_) => {
@@ -428,8 +454,9 @@ async fn instant_recovery_vm(
     state.restore_tracker.create(session).await;
 
     let registry = state.instant_recovery.clone();
+    let decode_key_hv = encryption_key(&state);
     tokio::spawn(async move {
-        let result = registry.start_hypervisor(
+        let result = registry.start_hypervisor_with_key(
             &index_str,
             storage,
             &snap_id,
@@ -440,6 +467,7 @@ async fn instant_recovery_vm(
             connector,
             &datastore,
             power_on,
+            decode_key_hv,
         ).await;
         match result {
             Ok(_) => {
@@ -494,35 +522,93 @@ async fn browse_snapshot(
 }
 
 /// Download (or preview) a single file from a snapshot, reassembled from the
-/// block store on the fly.
+/// block store on the fly. Supports `Range: bytes=a-b` (206) for chunked
+/// download of files larger than the 256MiB single-response cap.
 async fn download_file(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
     Path(snapshot_id): Path<String>,
     Query(params): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
 ) -> Result<Response, StatusCode> {
-    let path = params.get("path").ok_or(StatusCode::BAD_REQUEST)?;
+    let path = params.get("path").ok_or(StatusCode::BAD_REQUEST)?.clone();
     let snapshot = scoped_snapshot(&state, &claims, &snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await
         .map_err(|_| StatusCode::NOT_FOUND)?;
     let storage = build_storage(&repo, encryption_key(&state)).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let key = encryption_key(&state);
+    let key = encryption_key_for_repo(&state, &repo.id).await;
 
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let explorer = crate::restore::explorer::GuestFileExplorer::new(&index_str)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let data = explorer.extract_file(&snapshot_id, path, storage.as_ref(), key.as_deref())
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    // P1 range support (10/10): `Range: bytes=<start>-<end>` (end inclusive).
+    if let Some(range) = headers.get(axum::http::header::RANGE).and_then(|v| v.to_str().ok()) {
+        let (start, end) = parse_range(range).ok_or(StatusCode::RANGE_NOT_SATISFIABLE)?;
+        let (data, total) = explorer.extract_file_range(&snapshot_id, &path, storage.as_ref(), key.as_deref(), start, end)
+            .await
+            .map_err(|_| StatusCode::RANGE_NOT_SATISFIABLE)?;
+        let stream = tokio_stream::iter(
+            data.chunks(64 * 1024)
+                .map(|c| Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(c)))
+                .collect::<Vec<_>>(),
+        );
+        let body = axum::body::Body::from_stream(stream);
+        let end_incl = start + data.len() as u64 - 1;
+        let response = Response::builder()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Content-Type", "application/octet-stream")
+            .header("Content-Length", data.len().to_string())
+            .header("Content-Range", format!("bytes {}-{}/{}", start, end_incl, total))
+            .header("Accept-Ranges", "bytes")
+            .body(body)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        return Ok(response);
+    }
 
+    let data = explorer.extract_file(&snapshot_id, &path, storage.as_ref(), key.as_deref())
+        .await
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("exceeds 256MiB") {
+                StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                StatusCode::NOT_FOUND
+            }
+        })?;
+
+    // SEC-006: stream in 64KiB chunks (backpressure) instead of one giant buffer.
+    let stream = tokio_stream::iter(
+        data.chunks(64 * 1024)
+            .map(|c| Ok::<_, std::io::Error>(bytes::Bytes::copy_from_slice(c)))
+            .collect::<Vec<_>>(),
+    );
+    let body = axum::body::Body::from_stream(stream);
     let response = Response::builder()
         .header("Content-Type", "application/octet-stream")
         .header("Content-Length", data.len().to_string())
-        .body(Body::from(data))
+        .header("Accept-Ranges", "bytes")
+        .body(body)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(response)
+}
+
+/// Parse `Range: bytes=<start>-<end>` (end inclusive, may be open).
+/// Returns (start, end_exclusive) for `extract_file_range`.
+fn parse_range(h: &str) -> Option<(u64, u64)> {
+    let spec = h.trim().strip_prefix("bytes=")?;
+    let (a, b) = spec.split_once('-')?;
+    let start: u64 = a.trim().parse().ok()?;
+    let end_excl = if b.trim().is_empty() {
+        start + crate::restore::explorer::GuestFileExplorer::MAX_EXTRACT_BYTES
+    } else {
+        b.trim().parse::<u64>().ok()?.saturating_add(1)
+    };
+    if end_excl <= start || end_excl - start > crate::restore::explorer::GuestFileExplorer::MAX_EXTRACT_BYTES {
+        return None;
+    }
+    Some((start, end_excl))
 }
 
 #[derive(Deserialize)]
@@ -561,6 +647,7 @@ async fn start_surebackup(
 
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let listen = req.target_host.clone().unwrap_or_default();
+    let decode_key_sb = encryption_key(&state);
     let state = state.clone();
 
     // Drive the verification in the background:
@@ -573,7 +660,7 @@ async fn start_surebackup(
         }).await;
 
         let session = state.instant_recovery
-            .start_nfs(&index_str, storage, &req.snapshot_id, &req.vm_name, "", &listen)
+            .start_nfs_with_key(&index_str, storage, &req.snapshot_id, &req.vm_name, "", &listen, decode_key_sb)
             .await;
 
         let session = match session {
@@ -689,7 +776,7 @@ fn session_to_response(s: &RestoreSession) -> RestoreSessionResponse {
     }
 }
 
-async fn lookup_snapshot(db: &DbPool, snapshot_id: &str) -> Result<SnapshotModel, sqlx::Error> {
+pub(crate) async fn lookup_snapshot(db: &DbPool, snapshot_id: &str) -> Result<SnapshotModel, sqlx::Error> {
     match db {
         DbPool::Sqlite(pool) => {
             sqlx::query_as::<_, SnapshotModel>(
@@ -762,6 +849,13 @@ fn encryption_key(state: &AppState) -> Option<Vec<u8>> {
     crate::encrypt::app_key(&state.config).ok()
 }
 
+async fn encryption_key_for_repo(state: &AppState, repo_id: &str) -> Option<Vec<u8>> {
+    // P1 envelope: per-repo DEK with KEK fallback for legacy repos.
+    crate::encrypt::data_key_for_repo(&state.db, &state.config, repo_id)
+        .await
+        .or_else(|| encryption_key(state))
+}
+
 async fn perform_vm_restore(
     state: &Arc<AppState>,
     req: &VmRestoreRequest,
@@ -771,7 +865,7 @@ async fn perform_vm_restore(
     let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await?;
     let storage = build_storage(&repo, encryption_key(&state)).await?;
-    let key = encryption_key(&state);
+    let key = encryption_key_for_repo(&state, &repo.id).await;
 
     // Optional: build a hypervisor connector so the restored VM can be
     // re-registered on the source hypervisor.
@@ -797,6 +891,7 @@ async fn perform_vm_restore(
         connector.as_deref(),
         &vm_name,
         req.power_on,
+        Some(&state.config.restore_root_resolved()),
     ).await?;
 
     crate::db::record_event(
@@ -820,7 +915,7 @@ async fn perform_file_restore(
     let snapshot = lookup_snapshot(&state.db, &req.snapshot_id).await?;
     let repo = lookup_repository(&state.db, &snapshot.repository_id).await?;
     let storage = build_storage(&repo, encryption_key(&state)).await?;
-    let key = encryption_key(&state);
+    let key = encryption_key_for_repo(&state, &repo.id).await;
 
     let index_str = state.config.storage.default_path.to_string_lossy().to_string();
     let orchestrator = RestoreOrchestrator::new(&index_str)?;

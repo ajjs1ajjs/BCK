@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.10.0] - 2026-09-15
+
+### Enterprise (Veeam-alternative round)
+
+**Безпека (audit round 2, всі findings закриті):**
+- VM restore `target_datastore` через `restore_root` allow-list (route + orchestrator + gRPC).
+- Instant Recovery: decode (decompress+decrypt) + SHA-верифікація, hard error замість тихих нулів, cap 8MiB.
+- Agent shared secret — тільки `/heartbeat`; poll/report — per-agent JWT; `UserRole::from_str("agent")`.
+- gRPC split planes: Agent = agent token/JWT, решта — user JWT + RBAC + tenant scope + persistent revocation.
+- Tape `format`: allow-list всередині `<datadir>/tapes` (`BCK_TAPE_ROOT`).
+- Download: стрімінг 64KiB + cap 256MiB (413) + `Range: bytes=a-b` → 206.
+- Секрети M365/SSO/LDAP/`access_key`/cloud — `enc:` at rest з розшифровкою на використанні.
+- Hypervisor host SSRF-guard (metadata/link-local blocked, private через `BCK_ALLOW_PRIVATE_HV=1`).
+- NFS/iSCSI: sem 64, peer ACL, iSCSI CHAP-user gate (`BCK_ISCSI_CHAP_USER`).
+- Login: httpOnly cookie + тротлінг user|IP + авто-rehash SHA-256→Argon2; JWT в UI — memory+sessionStorage.
+- Portal BOLA закрито (`tenant_id` + per-tenant approve); `api`-токени 365d видалено; middleware — segment matching; `/metrics` за auth.
+- Capacity TOCTOU → атомарний `UPDATE ... WHERE`; CDP journal → `spawn_blocking`; SOBR O(n²)→O(n).
+
+**Архітектура:**
+- Durability: `persisted_state` KV + `job_queue` + `repo_keys`; hydrate/snapshot SOBR/CDP/DR/M365/portal; scheduler worker pool (4).
+- HA active-passive: `leader_lock`, heartbeat 15с/TTL 45с, standby 409, `/healthz` з лідером.
+- KMS: file/env/Vault/AWS (`BCK_KMS`, `BCK_KEK_B64`, `VAULT_*`, `BCK_KMS_KEY_ID`).
+- Envelope: per-repo DEK; S3 Object Lock COMPLIANCE (`object_lock_days`).
+- Метрики: `bck_jobs_failed`, `bck_snapshots_total`, `bck_restores_*`; дашборд — 1 batch.
+- Legal hold (`423` на видалення) + `/snapshots/holds`; tenant billing; ransomware-евристика; M365 delta; CBT parent-linkage.
+- Симуляції: `bck drill load|chaos|restore|health`, `core::sim`, `scripts/simulate.sh`, HA-failover тест.
+
+### Тести
+
+- 235/235 passing (`cargo test -p bck-core --lib`).
+
 ## [0.9.31] - 2026-09-14
 
 ### Змінено (тільки Ubuntu)

@@ -104,6 +104,15 @@ impl M365BackupManager {
         azure_tenant_id: &str,
         backup_type: M365BackupType,
     ) -> Result<M365BackupJob> {
+        self.start_backup_with_key(azure_tenant_id, backup_type, None).await
+    }
+
+    pub async fn start_backup_with_key(
+        &self,
+        azure_tenant_id: &str,
+        backup_type: M365BackupType,
+        app_key: Option<Vec<u8>>,
+    ) -> Result<M365BackupJob> {
         let tenants = self.tenants.read().await;
         let tenant = tenants
             .iter()
@@ -137,12 +146,17 @@ impl M365BackupManager {
 
         let bt = backup_type.clone();
         tokio::spawn(async move {
-            // NOTE: tenant.encrypted_secret is used as the plaintext client secret for now.
-            // Decryption-at-rest (KMS) is handled later.
+            // SEC-008: decrypt enc: secrets with the app key; legacy plaintext
+            // passes through for migration.
+            let plain_secret = match &app_key {
+                Some(k) => crate::encrypt::decrypt_secret(k, &tenant_info.encrypted_secret)
+                    .unwrap_or_else(|_| tenant_info.encrypted_secret.clone()),
+                None => tenant_info.encrypted_secret.clone(),
+            };
             let graph = GraphClient::new(
                 tenant_info.azure_tenant_id.clone(),
                 tenant_info.client_id.clone(),
-                tenant_info.encrypted_secret.clone(),
+                plain_secret,
             );
             let backup_dir = std::env::temp_dir().join("bck-m365").join(&job_id);
             let result = run_backup(&graph, bt, &backup_dir).await;
@@ -174,6 +188,27 @@ impl M365BackupManager {
     /// List backup jobs
     pub async fn list_jobs(&self) -> Vec<M365BackupJob> {
         self.active_jobs.read().await.clone()
+    }
+
+    pub async fn replace_tenants(&self, v: Vec<M365Tenant>) {
+        *self.tenants.write().await = v;
+    }
+
+    pub async fn snapshot(&self, db: &crate::db::DbPool) {
+        let t = self.tenants.read().await.clone();
+        if let Ok(v) = serde_json::to_string(&t) {
+            let _ = crate::db::persist_set(db, "m365", "tenants", &v).await;
+        }
+    }
+
+    pub async fn hydrate(&self, db: &crate::db::DbPool) {
+        for (k, v) in crate::db::persist_list(db, "m365").await {
+            if k == "tenants" {
+                if let Ok(t) = serde_json::from_str::<Vec<M365Tenant>>(&v) {
+                    *self.tenants.write().await = t;
+                }
+            }
+        }
     }
 }
 

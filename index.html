@@ -192,8 +192,8 @@ document.getElementById('year').textContent=new Date().getFullYear();
 // counters
 const cio=new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;const b=e.target;const end=parseFloat(b.dataset.count);const suf=b.dataset.suffix||'';const t0=performance.now();const step=t=>{const p=Math.min(1,(t-t0)/1200);b.textContent=(end%1? (end*p).toFixed(1):Math.round(end*p))+suf;if(p<1)requestAnimationFrame(step)};requestAnimationFrame(step);cio.unobserve(b);}),{threshold:.5});
 document.querySelectorAll('[data-count]').forEach(el=>cio.observe(el));
-// img fallback
-document.querySelectorAll('.shot img').forEach(img=>{img.loading='lazy';img.onerror=()=>{img.style.display='none';img.parentElement.innerHTML='<div style=\"padding:60px 20px;text-align:center;color:#5b6577;font-size:3rem\">🖼️</div>';};});
+// img fallback (no innerHTML sink: build nodes via DOM API)
+document.querySelectorAll('.shot img').forEach(img=>{img.loading='lazy';img.onerror=()=>{img.style.display='none';const d=document.createElement('div');d.setAttribute('style','padding:60px 20px;text-align:center;color:#5b6577;font-size:3rem');d.textContent='🖼️';img.parentElement.appendChild(d);};});
 </script>
 </body>
 </html>

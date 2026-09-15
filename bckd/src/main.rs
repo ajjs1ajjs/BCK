@@ -129,9 +129,71 @@ async fn main() -> anyhow::Result<()> {
             &config.storage.default_path.to_string_lossy(),
         )?,
         dr: bck_core::dr::DrOrchestrator::new(),
-        tenants: bck_core::enterprise::multitenant::TenantManager::new(db),
+        tenants: bck_core::enterprise::multitenant::TenantManager::new(db.clone()),
         restore_requests: bck_core::restore::requests::RestoreRequestManager::new(restore_root.clone()),
+        ha_node: bck_core::ha::Node::new(),
+        is_leader: std::sync::Arc::new(tokio::sync::RwLock::new(true)),
     });
+
+    // P0 durability (10/10): hydrate enterprise managers from DB (survive restarts).
+    app_state.sobr.hydrate(&db).await;
+    app_state.m365.hydrate(&db).await;
+    app_state.cdp.hydrate(&db).await;
+    app_state.dr.hydrate(&db).await;
+    app_state.restore_requests.hydrate(&db).await;
+    info!("Enterprise state hydrated from database");
+
+    // HA active-passive (Veeam-alt): heartbeat + gate scheduler/queue on leadership.
+    {
+        let st = app_state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                tick.tick().await;
+                let leader = bck_core::ha::heartbeat(&st.db, &st.ha_node).await;
+                *st.is_leader.write().await = leader;
+            }
+        });
+    }
+
+    // Periodic write-through snapshot (60s) + scheduler durable queue drain.
+    // Queue drain and snapshots run on the leader only (standbys stay read-only).
+    {
+        let st = app_state.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                if !*st.is_leader.read().await {
+                    continue;
+                }
+                st.sobr.snapshot(&st.db).await;
+                st.m365.snapshot(&st.db).await;
+                st.cdp.snapshot(&st.db).await;
+                st.dr.snapshot(&st.db).await;
+                st.restore_requests.snapshot(&st.db).await;
+                // Drain due durable queue entries (survive restarts).
+                let now = chrono::Utc::now().timestamp();
+                let due = bck_core::db::queue_claim_due(&st.db, now, 20).await;
+                for (qid, job_id) in due {
+                    let jm = st.job_manager.lock().await;
+                    let r = jm.start_job(&job_id).await;
+                    drop(jm);
+                    match r {
+                        Ok(_) => bck_core::db::queue_finish(&st.db, &qid, true, None).await,
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if msg.contains("already running") {
+                                bck_core::db::queue_finish(&st.db, &qid, true, None).await;
+                            } else {
+                                bck_core::db::queue_finish(&st.db, &qid, false, Some(&msg)).await;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // Start scheduler
     {
@@ -253,7 +315,7 @@ async fn serve_api(
     match (tls_cert, tls_key) {
         (Some(cert), Some(key)) => serve_tls(listener, app, &cert, &key).await,
         _ => {
-            axum::serve(listener, app)
+            axum::serve(listener, app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                 .await
                 .map_err(|e| anyhow::anyhow!("http serve: {}", e))?;
             Ok(())
@@ -356,58 +418,80 @@ async fn serve_grpc(listener: tokio::net::TcpListener, state: std::sync::Arc<bck
     use tonic::transport::Server;
     use tonic::{Request, Status};
 
-    // Every gRPC method requires the pre-shared agent token (`Authorization:
-    // Bearer <token>`), exactly like the REST agent endpoints. Without a token
-    // the services fail closed. Tokens are compared in constant time.
-    // Note: coarse concurrency limit (20) is enforced via semaphore in handlers if needed.
+    // Split planes (10/10):
+    // - Agent service: pre-shared token OR per-agent JWT (agent plane).
+    // - All other services: user JWT with non-agent role (admin plane).
+    //   A bare agent token is rejected there. In-memory revocation is checked
+    //   synchronously; persistent DB revocation is enforced in REST and in
+    //   gRPC handlers via user_claims (defense in depth).
     let token = state.agent_token.clone();
-    let require_token = move |req: Request<()>| {
-        let expected = token.as_deref().ok_or_else(|| {
-            Status::unauthenticated("agent token not configured; refusing to serve gRPC")
-        })?;
+    let jwt = state.jwt.clone();
+    let require_agent = {
+        let token = token.clone();
+        let jwt = jwt.clone();
+        move |req: Request<()>| {
+            let provided = req
+                .metadata()
+                .get("authorization")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .ok_or_else(|| Status::unauthenticated("missing credentials"))?;
+            // Per-agent JWT first.
+            if let Ok(c) = jwt.validate(provided) {
+                if c.role == "agent" && !c.sub.is_empty() {
+                    return Ok(req);
+                }
+            }
+            // Fallback: pre-shared token (heartbeat/enrollment).
+            let expected = token.as_deref().ok_or_else(|| {
+                Status::unauthenticated("agent token not configured; refusing to serve gRPC")
+            })?;
+            let (e, g) = (expected.as_bytes(), provided.as_bytes());
+            let mut diff = (e.len() ^ g.len()) as u8;
+            for i in 0..e.len() {
+                diff |= e[i] ^ *g.get(i).unwrap_or(&0);
+            }
+            if diff == 0 {
+                Ok(req)
+            } else {
+                Err(Status::unauthenticated("invalid agent credentials"))
+            }
+        }
+    };
+    let require_user = move |req: Request<()>| {
         let provided = req
             .metadata()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .ok_or_else(|| Status::unauthenticated("missing agent token"))?;
-        // SEC-004: constant-time compare without length oracle.
-        // Always iterate over expected length; missing bytes count as mismatch.
-        let exp = expected.as_bytes();
-        let got = provided.as_bytes();
-        let mut diff = (exp.len() ^ got.len()) as u8;
-        for i in 0..exp.len() {
-            let g = *got.get(i).unwrap_or(&0);
-            diff |= exp[i] ^ g;
-        }
-        // Use subtle-style check to avoid compiler short-circuit.
-        if diff == 0 {
-            Ok(req)
-        } else {
-            Err(Status::unauthenticated("invalid agent token"))
+            .ok_or_else(|| Status::unauthenticated("missing user JWT"))?;
+        match jwt.validate(provided) {
+            Ok(c) if c.role != "agent" && !c.sub.is_empty() => Ok(req),
+            Ok(_) => Err(Status::permission_denied("agent identity cannot call admin-plane methods")),
+            Err(_) => Err(Status::unauthenticated("invalid or revoked user JWT")),
         }
     };
 
     Server::builder()
         .add_service(InterceptedService::new(
             BackupEngineServer::new(BackupEngineImpl::new(state.clone())),
-            require_token.clone(),
+            require_user.clone(),
         ))
         .add_service(InterceptedService::new(
             SobrServiceServer::new(SobrServiceService::new(state.clone())),
-            require_token.clone(),
+            require_user.clone(),
         ))
         .add_service(InterceptedService::new(
             CloudServiceServer::new(CloudServiceService::new(state.clone())),
-            require_token.clone(),
+            require_user.clone(),
         ))
         .add_service(InterceptedService::new(
             M365ServiceServer::new(M365ServiceService::new(state.clone())),
-            require_token.clone(),
+            require_user,
         ))
         .add_service(InterceptedService::new(
             AgentServer::new(AgentService::new(state.clone())),
-            require_token,
+            require_agent,
         ))
         .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
         .await?;

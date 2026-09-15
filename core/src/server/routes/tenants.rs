@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::auth::jwt::Claims;
+use crate::auth::policy::{can_create_tenants as policy_can_create, can_manage_tenant as policy_can_manage};
 use crate::enterprise::multitenant::{Quota, ResourceUsage, Tenant, TenantSettings, TenantStatus};
 use crate::server::AppState;
 
@@ -21,21 +22,20 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .route("/{id}/quota", axum::routing::put(update_quota))
         .route("/{id}/settings", axum::routing::put(update_settings))
         .route("/{id}/usage", axum::routing::get(get_usage).post(update_usage))
+        .route("/{id}/billing", axum::routing::get(get_billing))
         .route("/{id}/check-quota", axum::routing::get(check_quota))
 }
 
 /// A tenant-scoped admin may manage only its own tenant; global admins /
 /// super-admins (no tenant) manage all tenants.
+/// Delegates to the centralized policy (single source of truth).
 fn can_manage_tenant(claims: &Claims, tenant_id: &str) -> bool {
-    match &claims.tenant_id {
-        None => true,
-        Some(mine) => mine == tenant_id,
-    }
+    policy_can_manage(claims, tenant_id)
 }
 
 /// Super-admins (and global admins with no tenant) may create tenants.
 fn can_create_tenants(claims: &Claims) -> bool {
-    claims.tenant_id.is_none()
+    policy_can_create(claims)
 }
 
 #[derive(Deserialize)]
@@ -214,7 +214,6 @@ async fn update_usage(
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
 }
-
 async fn check_quota(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
@@ -230,5 +229,43 @@ async fn check_quota(
         "tenant_id": id,
         "resource": q.resource,
         "within_quota": within,
+    })))
+}
+
+/// Billing summary (Veeam-alt): bytes + snapshots + holds for invoicing/SLA.
+async fn get_billing(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !can_manage_tenant(&claims, &id) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let (bytes, snaps): (i64, i64) = match &state.db {
+        crate::db::DbPool::Sqlite(pool) => {
+            let b: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(SUM(used_bytes),0) FROM repositories WHERE tenant_id = ?1",
+            ).bind(&id).fetch_one(pool).await.unwrap_or(0);
+            let s: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM snapshots WHERE tenant_id = ?1",
+            ).bind(&id).fetch_one(pool).await.unwrap_or(0);
+            (b, s)
+        }
+        crate::db::DbPool::Postgres(pool) => {
+            let b: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(SUM(used_bytes),0) FROM repositories WHERE tenant_id = $1",
+            ).bind(&id).fetch_one(pool).await.unwrap_or(0);
+            let s: i64 = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM snapshots WHERE tenant_id = $1",
+            ).bind(&id).fetch_one(pool).await.unwrap_or(0);
+            (b, s)
+        }
+    };
+    let usage = state.tenants.get_usage(&id).await;
+    Ok(Json(serde_json::json!({
+        "tenant_id": id,
+        "stored_bytes": bytes,
+        "snapshots": snaps,
+        "usage": usage,
     })))
 }

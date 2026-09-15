@@ -161,9 +161,10 @@ impl DataLifecycleEngine {
             .load_manifest(backup_id)?
             .ok_or_else(|| anyhow!("Backup {} has no manifest", backup_id))?;
 
+        let mut seen = std::collections::HashSet::new();
         let mut shas = Vec::new();
         for block in &manifest.blocks {
-            if !shas.contains(&block.block_id.sha256) {
+            if seen.insert(block.block_id.sha256.clone()) {
                 shas.push(block.block_id.sha256.clone());
             }
         }
@@ -197,9 +198,10 @@ impl DataLifecycleEngine {
             Some(m) => m,
             None => continue,
         };
+        let mut seen = std::collections::HashSet::new();
         let mut shas = Vec::new();
         for block in &manifest.blocks {
-            if !shas.contains(&block.block_id.sha256) {
+            if seen.insert(block.block_id.sha256.clone()) {
                 shas.push(block.block_id.sha256.clone());
             }
         }

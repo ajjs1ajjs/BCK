@@ -287,6 +287,27 @@ impl CdpEngine {
         self.active_sessions.read().await.clone()
     }
 
+    pub async fn replace_policies(&self, v: Vec<CdpPolicy>) {
+        *self.policies.write().await = v;
+    }
+
+    pub async fn snapshot(&self, db: &crate::db::DbPool) {
+        let p = self.policies.read().await.clone();
+        if let Ok(v) = serde_json::to_string(&p) {
+            let _ = crate::db::persist_set(db, "cdp", "policies", &v).await;
+        }
+    }
+
+    pub async fn hydrate(&self, db: &crate::db::DbPool) {
+        for (k, v) in crate::db::persist_list(db, "cdp").await {
+            if k == "policies" {
+                if let Ok(p) = serde_json::from_str::<Vec<CdpPolicy>>(&v) {
+                    *self.policies.write().await = p;
+                }
+            }
+        }
+    }
+
     /// Get CDP statistics
     pub async fn get_stats(&self) -> CdpStats {
         let sessions = self.active_sessions.read().await;

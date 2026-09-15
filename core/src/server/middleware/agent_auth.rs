@@ -8,13 +8,12 @@ use std::sync::Arc;
 
 use crate::auth::jwt::Claims;
 use crate::server::AppState;
-use crate::db::DbPool;
 
 /// Authenticates agent-to-server calls via either:
 /// 1. Agent JWT (`role == "agent"`, issued by heartbeat), or
-/// 2. The pre-shared agent token (heartbeat registration + polling with the
-///    shared secret — path id is taken at face value, see BUG-023/024 note
-///    in `poll_pending_tasks`).
+/// 2. The pre-shared agent token — heartbeat registration ONLY (SEC-003).
+///    Poll/report require the per-agent JWT so a leaked shared secret cannot
+///    impersonate arbitrary agent_ids.
 pub async fn agent_auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -36,6 +35,15 @@ pub async fn agent_auth_middleware(
         }
     }
 
+    // SEC-003: pre-shared token is valid ONLY for heartbeat (registration).
+    // Poll/report endpoints require the per-agent JWT issued at heartbeat
+    // (sub = agent_id, short exp). This binds the shared secret to enrollment
+    // and prevents impersonation of any agent_id via path synthesis.
+    let is_heartbeat = req.uri().path().ends_with("/heartbeat");
+    if !is_heartbeat {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+
     // Path 2: pre-shared token (constant-time compare, no length oracle).
     let expected = state.agent_token.as_deref().unwrap_or("");
     if expected.is_empty() {
@@ -49,57 +57,16 @@ pub async fn agent_auth_middleware(
     if diff != 0 {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    // Shared secret is valid. Synthesize agent claims from the request path
-    // so downstream handlers that require `Extension<Claims>` keep working.
-    // NOTE: this middleware runs inside the nested `/agents` router, so the
-    // visible path is already stripped (`/{id}/tasks/pending`, `/heartbeat`).
-    // The agent id is the FIRST segment (not nth(1)).
-    let segs: Vec<&str> = req
-        .uri()
-        .path()
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
-    let agent_id = if segs.first() == Some(&"agents") {
-        segs.get(1).unwrap_or(&"").to_string()
-    } else {
-        segs.first().unwrap_or(&"").to_string()
-    };
+    // Shared secret is valid, heartbeat only. Synthesize minimal claims.
+    // Poll/report already returned 401 above without a valid agent JWT.
     let claims = Claims {
-        sub: agent_id.clone(),
+        sub: String::new(),
         username: "agent".into(),
         role: "agent".into(),
         exp: usize::MAX,
         iat: 0,
         tenant_id: None,
     };
-
-    // Heartbeat registers the agent, so it cannot require a pre-existing
-    // online row. Poll/report endpoints do require it.
-    let is_heartbeat = req.uri().path().ends_with("/heartbeat");
-    if !is_heartbeat && !agent_id.is_empty() && agent_id != "heartbeat" {
-        let agent_exists = match &state.db {
-            DbPool::Sqlite(pool) => {
-                sqlx::query("SELECT 1 FROM agents WHERE id = ?1 AND status = 'online'")
-                    .bind(&agent_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map(|opt| opt.is_some())
-                    .unwrap_or(false)
-            }
-            DbPool::Postgres(pool) => {
-                sqlx::query("SELECT 1 FROM agents WHERE id = $1 AND status = 'online'")
-                    .bind(&agent_id)
-                    .fetch_optional(pool)
-                    .await
-                    .map(|opt| opt.is_some())
-                    .unwrap_or(false)
-            }
-        };
-        if !agent_exists {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
-    }
 
     // Inject agent claims into request extensions for use by handlers
     let mut req = req;

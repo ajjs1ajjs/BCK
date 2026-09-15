@@ -94,7 +94,6 @@ azure_core = "0.22.0"
 h2 = "0.4.16"
 quick-xml = "0.41.0"
 ring = "0.17.12"
-lru = "0.16.4"
 
 [build-dependencies]
 tonic-prost-build = "0.14"

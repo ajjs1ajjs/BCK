@@ -706,7 +706,7 @@ impl JobManager {
             .ok_or_else(|| anyhow::anyhow!("Invalid source_config for job {}", job.id))?;
         info!("Job {}: source={} encryption={}", job.id, source_path, job.encryption);
 
-        let mut pipeline = self.build_pipeline(job)?;
+        let mut pipeline = self.build_pipeline(job).await?;
 
         let storage = self.build_storage(&repo).await
             .map_err(|e| anyhow::anyhow!("build_storage failed for repo {}: {}", repo.id, e))?;
@@ -754,6 +754,23 @@ impl JobManager {
         self.insert_snapshot(&snapshot, session_id).await?;
         self.update_repo_used(&job.repository_id, result.stats.compressed_bytes).await?;
 
+        // P2 ransomware smoke signal (10/10): never blocks, only alerts.
+        if crate::ransomware::suspected(&result.stats) {
+            crate::db::record_event(
+                &self.db,
+                "ransomware_suspected",
+                "backup",
+                &format!(
+                    "Job {} shows encrypted-data pattern (compression+dedup collapsed) — review before trusting restores",
+                    job.id
+                ),
+                Some(&job.id),
+                Some(session_id),
+            )
+            .await
+            .ok();
+        }
+
         Ok((snapshot, result.stats))
     }
 
@@ -786,7 +803,7 @@ impl JobManager {
         let repo = self.load_repository(&job.repository_id).await?
             .ok_or_else(|| anyhow::anyhow!("Repository not found: {}", job.repository_id))?;
         let storage = self.build_storage(&repo).await?;
-        let mut pipeline = self.build_pipeline(job)?;
+        let mut pipeline = self.build_pipeline(job).await?;
 
         let result = crate::backup::vm::VmBackupJob::new(connector.as_ref(), vm_ref)
             .run(&mut pipeline, storage.as_ref(), cancel.clone())
@@ -822,7 +839,13 @@ impl JobManager {
             job_id: job.id.clone(),
             repository_id: job.repository_id.clone(),
             snapshot_type: SnapshotType::Full,
-            parent_id: None,
+            // CBT/incremental linkage (Veeam-alt): chain VM snapshots so
+            // connectors can use the parent change-id for changed-block runs.
+            parent_id: self
+                .load_job_snapshots(&job.id)
+                .await
+                .ok()
+                .and_then(|v| v.first().map(|s| s.id.clone())),
             size_bytes: result.stats.total_bytes,
             unique_bytes: result.stats.unique_bytes,
             compressed_bytes: result.stats.compressed_bytes,
@@ -843,7 +866,7 @@ impl JobManager {
     }
 
     /// Build the backup pipeline (compression + encryption + dedup) for a job.
-    fn build_pipeline(&self, job: &BackupJobModel) -> Result<BackupPipeline> {
+    async fn build_pipeline(&self, job: &BackupJobModel) -> Result<BackupPipeline> {
         let compression = match job.compression.as_str() {
             "lz4" => CompressionAlgorithm::Lz4,
             "none" => CompressionAlgorithm::None,
@@ -861,10 +884,15 @@ impl JobManager {
         };
 
         let key = if encryption != EncryptionAlgorithm::None {
-            let key_path = self.config.encryption.key_path.clone()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| crate::encrypt::default_key_path(&self.config));
-            Some(crate::encrypt::load_key(&key_path, self.config.encryption.passphrase.as_deref())?)
+            // P1 envelope: per-repo DEK first, legacy global key fallback.
+            if let Some(dek) = crate::encrypt::data_key_for_repo(&self.db, &self.config, &job.repository_id).await {
+                Some(dek)
+            } else {
+                let key_path = self.config.encryption.key_path.clone()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| crate::encrypt::default_key_path(&self.config));
+                Some(crate::encrypt::load_key(&key_path, self.config.encryption.passphrase.as_deref())?)
+            }
         } else {
             None
         };
@@ -977,16 +1005,41 @@ impl JobManager {
     }
 
     async fn update_repo_used(&self, repo_id: &str, bytes: u64) -> Result<()> {
-        // Check capacity before updating to avoid over-provision.
-        if let Some(repo) = self.load_repository(repo_id).await? {
-            if repo.capacity_bytes > 0 && repo.used_bytes + bytes as i64 > repo.capacity_bytes {
-                anyhow::bail!("repository {} capacity exceeded: {} + {} > {}", repo_id, repo.used_bytes, bytes, repo.capacity_bytes);
+        // BUG-001: atomic capacity enforcement — single conditional UPDATE so two
+        // concurrent jobs cannot both pass a separate check and over-provision.
+        let bytes_i = bytes as i64;
+        let rows: u64 = match &self.db {
+            DbPool::Sqlite(pool) => {
+                sqlx::query(
+                    "UPDATE repositories SET used_bytes = used_bytes + ?1, updated_at = ?2 WHERE id = ?3 AND (capacity_bytes <= 0 OR used_bytes + ?1 <= capacity_bytes)"
+                )
+                .bind(bytes_i)
+                .bind(now())
+                .bind(repo_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
             }
+            DbPool::Postgres(pool) => {
+                sqlx::query(
+                    "UPDATE repositories SET used_bytes = used_bytes + $1, updated_at = $2 WHERE id = $3 AND (capacity_bytes <= 0 OR used_bytes + $1 <= capacity_bytes)"
+                )
+                .bind(bytes_i)
+                .bind(now())
+                .bind(repo_id)
+                .execute(pool)
+                .await?
+                .rows_affected()
+            }
+        };
+        if rows == 0 {
+            // Distinguish missing repo vs capacity exceeded for a clear error.
+            if self.load_repository(repo_id).await?.is_none() {
+                anyhow::bail!("repository not found: {}", repo_id);
+            }
+            anyhow::bail!("repository {} capacity exceeded (concurrent guard)", repo_id);
         }
-        self.db_exec(
-            "UPDATE repositories SET used_bytes = used_bytes + ?, updated_at = ? WHERE id = ?",
-            &[DbVal::Int(bytes as i64), DbVal::Int(now()), repo_id.into()],
-        ).await
+        Ok(())
     }
 
     async fn load_job_snapshots(&self, job_id: &str) -> Result<Vec<SnapshotModel>> {

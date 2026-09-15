@@ -29,12 +29,22 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    let token = req
+    // SEC-010: accept Bearer header (primary) or httpOnly `bck_token` cookie
+    // (XSS-hardened alternative). Cookie is checked only when no Bearer is
+    // present so existing CLI/Bearer flows keep working.
+    let token_owned: String = match req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    {
+        Some(t) => t.to_string(),
+        None => match cookie_token(req.headers()) {
+            Some(c) => c,
+            None => return Err(StatusCode::UNAUTHORIZED),
+        },
+    };
+    let token = token_owned.as_str();
 
     let claims: Claims = state
         .jwt
@@ -61,7 +71,7 @@ pub async fn auth_middleware(
         if path.contains("/restore/explore")
             || path.contains("/restore/instant")
             || path.contains("/restore/surebackup")
-            || path.contains("/events")
+            || seg(path, "events")
         {
             if !can_restore(&claims) {
                 return Err(StatusCode::FORBIDDEN);
@@ -70,35 +80,35 @@ pub async fn auth_middleware(
 
         // Cloud / M365 configs are sensitive (they serialize secrets); keep
         // them behind a restore-capable role.
-        if path.contains("/cloud") || path.contains("/m365") {
+        if seg(path, "cloud") || seg(path, "m365") {
             if !can_restore(&claims) {
                 return Err(StatusCode::FORBIDDEN);
             }
         }
 
         // Agent metadata may contain encryption material; admin only.
-        if path.contains("/agents") {
+        if seg(path, "agents") {
             if !can_manage_agents(&claims) {
                 return Err(StatusCode::FORBIDDEN);
             }
         }
 
         // Hypervisors expose infrastructure; operator floor.
-        if path.contains("/hypervisors") {
+        if seg(path, "hypervisors") {
             if !can_manage_hypervisors(&claims) {
                 return Err(StatusCode::FORBIDDEN);
             }
         }
 
         // Tenancy, admin portal, SSO provider management: admin only.
-        if path.contains("/tenants") || path.contains("/portal/admin") || path.contains("/auth/sso/providers") {
+        if seg(path, "tenants") || path.contains("/portal/admin") || path.contains("/auth/sso/providers") {
             if !is_global_admin(&claims) {
                 return Err(StatusCode::FORBIDDEN);
             }
         }
 
         // DR read endpoints require DR manager.
-        if path.contains("/dr") {
+        if seg(path, "dr") {
             if !can_manage_dr(&claims) {
                 return Err(StatusCode::FORBIDDEN);
             }
@@ -119,31 +129,31 @@ pub async fn auth_middleware(
     let path = req.uri().path();
 
     // Admin-only management surfaces.
-    if path.contains("/tenants")
+    if seg(path, "tenants")
         || path.contains("/portal/admin")
         || path.contains("/auth/sso")
     {
         if !is_global_admin(&claims) {
             return Err(StatusCode::FORBIDDEN);
         }
-    } else if path.contains("/dr") {
+    } else if seg(path, "dr") {
         // DR mutations (failover, failback, register site/plan) are admin only.
         if !can_execute_dr_path(&claims, path) {
             return Err(StatusCode::FORBIDDEN);
         }
-    } else if path.contains("/agents") {
+    } else if seg(path, "agents") {
         // Agent management (delete, create task) requires admin.
         if !can_manage_agents(&claims) {
             return Err(StatusCode::FORBIDDEN);
         }
-    } else if path.contains("/hypervisors") {
+    } else if seg(path, "hypervisors") {
         // Adding/deleting hypervisors requires operator+.
         if !can_manage_hypervisors(&claims) {
             return Err(StatusCode::FORBIDDEN);
         }
     } else if path.contains("/restore")
-        || path.contains("/instant")
-        || path.contains("/surebackup")
+        || seg(path, "instant")
+        || seg(path, "surebackup")
         || path.contains("/portal/restore-requests")
     {
         // Restore operations: Operator and RestoreOperator are allowed.
@@ -158,8 +168,33 @@ pub async fn auth_middleware(
     Ok(next.run(req).await)
 }
 
-/// DR route gating: registrations and plans are admin-only; failovers and
-/// failbacks additionally require operator floor.
+/// Extract `bck_token` from Cookie header without extra deps.
+fn cookie_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    let raw = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    for part in raw.split(';') {
+        let part = part.trim();
+        if let Some(v) = part.strip_prefix("bck_token=") {
+            let v = v.trim().trim_matches('"');
+            if !v.is_empty() && v.len() <= 8192 {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Segment-aware path matcher: avoids over-matching of `contains`
+/// (e.g. `/dr` must not match `/api/v1/dropbox`). Paths are expected as
+/// `/api/v1/<resource>...`; we match on the resource segment.
+fn seg(path: &str, name: &str) -> bool {
+    path.split('/').any(|s| s == name)
+}
+
+#[allow(dead_code)]
+fn seg_any(path: &str, names: &[&str]) -> bool {
+    path.split('/').any(|s| names.contains(&s))
+}
+
 fn can_execute_dr_path(claims: &crate::auth::jwt::Claims, path: &str) -> bool {
     use crate::auth::policy::{can_manage_dr, role_of};
     use crate::auth::UserRole;

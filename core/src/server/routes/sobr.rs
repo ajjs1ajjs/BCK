@@ -32,6 +32,7 @@ async fn add_tier(
             tracing::error!("add SOBR tier: {}", e);
             StatusCode::BAD_REQUEST
         })?;
+    state.sobr.snapshot(&state.db).await; // P0 durability: write-through
     Ok((StatusCode::CREATED, Json(tier)))
 }
 
@@ -50,6 +51,7 @@ async fn create_policy(
             tracing::error!("create SOBR policy: {}", e);
             StatusCode::BAD_REQUEST
         })?;
+    state.sobr.snapshot(&state.db).await; // P0 durability: write-through
     Ok((StatusCode::CREATED, Json(policy)))
 }
 

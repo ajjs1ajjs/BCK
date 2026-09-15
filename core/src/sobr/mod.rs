@@ -164,4 +164,41 @@ impl SobrManager {
     pub async fn list_policies(&self) -> Vec<SobrPolicy> {
         self.policies.read().await.clone()
     }
+
+    /// Replace entire state (used by DB hydration on startup).
+    pub async fn replace_all(&self, tiers: Vec<StorageTier>, policies: Vec<SobrPolicy>) {
+        *self.tiers.write().await = tiers;
+        *self.policies.write().await = policies;
+    }
+
+    /// Write-through snapshot to the durable KV store (best-effort).
+    pub async fn snapshot(&self, db: &crate::db::DbPool) {
+        let tiers = self.tiers.read().await.clone();
+        let policies = self.policies.read().await.clone();
+        if let Ok(v) = serde_json::to_string(&tiers) {
+            let _ = crate::db::persist_set(db, "sobr", "tiers", &v).await;
+        }
+        if let Ok(v) = serde_json::to_string(&policies) {
+            let _ = crate::db::persist_set(db, "sobr", "policies", &v).await;
+        }
+    }
+
+    /// Hydrate from the durable KV store (startup).
+    pub async fn hydrate(&self, db: &crate::db::DbPool) {
+        for (k, v) in crate::db::persist_list(db, "sobr").await {
+            match k.as_str() {
+                "tiers" => {
+                    if let Ok(t) = serde_json::from_str::<Vec<StorageTier>>(&v) {
+                        *self.tiers.write().await = t;
+                    }
+                }
+                "policies" => {
+                    if let Ok(p) = serde_json::from_str::<Vec<SobrPolicy>>(&v) {
+                        *self.policies.write().await = p;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }

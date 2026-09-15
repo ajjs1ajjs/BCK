@@ -4,13 +4,22 @@ import { API_ROUTES } from './routes'
 const TOKEN_KEY = 'bck_token'
 const USER_KEY = 'bck_user'
 
+// SEC-010 (10/10): JWT lives in memory + httpOnly cookie, NOT in persistent
+// localStorage. In-memory token is sent as Bearer (CLI compat); cookie is
+// sent automatically via withCredentials. XSS can no longer steal a
+// persistent session from localStorage.
+let memToken: string | null = null
+
 const api = axios.create({
   baseURL: '/api/v1',
   headers: { 'Content-Type': 'application/json' },
+  // SEC-010: send httpOnly bck_token cookie alongside Bearer so the backend
+  // can authenticate even when localStorage is cleared (XSS hardening path).
+  withCredentials: true,
 })
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem(TOKEN_KEY)
+  const token = memToken ?? sessionStorage.getItem(TOKEN_KEY)
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -21,7 +30,8 @@ api.interceptors.response.use(
   (r) => r,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY)
+      memToken = null
+      sessionStorage.removeItem(TOKEN_KEY)
       localStorage.removeItem(USER_KEY)
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login'
@@ -32,17 +42,24 @@ api.interceptors.response.use(
 )
 
 export function saveAuth(token: string, user: AuthUser) {
-  localStorage.setItem(TOKEN_KEY, token)
+  memToken = token
+  try {
+    // Tab-scoped only (cleared on tab close); persistent localStorage copy
+    // removed to close XSS→persistent-hijack.
+    sessionStorage.setItem(TOKEN_KEY, token)
+  } catch { /* private mode */ }
   localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
 
 export function clearAuth() {
-  localStorage.removeItem(TOKEN_KEY)
+  memToken = null
+  try { sessionStorage.removeItem(TOKEN_KEY) } catch { /* noop */ }
+  localStorage.removeItem(TOKEN_KEY) // legacy cleanup
   localStorage.removeItem(USER_KEY)
 }
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY)
+  return memToken ?? sessionStorage.getItem(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY)
 }
 
 export function getUser(): AuthUser | null {

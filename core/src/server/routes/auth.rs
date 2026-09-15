@@ -35,27 +35,50 @@ pub fn protected_router() -> axum::Router<Arc<AppState>> {
         .route("/logout", axum::routing::post(logout))
 }
 
-// --- login rate limiting (in-memory, per-username) ---
+// --- login rate limiting (in-memory, per-username+IP) ---
 
 const MAX_FAILED_ATTEMPTS: usize = 10;
 const FAILURE_WINDOW_SECS: i64 = 300;
 
-/// Rolling window of failed-login timestamps per username.
+/// Rolling window of failed-login timestamps per username+IP key.
+/// SEC-011: key includes caller IP so rotating usernames does not bypass the
+/// limit; per-username entry is kept for backward compat defense in depth.
 fn login_attempts() -> &'static dashmap::DashMap<String, Vec<i64>> {
     static MAP: std::sync::OnceLock<dashmap::DashMap<String, Vec<i64>>> = std::sync::OnceLock::new();
     MAP.get_or_init(dashmap::DashMap::new)
 }
 
+fn throttle_key(username: &str, ip: Option<&str>) -> String {
+    format!("{}|{}", username.to_lowercase(), ip.unwrap_or("unknown"))
+}
+
+#[allow(dead_code)]
 fn rate_limited(username: &str) -> bool {
+    rate_limited_for(&throttle_key(username, None)) || rate_limited_for(&username.to_lowercase())
+}
+
+fn rate_limited_for(key: &str) -> bool {
     let now = chrono::Utc::now().timestamp();
-    let mut entry = login_attempts().entry(username.to_lowercase()).or_default();
+    let mut entry = login_attempts().entry(key.to_string()).or_default();
     entry.retain(|&t| now - t < FAILURE_WINDOW_SECS);
     entry.len() >= MAX_FAILED_ATTEMPTS
 }
 
+#[allow(dead_code)]
 fn record_failure(username: &str) {
+    record_failure_for(&throttle_key(username, None));
+    record_failure_for(&username.to_lowercase());
+}
+
+fn record_failure_for(key: &str) {
     let now = chrono::Utc::now().timestamp();
-    login_attempts().entry(username.to_lowercase()).or_default().push(now);
+    login_attempts().entry(key.to_string()).or_default().push(now);
+    // Bound memory: drop oldest if a single key explodes.
+    let mut e = login_attempts().entry(key.to_string()).or_default();
+    if e.len() > 100 {
+        let excess = e.len() - 100;
+        e.drain(..excess);
+    }
 }
 
 /// A valid Argon2 hash of a throwaway password, used to equalize the cost of a
@@ -68,10 +91,22 @@ fn dummy_hash() -> &'static str {
 
 async fn login(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<LoginRequest>,
-) -> Result<Json<LoginResponse>, StatusCode> {
-    if rate_limited(&req.username) {
-        tracing::warn!("login rate limit hit for user {}", req.username);
+) -> Result<axum::response::Response, StatusCode> {
+    // SEC-011: per-username+IP key (X-Forwarded-For when behind proxy, else unknown).
+    // Plaintext HTTP listener already provides ConnectInfo, but TLS custom serve
+    // does not propagate it — headers keep both paths working.
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()).map(|s| s.to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+    let key = throttle_key(&req.username, Some(&ip));
+    if rate_limited_for(&key) || rate_limited_for(&req.username.to_lowercase()) {
+        tracing::warn!("login rate limit hit for user {} ip {}", req.username, ip);
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
 
@@ -89,16 +124,24 @@ async fn login(
     };
 
     if !verify_password(&req.password, &hash) {
-        record_failure(&req.username);
+        record_failure_for(&key);
+        record_failure_for(&req.username.to_lowercase());
         return Err(StatusCode::UNAUTHORIZED);
     }
     let user_model = match user_model {
         Some(u) if enabled => u,
         _ => {
-            record_failure(&req.username);
+            record_failure_for(&key);
+            record_failure_for(&req.username.to_lowercase());
             return Err(StatusCode::FORBIDDEN);
         }
     };
+
+    // SEC-012: opportunistic migration of legacy unsalted SHA-256 to Argon2id.
+    if !user_model.password_hash.starts_with("$argon2") {
+        let new_hash = hash_password(&req.password);
+        update_password_hash(&state.db, &user_model.id, &new_hash).await;
+    }
 
     let user = User {
         id: user_model.id.clone(),
@@ -114,21 +157,50 @@ async fn login(
 
     update_last_login(&state.db, &user_model.id).await;
 
-    Ok(Json(LoginResponse { token, user }))
+    // SEC-010: issue httpOnly cookie alongside Bearer JSON so the Web UI can
+    // migrate off localStorage (XSS → token theft). Cookie is Lax, 24h.
+    let cookie = format!("bck_token={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400", token);
+    let body = serde_json::to_string(&LoginResponse { token, user })
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let resp = axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(axum::http::header::SET_COOKIE, cookie)
+        .body(axum::body::Body::from(body))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(resp)
 }
 
 async fn logout(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-) -> StatusCode {
+) -> axum::response::Response {
+    let mut to_revoke: Vec<String> = Vec::new();
     if let Some(v) = headers.get(axum::http::header::AUTHORIZATION).and_then(|h| h.to_str().ok()).and_then(|s| s.strip_prefix("Bearer ")) {
+        to_revoke.push(v.to_string());
+    }
+    // Also revoke cookie token.
+    if let Some(raw) = headers.get(axum::http::header::COOKIE).and_then(|h| h.to_str().ok()) {
+        for part in raw.split(';') {
+            if let Some(v) = part.trim().strip_prefix("bck_token=") {
+                if !v.is_empty() {
+                    to_revoke.push(v.trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    for v in &to_revoke {
         // In-memory fast path (current process).
         state.jwt.revoke(v);
         // SEC-003: persistent revocation so logout survives restarts.
         // Store only the hash, never the token itself.
         persist_revocation(&state.db, &state.jwt, v).await;
     }
-    StatusCode::OK
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::SET_COOKIE, "bck_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+        .body(axum::body::Body::empty())
+        .unwrap()
 }
 
 /// Record a token revocation in the DB (best-effort) and prune expired rows.
@@ -253,6 +325,25 @@ async fn update_last_login(db: &DbPool, user_id: &str) {
         DbPool::Postgres(pool) => {
             let _ = sqlx::query("UPDATE users SET last_login = $1 WHERE id = $2")
                 .bind(t)
+                .bind(user_id)
+                .execute(pool)
+                .await;
+        }
+    }
+}
+
+async fn update_password_hash(db: &DbPool, user_id: &str, new_hash: &str) {
+    match db {
+        DbPool::Sqlite(pool) => {
+            let _ = sqlx::query("UPDATE users SET password_hash = ?1 WHERE id = ?2")
+                .bind(new_hash)
+                .bind(user_id)
+                .execute(pool)
+                .await;
+        }
+        DbPool::Postgres(pool) => {
+            let _ = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+                .bind(new_hash)
                 .bind(user_id)
                 .execute(pool)
                 .await;

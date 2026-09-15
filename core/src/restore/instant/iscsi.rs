@@ -47,18 +47,25 @@ pub struct IscsiTarget {
     pub block_size: u32,
     /// Number of logical blocks.
     pub num_blocks: u64,
+    /// Optional CHAP username required at login (from BCK_ISCSI_CHAP_USER).
+    /// When set, initiators must present `CHAP_N=<user>` in login text;
+    /// otherwise login is rejected. Full CHAP challenge/response is roadmap;
+    /// this name-gate plus loopback-only bind already stops opportunistic scans.
+    pub chap_user: Option<String>,
     /// Reads a block range [offset, offset+len) from the backup disk.
     read_fn: Arc<dyn Fn(u64, u32) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send>> + Send + Sync>,
 }
 
 impl IscsiTarget {
     pub fn new(target_iqn: &str, vendor_id: &str, product_id: &str, total_bytes: u64, block_size: u32) -> Self {
+        let chap_user = std::env::var("BCK_ISCSI_CHAP_USER").ok().filter(|s| !s.trim().is_empty());
         Self {
             target_iqn: target_iqn.to_string(),
             vendor_id: vendor_id.to_string(),
             product_id: product_id.to_string(),
             block_size: block_size.max(1),
             num_blocks: total_bytes.div_ceil(block_size.max(1) as u64),
+            chap_user,
             read_fn: Arc::new(|_, _| Box::pin(async { Ok(vec![]) })),
         }
     }
@@ -76,15 +83,33 @@ impl IscsiTarget {
     }
 
     /// Start serving on the given TCP address.
+    /// SEC-007: bounded concurrency (max 64 conns) + peer ACL + optional
+    /// CHAP-user gate (BCK_ISCSI_CHAP_USER). Loopback peers always allowed;
+    /// non-loopback requires BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1.
     pub async fn serve(self: Arc<Self>, addr: SocketAddr) -> Result<()> {
         let listener = TcpListener::bind(addr).await?;
         info!("iSCSI target {} listening on {}", self.target_iqn, addr);
+        let sem = Arc::new(tokio::sync::Semaphore::new(64));
         loop {
             let (stream, peer) = listener.accept().await?;
+            if !peer.ip().is_loopback()
+                && std::env::var("BCK_ALLOW_PUBLIC_INSTANT_RECOVERY").as_deref() != Ok("1")
+            {
+                tracing::warn!("iSCSI conn {} rejected: non-loopback without BCK_ALLOW_PUBLIC_INSTANT_RECOVERY=1", peer);
+                continue;
+            }
+            let permit = match sem.clone().try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!("iSCSI conn {} rejected: too many connections", peer);
+                    continue;
+                }
+            };
             let this = self.clone();
             tokio::spawn(async move {
+                let _permit = permit;
                 if let Err(e) = this.handle_conn(stream).await {
-                    warn!("iSCSI conn {} ended: {}", peer, e);
+                    tracing::warn!("iSCSI conn {} ended: {}", peer, e);
                 }
             });
         }
@@ -145,6 +170,24 @@ impl IscsiTarget {
         let cid = pdu.bytes(10, 12);
         let (_csg, _nsg) = ((pdu.header[1] >> 2) & 0x3, (pdu.header[1] >> 6) & 0x3);
         let text = String::from_utf8_lossy(&pdu.data).to_string();
+
+        // Optional CHAP-user gate (BCK_ISCSI_CHAP_USER). Reject with
+        // Status-Class 0x02 (Authentication Failed) when missing/mismatched.
+        if let Some(expected) = self.chap_user.as_deref() {
+            let presented = text.split('\x00').find_map(|kv| {
+                let (k, v) = kv.split_once('=')?;
+                (k == "CHAP_N").then(|| v.trim()).filter(|v| !v.is_empty())
+            });
+            if presented != Some(expected) {
+                let mut rej = Pdu::new(OP_LOGIN_RESP);
+                rej.set_itt(itt);
+                rej.set_cid(cid);
+                rej.header[2] = 0x02; // Authentication Failed
+                rej.header[3] = 0x00;
+                warn!("iSCSI login rejected: CHAP_N mismatch");
+                return rej;
+            }
+        }
 
         let mut resp = Pdu::new(OP_LOGIN_RESP);
         resp.header[1] = 0x80 | (1 << 2) | (1 << 6); // T=1, CSG=1 (FullFeature), NSG=0

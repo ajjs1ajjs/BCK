@@ -396,7 +396,7 @@ dependencies = [
  "http 0.2.12",
  "http 1.5.0",
  "http-body 1.1.0",
- "lru 0.18.4",
+ "lru",
  "percent-encoding",
  "regex-lite",
  "sha2 0.11.0",
@@ -970,7 +970,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bck"
-version = "0.9.31"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "bck-core",
@@ -984,7 +984,7 @@ dependencies = [
 
 [[package]]
 name = "bck-agent"
-version = "0.9.31"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "bck-core"
-version = "0.9.31"
+version = "0.10.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1039,7 +1039,6 @@ dependencies = [
  "hyper 1.11.1",
  "jsonwebtoken",
  "ldap3",
- "lru 0.16.4",
  "lz4",
  "notify",
  "parking_lot",
@@ -1073,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "bck-proxy"
-version = "0.9.31"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "bck-core",
@@ -1085,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "bckd"
-version = "0.9.31"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2196,17 +2195,6 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
-dependencies = [
- "allocator-api2",
- "equivalent",
- "foldhash 0.2.0",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
@@ -2903,15 +2891,6 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
-
-[[package]]
-name = "lru"
-version = "0.16.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39"
-dependencies = [
- "hashbrown 0.16.1",
-]
 
 [[package]]
 name = "lru"

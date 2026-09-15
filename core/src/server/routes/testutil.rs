@@ -62,6 +62,8 @@ pub async fn test_state(db_path: &str) -> Arc<AppState> {
         dr: crate::dr::DrOrchestrator::new(),
         tenants: crate::enterprise::multitenant::TenantManager::new(db),
         restore_requests: crate::restore::requests::RestoreRequestManager::new(config.restore_root.clone()),
+        ha_node: crate::ha::Node::new(),
+        is_leader: std::sync::Arc::new(tokio::sync::RwLock::new(true)),
     })
 }
 

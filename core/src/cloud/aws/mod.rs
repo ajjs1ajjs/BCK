@@ -24,27 +24,38 @@ impl AwsConnector {
     }
 
     /// Resolve credentials from the account or environment, then return an AWS session.
+    /// SEC-008: stored fields may be enc: — decrypt best-effort via default key
+    /// locations; legacy plaintext passes through.
     pub async fn authenticate(&self) -> Result<AwsSession> {
-        let access_key = self
+        fn dec(v: Option<String>) -> Option<String> {
+            v.map(|s| {
+                if s.starts_with("enc:") {
+                    crate::cloud::decrypt_stored(&s)
+                } else {
+                    s
+                }
+            })
+        }
+        let access_key = dec(self
             .account
             .access_key
-            .clone()
+            .clone())
             .or_else(|| std::env::var("AWS_ACCESS_KEY_ID").ok())
             .ok_or_else(|| {
                 anyhow!("AWS access key not configured (set account.access_key or AWS_ACCESS_KEY_ID)")
             })?;
-        let secret_key = self
+        let secret_key = dec(self
             .account
             .secret_key
-            .clone()
+            .clone())
             .or_else(|| std::env::var("AWS_SECRET_ACCESS_KEY").ok())
             .ok_or_else(|| {
                 anyhow!("AWS secret key not configured (set account.secret_key or AWS_SECRET_ACCESS_KEY)")
             })?;
-        let session_token = self
+        let session_token = dec(self
             .account
             .session_token
-            .clone()
+            .clone())
             .or_else(|| std::env::var("AWS_SESSION_TOKEN").ok())
             .unwrap_or_default();
         let region = if !self.account.region.is_empty() {

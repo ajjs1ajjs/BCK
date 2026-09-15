@@ -57,6 +57,8 @@ pub fn router() -> axum::Router<Arc<AppState>> {
         .without_v07_checks()
         .route("/", axum::routing::get(list_snapshots))
         .route("/{id}", axum::routing::get(get_snapshot).delete(delete_snapshot))
+        .route("/holds", axum::routing::get(list_holds).post(create_hold))
+        .route("/holds/{id}", axum::routing::delete(release_hold))
 }
 
 fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
@@ -110,6 +112,11 @@ async fn delete_snapshot(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .filter(|s| tenant_allows(&claims, s.tenant_id.as_deref()))
         .ok_or(StatusCode::NOT_FOUND)?;
+
+    // Legal hold (Veeam-alt): held snapshots cannot be deleted or expired.
+    if crate::db::hold_active(&state.db, &id).await {
+        return Err(StatusCode::LOCKED);
+    }
 
     state.job_manager.lock().await
         .delete_snapshot_with_gc(&id, &snapshot.repository_id)
@@ -190,7 +197,6 @@ pub async fn fetch_snapshots(db: &DbPool, job_id: Option<&str>, limit: i64) -> a
         }
     }
 }
-
 pub async fn fetch_snapshot(db: &DbPool, id: &str) -> anyhow::Result<Option<SnapshotModel>> {
     match db {
         DbPool::Sqlite(pool) => {
@@ -217,5 +223,48 @@ pub async fn fetch_snapshot(db: &DbPool, id: &str) -> anyhow::Result<Option<Snap
             .await?;
             Ok(row)
         }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct HoldRequest {
+    pub snapshot_id: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+async fn list_holds(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<crate::db::HoldRow>> {
+    Json(crate::db::hold_list(&state.db).await)
+}
+
+async fn create_hold(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Json(req): Json<HoldRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    if !crate::auth::policy::can_mutate(&claims) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if req.snapshot_id.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let id = crate::db::hold_create(&state.db, &req.snapshot_id, &req.reason, &claims.sub).await;
+    Ok((StatusCode::CREATED, Json(serde_json::json!({"id": id, "snapshot_id": req.snapshot_id}))))
+}
+
+async fn release_hold(
+    State(state): State<Arc<AppState>>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<String>,
+) -> Result<StatusCode, StatusCode> {
+    if !crate::auth::policy::can_mutate(&claims) {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    if crate::db::hold_release(&state.db, &id).await {
+        Ok(StatusCode::OK)
+    } else {
+        Err(StatusCode::NOT_FOUND)
     }
 }

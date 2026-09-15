@@ -49,6 +49,23 @@ pub struct AppState {
     pub dr: DrOrchestrator,
     pub tenants: TenantManager,
     pub restore_requests: RestoreRequestManager,
+    /// HA active-passive (Veeam-alt): node identity + leader flag.
+    /// Standbys serve reads; mutations return 409 with X-Leader hint.
+    pub ha_node: crate::ha::Node,
+    pub is_leader: Arc<tokio::sync::RwLock<bool>>,
+}
+
+impl AppState {
+    pub async fn require_leader(&self) -> Result<(), (axum::http::StatusCode, String)> {
+        if *self.is_leader.read().await {
+            return Ok(());
+        }
+        let leader = crate::ha::leader_owner(&self.db).await.unwrap_or_default();
+        Err((
+            axum::http::StatusCode::CONFLICT,
+            format!("standby node (leader: {leader}) — writes go to the leader"),
+        ))
+    }
 }
 
 pub fn create_router(state: Arc<AppState>) -> Router {

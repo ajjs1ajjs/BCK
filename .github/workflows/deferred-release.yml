@@ -1,7 +1,7 @@
 name: Deferred release (Oct 1)
 
 # Queued while Actions minutes are exhausted (reset Oct 1).
-# Publishes tag v0.9.31 which triggers release.yml (build + GitHub Release).
+# Publishes tag v0.10.0 which triggers release.yml (build + GitHub Release).
 on:
   schedule:
     - cron: '5 0 1 10 *'
@@ -35,15 +35,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create and push tag v0.9.31
+      - name: Create and push tag v0.10.0
         run: |
           set -eux
           git fetch --tags origin
-          if git rev-parse "v0.9.31" >/dev/null 2>&1; then
-            echo "Tag v0.9.31 already exists, nothing to do."
+          if git rev-parse "v0.10.0" >/dev/null 2>&1; then
+            echo "Tag v0.10.0 already exists, nothing to do."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v0.9.31" -m "BCK Enterprise v0.9.31 (Ubuntu-only release)"
-          git push origin "v0.9.31"
+          git tag -a "v0.10.0" -m "BCK Enterprise v0.10.0 (Ubuntu-only release)"
+          git push origin "v0.10.0"

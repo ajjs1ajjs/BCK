@@ -42,11 +42,14 @@ pub struct StorageConfig {
     pub container: Option<String>,
     pub connection_string: Option<String>,
     pub account: Option<String>,
+    /// S3 Object Lock retention days (WORM COMPLIANCE). None/0 = disabled.
+    #[serde(default)]
+    pub object_lock_days: Option<u32>,
 }
 
 /// Build a `StorageConfig` from a stored JSON config, decrypting the secret
-/// fields (`secret_key`, `connection_string`) with the application key when it
-/// is provided. Plaintext legacy values decrypt transparently.
+/// fields (`access_key`, `secret_key`, `connection_string`) with the application
+/// key when it is provided. Plaintext legacy values decrypt transparently.
 ///
 /// BUG-003: decryption failures are logged (not silently dropped to None),
 /// so misconfigured credentials fail loudly at backend creation instead of
@@ -71,11 +74,12 @@ pub fn storage_config_from_json(cfg: &serde_json::Value, key: Option<&[u8]>) -> 
         bucket: cfg["bucket"].as_str().map(str::to_string),
         region: cfg["region"].as_str().map(str::to_string),
         endpoint: cfg["endpoint"].as_str().map(str::to_string),
-        access_key: cfg["access_key"].as_str().map(str::to_string),
+        access_key: decrypt("access_key", cfg["access_key"].as_str()),
         secret_key: decrypt("secret_key", cfg["secret_key"].as_str()),
         container: cfg["container"].as_str().map(str::to_string),
         connection_string: decrypt("connection_string", cfg["connection_string"].as_str()),
         account: cfg["account"].as_str().map(str::to_string),
+        object_lock_days: cfg["object_lock_days"].as_u64().map(|v| v as u32),
     }
 }
 
@@ -91,12 +95,13 @@ pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBack
             Ok(Box::new(local::LocalStorage::new(&path)?))
         }
         "s3" => {
-            let backend = s3::S3Storage::new(
+            let backend = s3::S3Storage::new_with_lock(
                 &config.bucket.unwrap_or_default(),
                 &config.region.unwrap_or_default(),
                 config.endpoint.as_deref(),
                 config.access_key.as_deref(),
                 config.secret_key.as_deref(),
+                config.object_lock_days.filter(|d| *d > 0),
             ).await?;
             Ok(Box::new(backend))
         }
@@ -130,6 +135,81 @@ pub async fn create_backend(config: StorageConfig) -> Result<Box<dyn StorageBack
         }
         _ => anyhow::bail!("Unsupported storage backend: {}", config.backend_type),
     }
+}
+
+/// Validate a hypervisor host (VMware/Hyper-V) against SSRF.
+/// SEC-009: same IP blocklist as storage endpoints, but private/DC ranges are
+/// allowed via explicit opt-in BCK_ALLOW_PRIVATE_HV=1 (hypervisors normally
+/// live in private networks). Cloud metadata (169.254.169.254), loopback
+/// (unless explicitly allowed), link-local and multicast stay blocked.
+pub fn validate_hypervisor_host(host: &str) -> Result<()> {
+    let h = host.trim();
+    if h.is_empty() || h.len() > 253 || h.chars().any(|c| c.is_control()) {
+        anyhow::bail!("invalid hypervisor host");
+    }
+    // Block URL-like values, userinfo, ports embedded, path traversal.
+    if h.contains("://") || h.contains('@') || h.contains('/') || h.contains('\\') || h.contains("..") {
+        anyhow::bail!("invalid hypervisor host");
+    }
+    let allow_private = std::env::var("BCK_ALLOW_PRIVATE_HV").as_deref() == Ok("1");
+    // Literal IP fast path.
+    if let Ok(ip) = h.trim_matches(|c| c == '[' || c == ']').parse::<std::net::IpAddr>() {
+        return check_hv_ip(ip, h, allow_private);
+    }
+    // Hostname: resolve best-effort and check each addr.
+    match format!("{}:443", h).to_socket_addrs() {
+        Ok(addrs) => {
+            let mut any = false;
+            for addr in addrs {
+                any = true;
+                check_hv_ip(addr.ip(), h, allow_private)?;
+            }
+            if !any {
+                anyhow::bail!("hypervisor host did not resolve: {h}");
+            }
+            Ok(())
+        }
+        Err(_) => {
+            // Unresolvable now (DNS may appear later): allow the hostname but
+            // it must look like a valid DNS name to avoid injection.
+            if !h.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
+                anyhow::bail!("invalid hypervisor host");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn check_hv_ip(ip: std::net::IpAddr, host: &str, allow_private: bool) -> Result<()> {
+    let oct = match ip {
+        std::net::IpAddr::V4(v4) => Some(v4.octets()),
+        _ => None,
+    };
+    // Always blocked: unspecified, multicast, link-local, cloud metadata.
+    let mut bad = match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_unspecified() || v4.is_multicast() || v4.is_link_local()
+        }
+        std::net::IpAddr::V6(v6) => v6.is_unspecified() || v6.is_multicast() || v6.is_unicast_link_local(),
+    };
+    if let Some(o) = oct {
+        if o[0] == 169 && o[1] == 254 {
+            bad = true; // cloud metadata (AWS/GCP/Azure)
+        }
+    }
+    if bad {
+        anyhow::bail!("hypervisor host resolves to a blocked address: {host}");
+    }
+    if !allow_private {
+        let is_private = match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unicast_link_local(),
+        };
+        if is_private {
+            anyhow::bail!("hypervisor host is private/loopback (set BCK_ALLOW_PRIVATE_HV=1 for on-prem DC): {host}");
+        }
+    }
+    Ok(())
 }
 
 /// Validate a custom object-storage endpoint (S3-compatible etc.). Only

@@ -74,9 +74,18 @@ impl RestoreOrchestrator {
         hypervisor_connector: Option<&dyn crate::integrations::HypervisorConnector>,
         vm_name: &str,
         power_on: bool,
+        restore_root: Option<&str>,
     ) -> Result<RestoreSession> {
         let session_id = uuid::Uuid::new_v4().to_string();
         info!("Starting VM restore: snapshot={}, target={}", snapshot_id, target_datastore);
+
+        // SEC-001 defense-in-depth: even if a caller forgets the route-level gate,
+        // the orchestrator enforces the allow-list when a root is provided.
+        let gated_base: PathBuf = if let Some(root) = restore_root {
+            gate_restore_target(target_datastore, root)?
+        } else {
+            PathBuf::from(target_datastore)
+        };
 
         let manifest = self.index.load_manifest(snapshot_id)?
             .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
@@ -96,7 +105,7 @@ impl RestoreOrchestrator {
             &manifest,
             storage,
             key,
-            &PathBuf::from(target_datastore),
+            &gated_base,
             true,
             |_| true,
         ).await?;

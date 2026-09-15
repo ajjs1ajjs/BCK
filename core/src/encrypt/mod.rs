@@ -9,6 +9,8 @@ use chacha20poly1305::ChaCha20Poly1305;
 use sha2::{Digest, Sha256};
 use crate::types::EncryptionAlgorithm;
 
+pub mod kms;
+
 pub trait Encryptor: Send + Sync {
     fn encrypt(&self, data: &[u8], key: &[u8]) -> Result<EncryptedData>;
     fn decrypt(&self, data: &EncryptedData, key: &[u8]) -> Result<Vec<u8>>;
@@ -352,6 +354,56 @@ pub fn app_key(config: &crate::config::AppConfig) -> Result<Vec<u8>> {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| default_key_path(config));
     load_key(&key_path, config.encryption.passphrase.as_deref())
+}
+
+/// P1 envelope encryption (10/10): per-repo DEK wrapped by the app KEK.
+/// - `ensure_repo_dek`: generate a fresh 32B DEK, wrap with KEK, persist.
+/// - `data_key_for_repo`: unwrap DEK; fallback to app KEK for legacy repos.
+/// Data plane uses the DEK; KEK rotation never re-encrypts backup blocks.
+pub async fn ensure_repo_dek(
+    db: &crate::db::DbPool,
+    config: &crate::config::AppConfig,
+    repo_id: &str,
+) -> anyhow::Result<()> {
+    if crate::db::repo_dek_get(db, repo_id).await.is_some() {
+        return Ok(());
+    }
+    let kek = app_key(config)?;
+    let dek = crate::auth::random_bytes(32);
+    let enc = encrypt_secret(&kek, &base64_encode(&dek))?;
+    crate::db::repo_dek_set(db, repo_id, &enc).await;
+    Ok(())
+}
+
+pub async fn data_key_for_repo(
+    db: &crate::db::DbPool,
+    config: &crate::config::AppConfig,
+    repo_id: &str,
+) -> Option<Vec<u8>> {
+    if let Some(enc) = crate::db::repo_dek_get(db, repo_id).await {
+        if let Ok(kek) = app_key(config) {
+            if let Ok(b64) = decrypt_secret(&kek, &enc) {
+                if let Ok(raw) = base64_decode(&b64) {
+                    if raw.len() == 32 {
+                        return Some(raw);
+                    }
+                }
+            }
+        }
+    }
+    app_key(config).ok()
+}
+
+fn base64_encode(v: &[u8]) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+    use base64::Engine;
+    B64.encode(v)
+}
+
+fn base64_decode(s: &str) -> anyhow::Result<Vec<u8>> {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+    use base64::Engine;
+    Ok(B64.decode(s)?)
 }
 
 /// Encrypt a small credential (cloud secret, hypervisor password, connection

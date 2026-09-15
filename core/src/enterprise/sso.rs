@@ -147,6 +147,39 @@ impl Default for SsoManager {
 }
 
 impl SsoManager {
+    /// SEC-008: best-effort decrypt of enc: blobs. The app key lives in the
+    /// daemon config; the SSO manager is config-free so it tries the default
+    /// key locations via env (BCK_DATA_DIR/data/keys). Legacy plaintext
+    /// passes through for migration.
+    fn decrypt_stored(stored: &str) -> String {
+        if !stored.starts_with("enc:") {
+            return stored.to_string();
+        }
+        // Try default key file locations without config: data/keys + BCK_DATA_DIR.
+        let candidates = [
+            std::env::var("BCK_DATA_DIR").map(|d| format!("{}/keys/encryption.key", d)).unwrap_or_default(),
+            "data/keys/encryption.key".to_string(),
+            "./data/keys/encryption.key".to_string(),
+        ];
+        for p in candidates {
+            if p.is_empty() {
+                continue;
+            }
+            if let Ok(raw) = std::fs::read(&p) {
+                if raw.len() == 32 {
+                    if let Ok(s) = crate::encrypt::decrypt_secret(&raw, stored) {
+                        return s;
+                    }
+                }
+            }
+        }
+        // Cannot decrypt (e.g. passphrase-wrapped key): return stored so the
+        // caller fails loudly at the IdP instead of silently using garbage.
+        // Operators must restart with the key available.
+        tracing::warn!("sso: cannot decrypt enc: secret (key unavailable), using stored blob");
+        stored.to_string()
+    }
+
     pub fn new() -> Self {
         Self {
             providers: Arc::new(RwLock::new(HashMap::new())),
@@ -254,13 +287,16 @@ impl SsoManager {
             .ok_or_else(|| anyhow!("Provider {} has no token endpoint", provider.name))?;
         validate_https_url(&token_endpoint)?;
 
+        // SEC-008: stored secret is enc: or legacy plaintext. Decrypt when
+        // possible; fall back to stored value for migration.
+        let client_secret = Self::decrypt_stored(&provider.encrypted_client_secret);
         let resp = self.http.post(&token_endpoint)
             .form(&[
                 ("grant_type", "authorization_code"),
                 ("code", code),
                 ("redirect_uri", redirect_uri),
                 ("client_id", provider.client_id.as_str()),
-                ("client_secret", provider.encrypted_client_secret.as_str()),
+                ("client_secret", client_secret.as_str()),
                 ("code_verifier", &pending.code_verifier),
             ])
             .send().await?;
@@ -407,7 +443,9 @@ async fn ldap_authenticate(cfg: &LdapConfig, username: &str, password: &str) -> 
     ldap3::drive!(conn);
 
     // Bind with the service account to search for the user.
-    ldap.simple_bind(&cfg.bind_dn, &cfg.bind_password).await?.success()?;
+    // SEC-008: bind_password may be enc: — decrypt best-effort.
+    let bind_pw = SsoManager::decrypt_stored(&cfg.bind_password);
+    ldap.simple_bind(&cfg.bind_dn, &bind_pw).await?.success()?;
 
     // Find the user's DN. The username is escaped so a crafted value cannot
     // rewrite the LDAP search filter (LDAP filter injection).

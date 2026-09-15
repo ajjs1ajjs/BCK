@@ -50,7 +50,7 @@ jobs:
         # dependency constraints that cannot be resolved via upgrades.
         shell: bash
         run: |
-          cargo install cargo-audit --locked
+          cargo install cargo-audit --locked --version 0.22.0
           cargo audit \
             --ignore RUSTSEC-2026-0275 \
             --ignore RUSTSEC-2026-0258 \
@@ -66,8 +66,15 @@ jobs:
         # crates, duplicate dependency versions, and source restrictions.
         shell: bash
         run: |
-          cargo install cargo-deny --locked
+          cargo install cargo-deny --locked --version 0.18.0
           cargo deny check
+
+      - name: npm audit (web-ui)
+        shell: bash
+        working-directory: web-ui
+        run: |
+          npm ci
+          npm audit --audit-level=high
 
       - name: cargo test --workspace
         shell: bash

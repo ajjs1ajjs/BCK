@@ -123,8 +123,24 @@ impl AppConfig {
     /// - Any other relative value resolves against the CWD when that
     ///   directory exists (dev layout), otherwise against the parent of
     ///   `storage.default_path`.
-    pub fn restore_root_resolved(&self) -> String {
-        let rel = self.restore_root.trim();
+    pub fn tape_root_resolved(&self) -> String {
+        // Virtual tape files live beside backups by default: <datadir>/tapes.
+        // Absolute override via BCK_TAPE_ROOT env is resolved by callers.
+        if let Ok(v) = std::env::var("BCK_TAPE_ROOT") {
+            if !v.trim().is_empty() {
+                return v;
+            }
+        }
+        let data_parent: std::path::PathBuf = self
+            .storage
+            .default_path
+            .parent()
+            .map(|pp| pp.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        data_parent.join("tapes").to_string_lossy().to_string()
+    }
+
+    pub fn restore_root_resolved(&self) -> String {        let rel = self.restore_root.trim();
         let p = std::path::Path::new(rel);
         if p.is_absolute() {
             return rel.to_string();

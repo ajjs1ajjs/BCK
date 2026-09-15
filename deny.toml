@@ -5,7 +5,7 @@
 all-features = false
 
 [advisories]
-yanked = "allow"
+yanked = "warn"
 ignore = [
   "RUSTSEC-2026-0275", # azure_core 0.21.0 - transitive dep constraint (azure_storage)
   "RUSTSEC-2026-0258", # h2 0.3.27 - transitive in aws-smithy-http-client
@@ -45,12 +45,18 @@ allow = [
 confidence-threshold = 0.5
 
 [bans]
-multiple-versions = "allow"
-wildcards = "allow"
+multiple-versions = "deny"
+wildcards = "deny"
 allow = []
+# Allowed duplicates: transitive constraints documented in audit.toml
+# (azure 0.21 chain pins h2 0.3 + quick-xml 0.31 alongside modern versions).
+skip = [
+  { name = "h2", version = "=0.3.27" },
+  { name = "quick-xml", version = "=0.31.0" },
+]
 
 [sources]
-unknown-registry = "allow"
-unknown-git = "allow"
+unknown-registry = "deny"
+unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []

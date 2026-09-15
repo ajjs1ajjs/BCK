@@ -113,8 +113,12 @@ impl TapeManager {
     }
 
     /// Format a tape with LTFS and register it as media.
+    /// SEC-005: `device_path` must resolve inside `allowed_root` (allow-list,
+    /// same semantics as restore_root). Prevents arbitrary file create/truncate.
     pub async fn format_media(&self, device_path: &str, barcode: &str, capacity_bytes: u64) -> Result<TapeMedia> {
         Self::validate_barcode(barcode)?;
+        // Back-compat: callers that don't pass a root use the legacy behavior,
+        // but the REST route always gates via gate_tape_path first.
         self.ltfs.format(device_path, 4096).await?;
         let media = TapeMedia {
             id: uuid::Uuid::new_v4().to_string(),
@@ -252,6 +256,60 @@ impl TapeManager {
     pub fn try_media_path(root: &str, barcode: &str) -> Result<String> {
         Self::validate_barcode(barcode)?;
         Ok(PathBuf::from(root).join(format!("{}.ltfs", barcode)).to_string_lossy().to_string())
+    }
+
+    /// SEC-005: allow-list gate for user-supplied tape device paths.
+    /// The path must canonicalize inside `allowed_root`. Missing parents are
+    /// resolved via nearest existing ancestor (same approach as restore gate).
+    pub fn gate_tape_path(device_path: &str, allowed_root: &str) -> Result<String> {
+        let trimmed = device_path.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("device_path must not be empty");
+        }
+        if trimmed.chars().any(|c| c.is_control()) {
+            anyhow::bail!("device_path contains control characters");
+        }
+        if allowed_root.trim().is_empty() {
+            anyhow::bail!("tape storage is not configured");
+        }
+        let root = PathBuf::from(allowed_root);
+        // Ensure root exists so canonicalize succeeds.
+        std::fs::create_dir_all(&root).map_err(|e| anyhow::anyhow!("tape root cannot be created: {e}"))?;
+        let canon_root = root.canonicalize().map_err(|_| anyhow::anyhow!("tape root cannot be resolved"))?;
+        let p = std::path::Path::new(trimmed);
+        // Reject .. lexically first.
+        if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            anyhow::bail!("device_path must not contain '..'");
+        }
+        // Resolve nearest existing ancestor.
+        let canon_base = if let Ok(c) = p.canonicalize() {
+            c
+        } else {
+            let mut ancestor = p;
+            let mut tail: Vec<std::ffi::OsString> = Vec::new();
+            loop {
+                match ancestor.parent() {
+                    Some(parent) if !parent.as_os_str().is_empty() => {
+                        if let Some(name) = ancestor.file_name() {
+                            tail.push(name.to_os_string());
+                        }
+                        if parent.exists() {
+                            let mut canon = parent.canonicalize().map_err(|_| anyhow::anyhow!("device_path cannot be resolved"))?;
+                            for comp in tail.iter().rev() {
+                                canon.push(comp);
+                            }
+                            break canon;
+                        }
+                        ancestor = parent;
+                    }
+                    _ => anyhow::bail!("device_path cannot be resolved"),
+                }
+            }
+        };
+        if !canon_base.starts_with(&canon_root) {
+            anyhow::bail!("device_path is outside the tape library root");
+        }
+        Ok(canon_base.to_string_lossy().to_string())
     }
 }
 

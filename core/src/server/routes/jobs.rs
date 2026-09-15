@@ -79,10 +79,12 @@ pub fn router() -> axum::Router<Arc<AppState>> {
 async fn list_jobs(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
+    axum::extract::Query(p): axum::extract::Query<crate::server::routes::Pagination>,
 ) -> Result<Json<Vec<JobView>>, StatusCode> {
     let jm = state.job_manager.lock().await;
     let jobs = jm.list_jobs().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(jobs.into_iter().filter(|v| tenant_allows(&claims, v.tenant_id.as_deref())).collect()))
+    let scoped: Vec<JobView> = jobs.into_iter().filter(|v| tenant_allows(&claims, v.tenant_id.as_deref())).collect();
+    Ok(Json(p.paginate(scoped)))
 }
 
 async fn create_job(
@@ -90,6 +92,9 @@ async fn create_job(
     Extension(claims): Extension<Claims>,
     Json(req): Json<CreateJobRequest>,
 ) -> Result<Json<JobView>, StatusCode> {
+    if state.require_leader().await.is_err() {
+        return Err(StatusCode::CONFLICT);
+    }
     let jm = state.job_manager.lock().await;
     let id = jm.register_job(
         &req.name,

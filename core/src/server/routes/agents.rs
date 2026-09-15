@@ -632,6 +632,7 @@ let agent_user = crate::auth::User {
 async fn list_agents(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
+    axum::extract::Query(p): axum::extract::Query<crate::server::routes::Pagination>,
 ) -> Result<Json<Vec<AgentResponse>>, StatusCode> {
     if !can_manage_agents(&claims) {
         return Err(StatusCode::FORBIDDEN);
@@ -647,7 +648,7 @@ async fn list_agents(
         .into_iter()
         .filter(|a| tenant_allows(&claims, a.tenant_id.as_deref()))
         .collect();
-    Ok(Json(filtered))
+    Ok(Json(p.paginate(filtered)))
 }
 
 async fn get_agent(

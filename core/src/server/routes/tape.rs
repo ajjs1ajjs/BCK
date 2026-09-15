@@ -69,7 +69,16 @@ async fn format_media(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FormatMediaRequest>,
 ) -> Result<(StatusCode, Json<TapeMedia>), StatusCode> {
-    let media = state.tape.format_media(&req.device_path, &req.barcode, req.capacity_bytes).await
+    // SEC-005: allow-list the device path inside the tape library root.
+    let gated = crate::tape::TapeManager::gate_tape_path(&req.device_path, &state.config.tape_root_resolved())
+        .map_err(|e| {
+            tracing::warn!("tape format rejected device_path: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+    if req.capacity_bytes == 0 || req.capacity_bytes > 256 * 1024 * 1024 * 1024 * 1024u64 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let media = state.tape.format_media(&gated, &req.barcode, req.capacity_bytes).await
         .map_err(|e| {
             tracing::error!("format tape media: {}", e);
             StatusCode::BAD_REQUEST

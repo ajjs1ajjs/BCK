@@ -60,6 +60,33 @@ pub enum AccountStatus {
     Error(String),
 }
 
+/// SEC-008: best-effort decrypt of enc: blobs using default key locations.
+/// Legacy plaintext passes through for migration.
+pub fn decrypt_stored(stored: &str) -> String {
+    if !stored.starts_with("enc:") {
+        return stored.to_string();
+    }
+    let candidates = [
+        std::env::var("BCK_DATA_DIR").map(|d| format!("{}/keys/encryption.key", d)).unwrap_or_default(),
+        "data/keys/encryption.key".to_string(),
+        "./data/keys/encryption.key".to_string(),
+    ];
+    for p in candidates {
+        if p.is_empty() {
+            continue;
+        }
+        if let Ok(raw) = std::fs::read(&p) {
+            if raw.len() == 32 {
+                if let Ok(s) = crate::encrypt::decrypt_secret(&raw, stored) {
+                    return s;
+                }
+            }
+        }
+    }
+    tracing::warn!("cloud: cannot decrypt enc: secret (key unavailable)");
+    stored.to_string()
+}
+
 pub struct CloudBackupManager {
     accounts: Arc<RwLock<Vec<CloudAccount>>>,
 }

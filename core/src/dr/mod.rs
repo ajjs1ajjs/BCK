@@ -235,4 +235,38 @@ impl DrOrchestrator {
     pub async fn list_sites(&self) -> Vec<DrSite> {
         self.sites.read().await.clone()
     }
+
+    pub async fn replace_all(&self, plans: Vec<DrPlan>, sites: Vec<DrSite>) {
+        *self.plans.write().await = plans;
+        *self.sites.write().await = sites;
+    }
+
+    pub async fn snapshot(&self, db: &crate::db::DbPool) {
+        let plans = self.plans.read().await.clone();
+        let sites = self.sites.read().await.clone();
+        if let Ok(v) = serde_json::to_string(&plans) {
+            let _ = crate::db::persist_set(db, "dr", "plans", &v).await;
+        }
+        if let Ok(v) = serde_json::to_string(&sites) {
+            let _ = crate::db::persist_set(db, "dr", "sites", &v).await;
+        }
+    }
+
+    pub async fn hydrate(&self, db: &crate::db::DbPool) {
+        for (k, v) in crate::db::persist_list(db, "dr").await {
+            match k.as_str() {
+                "plans" => {
+                    if let Ok(p) = serde_json::from_str::<Vec<DrPlan>>(&v) {
+                        *self.plans.write().await = p;
+                    }
+                }
+                "sites" => {
+                    if let Ok(s) = serde_json::from_str::<Vec<DrSite>>(&v) {
+                        *self.sites.write().await = s;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 }

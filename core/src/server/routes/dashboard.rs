@@ -84,15 +84,26 @@ async fn get_stats(
 ) -> Json<DashboardStats> {
     let tenant = scoped_tenant(&claims);
     let tenant_str = tenant.as_deref();
+    // PERF (10/10): 8 sequential round-trips → 1 concurrent batch.
+    let (total_jobs, active_jobs, completed_jobs, failed_jobs, total_repositories, total_snapshots, storage_used_bytes, storage_free_bytes) = tokio::join!(
+        count_scalar(&state.db, tenant_str, "jobs"),
+        count_scalar(&state.db, tenant_str, "active"),
+        count_scalar(&state.db, tenant_str, "completed"),
+        count_scalar(&state.db, tenant_str, "failed"),
+        count_scalar(&state.db, tenant_str, "repositories"),
+        count_scalar(&state.db, tenant_str, "snapshots"),
+        count_scalar(&state.db, tenant_str, "used"),
+        count_scalar(&state.db, tenant_str, "free"),
+    );
 
     Json(DashboardStats {
-        total_jobs: count_scalar(&state.db, tenant_str, "jobs").await,
-        active_jobs: count_scalar(&state.db, tenant_str, "active").await,
-        completed_jobs: count_scalar(&state.db, tenant_str, "completed").await,
-        failed_jobs: count_scalar(&state.db, tenant_str, "failed").await,
-        total_repositories: count_scalar(&state.db, tenant_str, "repositories").await,
-        total_snapshots: count_scalar(&state.db, tenant_str, "snapshots").await,
-        storage_used_bytes: count_scalar(&state.db, tenant_str, "used").await,
-        storage_free_bytes: count_scalar(&state.db, tenant_str, "free").await,
+        total_jobs,
+        active_jobs,
+        completed_jobs,
+        failed_jobs,
+        total_repositories,
+        total_snapshots,
+        storage_used_bytes,
+        storage_free_bytes,
     })
 }

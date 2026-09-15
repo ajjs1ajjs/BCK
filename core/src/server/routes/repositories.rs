@@ -53,6 +53,9 @@ pub struct CreateRepoRequest {
     pub container: Option<String>,
     pub connection_string: Option<String>,
     pub account: Option<String>,
+    /// S3 Object Lock retention days (WORM). Requires Object Lock bucket.
+    #[serde(default)]
+    pub object_lock_days: Option<u32>,
 }
 
 pub fn router() -> axum::Router<Arc<AppState>> {
@@ -82,8 +85,9 @@ fn tenant_allows(claims: &Claims, owner: Option<&str>) -> bool {
 async fn list_repositories(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<Claims>,
+    axum::extract::Query(p): axum::extract::Query<crate::server::routes::Pagination>,
 ) -> Result<Json<Vec<RepositoryResponse>>, StatusCode> {
-    let repos = fetch_repositories(&state.db).await
+    let repos: Vec<RepositoryResponse> = fetch_repositories(&state.db).await
         .map_err(|e| {
             tracing::error!("list repositories: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
@@ -92,7 +96,7 @@ async fn list_repositories(
         .filter(|r| tenant_allows(&claims, r.tenant_id.as_deref()))
         .map(RepositoryResponse::from)
         .collect();
-    Ok(Json(repos))
+    Ok(Json(p.paginate(repos)))
 }
 
 #[derive(Deserialize)]
@@ -109,6 +113,11 @@ async fn create_repository(
     Json(req): Json<CreateRepoRequest>,
 ) -> Result<Json<RepositoryResponse>, StatusCode> {
     // Validate that the storage backend can be created (creates dirs for local).
+    if let Some(d) = req.object_lock_days {
+        if d > 3650 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
     let storage_config = crate::storage::StorageConfig {
         backend_type: req.repo_type.clone(),
         path: req.path.clone(),
@@ -120,6 +129,7 @@ async fn create_repository(
         container: req.container.clone(),
         connection_string: req.connection_string.clone(),
         account: req.account.clone(),
+        object_lock_days: req.object_lock_days,
     };
     if let Err(e) = crate::storage::create_backend(storage_config).await {
         tracing::error!("repository storage init: {}", e);
@@ -139,6 +149,13 @@ async fn create_repository(
             tracing::error!("encrypt repository secret: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
+    let access_key_enc = req.access_key.as_deref()
+        .map(|s| crate::encrypt::encrypt_secret(&key, s))
+        .transpose()
+        .map_err(|e| {
+            tracing::error!("encrypt repository access key: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     let connection_string_enc = req.connection_string.as_deref()
         .map(|s| crate::encrypt::encrypt_secret(&key, s))
         .transpose()
@@ -152,11 +169,12 @@ async fn create_repository(
         "bucket": req.bucket,
         "region": req.region,
         "endpoint": req.endpoint,
-        "access_key": req.access_key,
+        "access_key": access_key_enc,
         "secret_key": secret_key_enc,
         "container": req.container,
         "connection_string": connection_string_enc,
         "account": req.account,
+        "object_lock_days": req.object_lock_days,
     });
 
     let id = uuid::Uuid::new_v4().to_string();
@@ -214,6 +232,11 @@ async fn create_repository(
         None,
         None,
     ).await.ok();
+
+    // P1 envelope (10/10): fresh per-repo DEK wrapped by the app KEK.
+    if let Err(e) = crate::encrypt::ensure_repo_dek(&state.db, &state.config, &id).await {
+        tracing::error!("repo DEK init failed for {}: {}", id, e);
+    }
 
     let repo = fetch_repository(&state.db, &id).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

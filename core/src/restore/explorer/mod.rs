@@ -135,11 +135,69 @@ impl GuestFileExplorer {
         Ok(entries)
     }
 
+    /// Extract a byte range [start, end) of a file (HTTP Range support).
+    /// Enables chunked download of files larger than MAX_EXTRACT_BYTES:
+    /// clients page with `Range: bytes=a-b` (206 + Content-Range).
+    pub async fn extract_file_range(
+        &self,
+        snapshot_id: &str,
+        file_path: &str,
+        storage: &dyn StorageBackend,
+        key: Option<&[u8]>,
+        start: u64,
+        end: u64,
+    ) -> Result<(Vec<u8>, u64)> {
+        if end <= start {
+            anyhow::bail!("invalid range");
+        }
+        if end - start > Self::MAX_EXTRACT_BYTES {
+            anyhow::bail!("range exceeds 256MiB cap");
+        }
+        let manifest = self.index.load_manifest(snapshot_id)?
+            .ok_or_else(|| anyhow!("Snapshot not found: {}", snapshot_id))?;
+        let mut blocks: Vec<&crate::types::FileBlock> = manifest.blocks
+            .iter()
+            .filter(|b| b.relative_path == file_path)
+            .collect();
+        if blocks.is_empty() {
+            return Err(anyhow!("File not found in snapshot: {}", file_path));
+        }
+        blocks.sort_by_key(|b| b.offset);
+        let total: u64 = blocks.iter().map(|b| b.size as u64).sum();
+        if start >= total {
+            anyhow::bail!("range start beyond file size");
+        }
+        let end = end.min(total);
+        let mut out = Vec::with_capacity((end - start) as usize);
+        for block in blocks {
+            let bs = block.offset;
+            let be = block.offset + block.size as u64;
+            let os = bs.max(start);
+            let oe = be.min(end);
+            if os >= oe {
+                continue;
+            }
+            let raw = storage.read_block(&block.block_id.sha256).await?;
+            let data = crate::pipeline::decode_block(&raw, key)?;
+            let from = (os - bs) as usize;
+            let n = (oe - os) as usize;
+            if from + n > data.len() {
+                anyhow::bail!("decoded block bounds mismatch");
+            }
+            out.extend_from_slice(&data[from..from + n]);
+        }
+        Ok((out, total))
+    }
+
     /// Extract a single file from snapshot (for preview/download).
     ///
     /// Reassembles the file by reading the manifest blocks that belong to
     /// `file_path`, ordering them by offset and decoding each stored block
     /// (decompression / decryption) via [`crate::pipeline::decode_block`].
+    /// SEC-006: hard cap 256MiB per file to bound RAM. Larger files must use
+    /// range requests (`extract_file_range`).
+    pub const MAX_EXTRACT_BYTES: u64 = 256 * 1024 * 1024;
+
     pub async fn extract_file(
         &self,
         snapshot_id: &str,
@@ -160,10 +218,17 @@ impl GuestFileExplorer {
         }
         blocks.sort_by_key(|b| b.offset);
 
-        let mut out = Vec::with_capacity(blocks.first().map(|b| b.metadata.size as usize).unwrap_or(0));
+        let total: u64 = blocks.iter().map(|b| b.size as u64).sum();
+        if total > Self::MAX_EXTRACT_BYTES {
+            anyhow::bail!("file exceeds 256MiB download cap ({} bytes); use chunked restore", total);
+        }
+        let mut out = Vec::with_capacity(total.min(Self::MAX_EXTRACT_BYTES) as usize);
         for block in blocks {
             let raw = storage.read_block(&block.block_id.sha256).await?;
             let data = crate::pipeline::decode_block(&raw, key)?;
+            if out.len() + data.len() > Self::MAX_EXTRACT_BYTES as usize {
+                anyhow::bail!("file exceeds 256MiB download cap during decode");
+            }
             out.extend_from_slice(&data);
         }
 

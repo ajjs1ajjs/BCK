@@ -181,6 +181,13 @@ async fn add_hypervisor(
     if !can_manage_hypervisors(&claims) {
         return Err(StatusCode::FORBIDDEN);
     }
+    // SEC-009: SSRF guard on hypervisor host. Private/DC ranges are allowed
+    // explicitly for on-prem hypervisors via BCK_ALLOW_PRIVATE_HV=1; cloud
+    // metadata / loopback remain blocked.
+    if let Err(e) = crate::storage::validate_hypervisor_host(&req.host) {
+        tracing::warn!("hypervisor {} rejected: {}", req.host, e);
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let connector = connector_from_request(&req).map_err(|e| {
         tracing::error!("add hypervisor (unsupported type): {}", e);
         StatusCode::BAD_REQUEST
@@ -371,7 +378,26 @@ async fn test_hypervisor(
 
     let (ok, status, message) = match connector.test_connection().await {
         Ok(_) => (true, "connected", "Connection successful".to_string()),
-        Err(e) => (false, "error", e.to_string()),
+        // Error leakage fix: map internal I/O strings to stable codes so
+        // hostnames/ports/stack details don't reach the UI.
+        Err(e) => {
+            let s = e.to_string();
+            let code = if s.contains("timed out") || s.contains("timeout") {
+                "connection timed out"
+            } else if s.contains("refused") {
+                "connection refused"
+            } else if s.contains("dns") || s.contains("resolve") || s.contains("failed to lookup") {
+                "DNS resolution failed"
+            } else if s.contains("TLS") || s.contains("certificate") || s.contains("ssl") {
+                "TLS handshake failed"
+            } else if s.contains("auth") || s.contains("login") || s.contains("401") || s.contains("403") {
+                "authentication failed"
+            } else {
+                "connection failed"
+            };
+            tracing::warn!("hypervisor {} test failed: {}", model.id, s);
+            (false, "error", code.to_string())
+        }
     };
 
     update_hypervisor_status(&state.db, &id, status)

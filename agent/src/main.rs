@@ -410,6 +410,7 @@ async fn run_file_backup(payload: &serde_json::Value, work_dir_base: &str) -> an
         container,
         connection_string,
         account,
+        object_lock_days: None,
     };
 
     let storage = create_backend(config).await?;

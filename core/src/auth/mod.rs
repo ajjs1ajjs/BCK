@@ -53,6 +53,7 @@ impl UserRole {
             "operator" => Some(Self::Operator),
             "restore_operator" => Some(Self::RestoreOperator),
             "viewer" => Some(Self::Viewer),
+            "agent" => Some(Self::Agent),
             _ => None,
         }
     }
